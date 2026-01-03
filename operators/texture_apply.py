@@ -15,7 +15,7 @@ from ..utils import (
     derive_transform_from_uvs,
 )
 from ..properties import apply_uv_to_face
-from ..handlers import set_suppress_file_browser_sync
+from ..handlers import set_suppress_file_browser_sync, cache_single_face
 
 
 def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me):
@@ -199,6 +199,7 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me):
     target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
     apply_uv_to_face(target_face, uv_layer, scale_u, scale_v, target_rotation,
                      target_offset_x, target_offset_y, target_mat, ppm, me)
+    cache_single_face(target_face, uv_layer, ppm, me)
 
     return True
 

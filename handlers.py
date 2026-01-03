@@ -30,6 +30,8 @@ _last_selected_face_indices = set()
 _last_active_face_index = -1
 # Cache for detecting file browser selection changes
 _last_file_browser_path = None
+# Track modal operators for UV world-scale baseline
+_tracked_modal_operators = set()
 
 
 def set_suppress_file_browser_sync(value):
@@ -144,12 +146,34 @@ def apply_world_scale_uvs(obj, scene):
 
     When a face is transformed, UVs are re-projected while preserving the rotation.
     The texture appears stationary in world space - making a face larger reveals more texture.
+
+    Uses modal operator tracking to maintain a stable baseline during operations:
+    - While a modal operator is running, the cache is NOT updated (baseline preserved)
+    - When the modal operator ends, the cache is refreshed with the final state
+    This ensures that moving geometry back to its original position restores original UVs.
     """
+    global _tracked_modal_operators
+
     me = obj.data
 
     # Skip if mesh data is not available or being modified
     if me is None or not me.is_editmode:
         return
+
+    # Track modal operators to detect operation boundaries
+    window = bpy.context.window
+    current_modals = set(op.bl_idname for op in window.modal_operators) if window else set()
+
+    # Detect modal operation just ended
+    if _tracked_modal_operators and not current_modals:
+        # Operation finished - refresh cache with final geometry state
+        _tracked_modal_operators = current_modals
+        cache_face_data(bpy.context)
+        return
+
+    # Update tracking
+    in_modal_operation = bool(current_modals)
+    _tracked_modal_operators = current_modals
 
     try:
         bm = bmesh.from_edit_mesh(me)
@@ -233,6 +257,13 @@ def apply_world_scale_uvs(obj, scene):
             # Re-project UVs using apply_uv_to_face which properly handles rotation
             apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
                              mat, ppm, me)
+
+            # Only update cache when NOT in a modal operation
+            # During modal ops, we keep the baseline stable so returning to original
+            # position gives original UVs
+            if not in_modal_operation:
+                cache_single_face(face, uv_layer, ppm, me)
+
         except (ReferenceError, RuntimeError, OSError):
             # BMesh data became invalid during iteration (e.g., during loop cut)
             return
@@ -454,6 +485,7 @@ def apply_texture_from_file_browser():
                         current_transform['offset_x'], current_transform['offset_y'],
                         mat, ppm, obj.data
                     )
+                    cache_single_face(target_face, uv_layer, ppm, obj.data)
                 else:
                     # Use default values when transform can't be derived
                     apply_uv_to_face(
@@ -463,6 +495,7 @@ def apply_texture_from_file_browser():
                         0.0, 0.0,  # offset
                         mat, ppm, obj.data
                     )
+                    cache_single_face(target_face, uv_layer, ppm, obj.data)
 
             # Update the material cache so subsequent face clicks don't get skipped
             _last_active_face_material = mat

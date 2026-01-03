@@ -60,7 +60,6 @@ def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, o
         me: Mesh data (for bmesh.update_edit_mesh)
     """
     from .utils import get_face_local_axes, get_texture_dimensions_from_material
-    from .handlers import cache_single_face
 
     # Guard against invalid face data during modal operators (e.g., loop cut)
     try:
@@ -106,8 +105,6 @@ def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, o
         loop[uv_layer].uv.x = u + offset_x
         loop[uv_layer].uv.y = v + offset_y
 
-    # Update cache first, then mesh (so depsgraph handler has fresh data)
-    cache_single_face(face, uv_layer, ppm, me)
     bmesh.update_edit_mesh(me)
 
 
@@ -141,10 +138,13 @@ def apply_panel_uv_to_selected_faces(context):
     if not selected_faces:
         return
 
+    from .handlers import cache_single_face
+
     for face in selected_faces:
         mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
         apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg,
                          offset_x, offset_y, mat, ppm, me)
+        cache_single_face(face, uv_layer, ppm, me)
 
 
 def update_texture_transform(self, context):
