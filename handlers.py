@@ -7,7 +7,7 @@ from mathutils import Vector
 from bpy.app.handlers import persistent
 
 from .utils import (
-    get_image_from_material, set_file_browser_selection, derive_transform_from_uvs,
+    get_image_from_material, derive_transform_from_uvs,
     get_selected_image_path, find_material_with_image, create_material_with_image,
     get_texture_dimensions_from_material
 )
@@ -21,10 +21,6 @@ last_face_count = 0
 # Cache for material deduplication
 _last_material_count = 0
 
-# Suppression flag for file browser sync during texture application
-_suppress_file_browser_sync = False
-# Cache for detecting material changes
-_last_active_face_material = None
 # Cache for detecting selection changes
 _last_selected_face_indices = set()
 _last_active_face_index = -1
@@ -32,12 +28,6 @@ _last_active_face_index = -1
 _last_file_browser_path = None
 # Track modal operators for UV world-scale baseline
 _tracked_modal_operators = set()
-
-
-def set_suppress_file_browser_sync(value):
-    """Set the suppression flag for file browser sync"""
-    global _suppress_file_browser_sync
-    _suppress_file_browser_sync = value
 
 
 def cache_single_face(face, uv_layer, ppm=None, me=None):
@@ -337,47 +327,6 @@ def redraw_ui_panels(context):
                 area.tag_redraw()
 
 
-def update_file_browser_from_face(context):
-    """Update File Browser selection based on active face's texture"""
-    global _suppress_file_browser_sync, _last_active_face_material
-
-    # Skip during texture application
-    if _suppress_file_browser_sync:
-        return
-
-    try:
-        obj = context.object
-
-        # Only work in edit mode on a mesh
-        if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-            return
-
-        # Get BMesh and check for active face
-        bm = bmesh.from_edit_mesh(obj.data)
-        bm.faces.ensure_lookup_table()
-
-        active_face = bm.faces.active
-        if not active_face:
-            return
-
-        # Get the material on this face
-        mat_index = active_face.material_index
-        mat = obj.data.materials[mat_index] if mat_index < len(obj.data.materials) else None
-
-        # Early exit if material hasn't changed
-        if mat == _last_active_face_material:
-            return
-        _last_active_face_material = mat
-
-        if mat:
-            image = get_image_from_material(mat)
-            if image and image.filepath:
-                abs_path = bpy.path.abspath(image.filepath)
-                set_file_browser_selection(context, abs_path)
-    except Exception:
-        pass  # Silently fail to avoid disrupting user workflow
-
-
 def check_selection_changed(bm):
     """Check if face selection has changed. Returns True if changed."""
     global _last_selected_face_indices, _last_active_face_index
@@ -394,11 +343,7 @@ def check_selection_changed(bm):
 
 def apply_texture_from_file_browser():
     """Apply texture to selected faces when file browser selection changes."""
-    global _last_file_browser_path, _suppress_file_browser_sync, _last_active_face_material
-
-    # Skip if we're currently applying a texture (to avoid loops)
-    if _suppress_file_browser_sync:
-        return 0.2
+    global _last_file_browser_path
 
     try:
         context = bpy.context
@@ -417,9 +362,7 @@ def apply_texture_from_file_browser():
 
         _last_file_browser_path = current_path
 
-        # If no valid image path, reset material cache so next face selection updates file browser
         if not current_path:
-            _last_active_face_material = None
             return 0.2
 
         # Check if there are selected faces
@@ -428,9 +371,6 @@ def apply_texture_from_file_browser():
         selected_faces = [f for f in bm.faces if f.select]
 
         if not selected_faces:
-            # File browser changed but no faces selected - reset material cache
-            # so next face selection will properly update the file browser
-            _last_active_face_material = None
             return 0.2
 
         # Load the image
@@ -439,68 +379,60 @@ def apply_texture_from_file_browser():
         except RuntimeError:
             return 0.2
 
-        # Apply texture to all selected faces
-        _suppress_file_browser_sync = True
-        try:
-            uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = bm.loops.layers.uv.verify()
 
-            # Get or create material
-            mat = find_material_with_image(image)
-            if mat is None:
-                mat = create_material_with_image(image)
+        # Get or create material
+        mat = find_material_with_image(image)
+        if mat is None:
+            mat = create_material_with_image(image)
 
-            # Ensure material slot exists
-            if mat.name not in obj.data.materials:
-                obj.data.materials.append(mat)
+        # Ensure material slot exists
+        if mat.name not in obj.data.materials:
+            obj.data.materials.append(mat)
 
-            mat_index = obj.data.materials.find(mat.name)
-            ppm = context.scene.level_design_props.pixels_per_meter
+        mat_index = obj.data.materials.find(mat.name)
+        ppm = context.scene.level_design_props.pixels_per_meter
 
-            for target_face in selected_faces:
-                # Get current transform to preserve it
-                current_transform = derive_transform_from_uvs(target_face, uv_layer, ppm, obj.data)
+        for target_face in selected_faces:
+            # Get current transform to preserve it
+            current_transform = derive_transform_from_uvs(target_face, uv_layer, ppm, obj.data)
 
-                # Get old texture dimensions before changing material
-                old_mat = obj.data.materials[target_face.material_index] if target_face.material_index < len(obj.data.materials) else None
-                old_tex_dims = get_texture_dimensions_from_material(old_mat, ppm)
+            # Get old texture dimensions before changing material
+            old_mat = obj.data.materials[target_face.material_index] if target_face.material_index < len(obj.data.materials) else None
+            old_tex_dims = get_texture_dimensions_from_material(old_mat, ppm)
 
-                target_face.material_index = mat_index
+            target_face.material_index = mat_index
 
-                # Get new texture dimensions
-                new_tex_dims = get_texture_dimensions_from_material(mat, ppm)
+            # Get new texture dimensions
+            new_tex_dims = get_texture_dimensions_from_material(mat, ppm)
 
-                # Reapply the preserved transform with the new texture
-                if current_transform:
-                    # Reset scale to 1,1 if texture dimensions changed
-                    if old_tex_dims != new_tex_dims:
-                        scale_u, scale_v = 1.0, 1.0
-                    else:
-                        scale_u = current_transform['scale_u']
-                        scale_v = current_transform['scale_v']
-
-                    apply_uv_to_face(
-                        target_face, uv_layer,
-                        scale_u, scale_v,
-                        current_transform['rotation'],
-                        current_transform['offset_x'], current_transform['offset_y'],
-                        mat, ppm, obj.data
-                    )
-                    cache_single_face(target_face, uv_layer, ppm, obj.data)
+            # Reapply the preserved transform with the new texture
+            if current_transform:
+                # Reset scale to 1,1 if texture dimensions changed
+                if old_tex_dims != new_tex_dims:
+                    scale_u, scale_v = 1.0, 1.0
                 else:
-                    # Use default values when transform can't be derived
-                    apply_uv_to_face(
-                        target_face, uv_layer,
-                        1.0, 1.0,  # scale
-                        0.0,       # rotation
-                        0.0, 0.0,  # offset
-                        mat, ppm, obj.data
-                    )
-                    cache_single_face(target_face, uv_layer, ppm, obj.data)
+                    scale_u = current_transform['scale_u']
+                    scale_v = current_transform['scale_v']
 
-            # Update the material cache so subsequent face clicks don't get skipped
-            _last_active_face_material = mat
-        finally:
-            _suppress_file_browser_sync = False
+                apply_uv_to_face(
+                    target_face, uv_layer,
+                    scale_u, scale_v,
+                    current_transform['rotation'],
+                    current_transform['offset_x'], current_transform['offset_y'],
+                    mat, ppm, obj.data
+                )
+                cache_single_face(target_face, uv_layer, ppm, obj.data)
+            else:
+                # Use default values when transform can't be derived
+                apply_uv_to_face(
+                    target_face, uv_layer,
+                    1.0, 1.0,  # scale
+                    0.0,       # rotation
+                    0.0, 0.0,  # offset
+                    mat, ppm, obj.data
+                )
+                cache_single_face(target_face, uv_layer, ppm, obj.data)
 
     except Exception as e:
         print(f"Level Design Tools: Error applying texture from file browser: {e}")
@@ -645,13 +577,11 @@ def on_depsgraph_update(scene, depsgraph):
                         # Topology changed - refresh cache
                         cache_face_data(context)
                         update_ui_from_selection(context)
-                        update_file_browser_from_face(context)
                         return
 
                     # Check if selection changed
                     if check_selection_changed(bm):
                         update_ui_from_selection(context)
-                        update_file_browser_from_face(context)
 
                     # Store data before any transform if cache is empty
                     if not face_data_cache and context.mode == 'EDIT_MESH':
@@ -679,7 +609,7 @@ def register():
 
 
 def unregister():
-    global last_face_count, _last_active_face_material, _last_selected_face_indices, _last_active_face_index, _last_file_browser_path, _last_material_count
+    global last_face_count, _last_selected_face_indices, _last_active_face_index, _last_file_browser_path, _last_material_count
 
     if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
@@ -691,7 +621,6 @@ def unregister():
     face_data_cache.clear()
     last_face_count = 0
     _last_material_count = 0
-    _last_active_face_material = None
     _last_selected_face_indices = set()
     _last_active_face_index = -1
     _last_file_browser_path = None

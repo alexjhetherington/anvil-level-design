@@ -15,7 +15,7 @@ from ..utils import (
     derive_transform_from_uvs,
 )
 from ..properties import apply_uv_to_face
-from ..handlers import set_suppress_file_browser_sync, cache_single_face
+from ..handlers import cache_single_face
 
 
 def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me):
@@ -239,43 +239,37 @@ class apply_image_to_face(Operator):
         ray_origin_local = matrix_inv @ ray_origin
         ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
 
-        # Suppress file browser sync during texture application
-        set_suppress_file_browser_sync(True)
-        try:
-            bm = bmesh.from_edit_mesh(obj.data)
-            bm.faces.ensure_lookup_table()
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
 
-            # Raycast against bmesh BVHTree
-            bvh = BVHTree.FromBMesh(bm)
-            location, normal, face_index, distance = bvh.ray_cast(ray_origin_local, ray_direction_local)
+        # Raycast against bmesh BVHTree
+        bvh = BVHTree.FromBMesh(bm)
+        location, normal, face_index, distance = bvh.ray_cast(ray_origin_local, ray_direction_local)
 
-            if face_index is None:
-                set_suppress_file_browser_sync(False)
-                return {'CANCELLED'}
+        if face_index is None:
+            return {'CANCELLED'}
 
-            target_face = bm.faces[face_index]
+        target_face = bm.faces[face_index]
 
-            # Check if there's an active face that could be the source
-            source_face = bm.faces.active
-            uv_layer = bm.loops.layers.uv.verify()
+        # Check if there's an active face that could be the source
+        source_face = bm.faces.active
+        uv_layer = bm.loops.layers.uv.verify()
 
-            ppm = context.scene.level_design_props.pixels_per_meter
+        ppm = context.scene.level_design_props.pixels_per_meter
 
-            # Get or create material
-            mat = find_material_with_image(image)
-            if mat is None:
-                mat = create_material_with_image(image)
+        # Get or create material
+        mat = find_material_with_image(image)
+        if mat is None:
+            mat = create_material_with_image(image)
 
-            # Ensure material slot exists
-            if mat.name not in obj.data.materials:
-                obj.data.materials.append(mat)
+        # Ensure material slot exists
+        if mat.name not in obj.data.materials:
+            obj.data.materials.append(mat)
 
-            mat_index = obj.data.materials.find(mat.name)
-            target_face.material_index = mat_index
+        mat_index = obj.data.materials.find(mat.name)
+        target_face.material_index = mat_index
 
-            set_uv_from_other_face(source_face, target_face, uv_layer, ppm, obj.data)
-        finally:
-            set_suppress_file_browser_sync(False)
+        set_uv_from_other_face(source_face, target_face, uv_layer, ppm, obj.data)
 
         return {'FINISHED'}
 

@@ -549,29 +549,6 @@ def create_material_with_image(image):
     return mat
 
 
-def set_file_browser_selection(context, filepath):
-    if not filepath or not os.path.exists(filepath):
-        return False
-
-    for window in context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == 'FILE_BROWSER':
-                space = area.spaces.active
-                params = space.params
-                if not params:
-                    continue
-
-                directory = os.path.dirname(filepath)
-                filename = os.path.basename(filepath)
-
-                params.directory = directory.encode('utf-8')
-                params.filename = filename
-
-                area.tag_redraw()
-                return True
-    return False
-
-
 def get_viewport_grid_settings(context):
     """Get the viewport overlay settings for grid"""
     space = context.space_data
