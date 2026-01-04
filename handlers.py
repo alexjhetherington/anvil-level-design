@@ -1,3 +1,4 @@
+import os
 import re
 
 import bpy
@@ -399,6 +400,10 @@ def apply_texture_from_file_browser():
         current_path = get_selected_image_path(context)
 
         if not current_path:
+            return
+
+        # Skip if it's a directory (not a file)
+        if not os.path.isfile(current_path):
             return
 
         # Load the image and set as active
