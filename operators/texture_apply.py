@@ -266,6 +266,7 @@ class apply_image_to_face(Operator):
 
         set_uv_from_other_face(source_face, target_face, uv_layer, ppm, obj.data)
 
+        bmesh.update_edit_mesh(obj.data)
         return {'FINISHED'}
 
 

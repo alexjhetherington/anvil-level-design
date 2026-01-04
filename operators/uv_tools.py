@@ -5,7 +5,7 @@ from bpy.types import Operator
 from mathutils import Vector
 
 from ..utils import align_2d_shape_to_square, derive_transform_from_uvs, get_texture_dimensions_from_material, get_selected_faces_or_report
-from ..handlers import cache_face_data
+from ..handlers import cache_face_data, cache_single_face
 from ..properties import set_updating_from_selection, sync_scale_tracking
 
 
@@ -340,6 +340,9 @@ class LEVELDESIGN_OT_snap_rotation_to_edge(Operator):
                     props.texture_offset_y = transform['offset_y']
                 finally:
                     set_updating_from_selection(False)
+
+            # Update cache so world-scale UV system uses the new rotation/offset
+            cache_single_face(face, uv_layer, props.pixels_per_meter, me)
 
         bmesh.update_edit_mesh(me)
         return {'FINISHED'}
