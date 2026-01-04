@@ -64,8 +64,11 @@ def get_face_local_axes(face):
     X-axis: Along the first edge (vertex 0 -> vertex 1), normalized
     Y-axis: Perpendicular to X, in the plane of the first 3 vertices
 
-    Returns (local_x, local_y) as Vector3, or None if face has < 2 vertices.
+    Returns (local_x, local_y) as Vector3, or None if face has < 2 vertices or face is invalid.
     """
+    if face is None or not face.is_valid:
+        return None
+
     loops = list(face.loops)
     if len(loops) < 2:
         return None
@@ -201,6 +204,9 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
     Returns dict with 'scale_u', 'scale_v', 'rotation', 'offset_x', 'offset_y'
     or None if derivation fails.
     """
+    if face is None or not face.is_valid:
+        return None
+
     loops = list(face.loops)
     uvs = [loop[uv_layer].uv.copy() for loop in loops]
     if len(uvs) < 3:
@@ -618,6 +624,9 @@ def compute_uv_projection_from_face(face, uv_layer):
 
     The transformation is: UV = origin_uv + (pos - origin_pos) dot [u_axis, v_axis]
     """
+    if face is None or not face.is_valid:
+        return None
+
     if len(face.loops) < 3:
         return None
 
@@ -685,6 +694,9 @@ def apply_uv_projection_to_face(target_face, uv_layer, u_axis, v_axis, origin_uv
     For faces with multiple normals (smooth shading), each loop uses the face normal,
     ensuring consistent UVs within each face.
     """
+    if target_face is None or not target_face.is_valid:
+        return
+
     target_normal = target_face.normal
 
     for loop in target_face.loops:

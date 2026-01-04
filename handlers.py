@@ -57,6 +57,9 @@ def cache_single_face(face, uv_layer, ppm=None, me=None):
     Updates the face_data_cache entry for this face without clearing the cache.
     Used by apply_uv_to_face after modifying a face's UVs.
     """
+    if face is None or not face.is_valid:
+        return
+
     cache_entry = {
         'verts': [v.co.copy() for v in face.verts],
         'uvs': [loop[uv_layer].uv.copy() for loop in face.loops],
