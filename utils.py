@@ -5,6 +5,21 @@ import math
 from mathutils import Vector, Matrix
 
 
+def normalize_offset(offset):
+    """Normalize a UV offset value to the 0-1 range.
+
+    UV offsets can be any value, but visually only the fractional part matters.
+    This function wraps the offset to stay within 0-1 range.
+
+    Args:
+        offset: Float offset value (can be any positive or negative value)
+
+    Returns:
+        Float offset normalized to 0-1 range
+    """
+    return offset % 1.0
+
+
 def get_selected_faces_or_report(operator, bm):
     """Get selected faces from bmesh, or report warning and return None.
 
@@ -255,8 +270,8 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
             'scale_u': scale_u,
             'scale_v': scale_v,
             'rotation': rotation,
-            'offset_x': offset_x,
-            'offset_y': offset_y
+            'offset_x': normalize_offset(offset_x),
+            'offset_y': normalize_offset(offset_y)
         }
 
     epsilon = 0.0001
@@ -342,8 +357,8 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
         'scale_u': scale_u,
         'scale_v': scale_v,
         'rotation': rotation,
-        'offset_x': offset_x,
-        'offset_y': offset_y
+        'offset_x': normalize_offset(offset_x),
+        'offset_y': normalize_offset(offset_y)
     }
 
 

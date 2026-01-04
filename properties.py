@@ -9,6 +9,10 @@ from mathutils import Vector
 _updating_from_selection = False
 # Flag to prevent linked scale from causing infinite recursion
 _updating_linked_scale = False
+# Flag to prevent offset normalization from causing infinite recursion
+_normalizing_offset = False
+# Flag to prevent rotation normalization from causing infinite recursion
+_normalizing_rotation = False
 # Track last scale values to detect which one changed
 _last_scale_u = 1.0
 _last_scale_v = 1.0
@@ -149,12 +153,33 @@ def apply_panel_uv_to_selected_faces(context):
 
 def update_texture_transform(self, context):
     """Called when any texture transform property changes (scale, rotation, offset)"""
-    global _updating_linked_scale, _last_scale_u, _last_scale_v
+    global _updating_linked_scale, _last_scale_u, _last_scale_v, _normalizing_offset, _normalizing_rotation
 
-    if _updating_linked_scale or get_updating_from_selection():
+    if _updating_linked_scale or get_updating_from_selection() or _normalizing_offset or _normalizing_rotation:
         return
 
     props = context.scene.level_design_props
+
+    # Normalize rotation to 0-360 range
+    if props.texture_rotation < 0 or props.texture_rotation >= 360:
+        _normalizing_rotation = True
+        try:
+            props.texture_rotation = props.texture_rotation % 360.0
+        finally:
+            _normalizing_rotation = False
+
+    # Normalize offset values if they're outside 0-1 range
+    needs_normalize_x = props.texture_offset_x < 0 or props.texture_offset_x >= 1
+    needs_normalize_y = props.texture_offset_y < 0 or props.texture_offset_y >= 1
+    if needs_normalize_x or needs_normalize_y:
+        _normalizing_offset = True
+        try:
+            if needs_normalize_x:
+                props.texture_offset_x = props.texture_offset_x % 1.0
+            if needs_normalize_y:
+                props.texture_offset_y = props.texture_offset_y % 1.0
+        finally:
+            _normalizing_offset = False
 
     # Handle linked scale - detect which value changed and sync the other
     if props.texture_scale_linked and props.texture_scale_u != props.texture_scale_v:
@@ -224,8 +249,6 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         name="Rotation",
         description="Texture rotation in degrees",
         default=0.0,
-        min=-360.0,
-        max=360.0,
         update=update_texture_transform,
     )
 

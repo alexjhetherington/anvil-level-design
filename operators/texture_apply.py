@@ -12,6 +12,7 @@ from ..utils import (
     get_texture_dimensions_from_material,
     get_face_local_axes,
     derive_transform_from_uvs,
+    normalize_offset,
 )
 from ..properties import apply_uv_to_face
 from ..handlers import cache_single_face, get_active_image
@@ -146,11 +147,11 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me):
             v = y / (scale_v * tex_meters_v)
 
             # Offset needed so midpoint UV matches source
-            target_offset_x = source_midpoint_uv_x - u
-            target_offset_y = source_midpoint_uv_y - v
+            target_offset_x = normalize_offset(source_midpoint_uv_x - u)
+            target_offset_y = normalize_offset(source_midpoint_uv_y - v)
         else:
-            target_offset_x = source_offset_x
-            target_offset_y = source_offset_y
+            target_offset_x = normalize_offset(source_offset_x)
+            target_offset_y = normalize_offset(source_offset_y)
     elif len(shared_verts) == 1:
         # Faces share a single vertex - use that vertex as reference
         shared_vert = list(shared_verts)[0]
@@ -184,15 +185,15 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me):
             u = x / (scale_u * tex_meters_u)
             v = y / (scale_v * tex_meters_v)
 
-            target_offset_x = source_shared_uv.x - u
-            target_offset_y = source_shared_uv.y - v
+            target_offset_x = normalize_offset(source_shared_uv.x - u)
+            target_offset_y = normalize_offset(source_shared_uv.y - v)
         else:
-            target_offset_x = source_offset_x
-            target_offset_y = source_offset_y
+            target_offset_x = normalize_offset(source_offset_x)
+            target_offset_y = normalize_offset(source_offset_y)
     else:
         # No shared vertices - just copy offset
-        target_offset_x = source_offset_x
-        target_offset_y = source_offset_y
+        target_offset_x = normalize_offset(source_offset_x)
+        target_offset_y = normalize_offset(source_offset_y)
 
     # Apply to target face
     target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None

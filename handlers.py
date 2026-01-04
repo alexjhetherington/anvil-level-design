@@ -10,7 +10,7 @@ from bpy.app.handlers import persistent
 from .utils import (
     get_image_from_material, derive_transform_from_uvs,
     get_selected_image_path, find_material_with_image, create_material_with_image,
-    get_texture_dimensions_from_material, get_face_local_axes
+    get_texture_dimensions_from_material, get_face_local_axes, normalize_offset
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
 
@@ -285,8 +285,8 @@ def apply_world_scale_uvs(obj, scene):
                     mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
                     tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
 
-                    offset_x = offset_x + move_x / (scale_u * tex_meters_u)
-                    offset_y = offset_y + move_y / (scale_v * tex_meters_v)
+                    offset_x = normalize_offset(offset_x + move_x / (scale_u * tex_meters_u))
+                    offset_y = normalize_offset(offset_y + move_y / (scale_v * tex_meters_v))
 
             # Get material for this face
             mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
