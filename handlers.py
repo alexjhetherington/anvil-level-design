@@ -10,7 +10,7 @@ from bpy.app.handlers import persistent
 from .utils import (
     get_image_from_material, derive_transform_from_uvs,
     get_selected_image_path, find_material_with_image, create_material_with_image,
-    get_texture_dimensions_from_material
+    get_texture_dimensions_from_material, get_face_local_axes
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
 
@@ -259,8 +259,34 @@ def apply_world_scale_uvs(obj, scene):
                 dot = max(-1.0, min(1.0, dot))  # Clamp for numerical stability
                 edge_rotation = math.degrees(math.atan2(cross.dot(face.normal), dot))
 
-                # Subtract edge rotation to keep texture fixed in world space
+                # Counter-rotate texture rotation to keep it fixed in world space
                 rotation = rotation + edge_rotation
+
+                # Compensate offset for translation of first vertex
+                # The texture should stay fixed in world space, so when the first
+                # vertex moves, the offset must change to keep the same world position
+                translation = current_verts[0] - cached['verts'][0]
+
+                # Get the world-aligned projection axes (after rotation compensation)
+                face_axes = get_face_local_axes(face)
+                if face_axes:
+                    face_local_x, face_local_y = face_axes
+                    rot_rad = math.radians(rotation)
+                    cos_rot = math.cos(rot_rad)
+                    sin_rot = math.sin(rot_rad)
+                    proj_x = face_local_x * cos_rot - face_local_y * sin_rot
+                    proj_y = face_local_x * sin_rot + face_local_y * cos_rot
+
+                    # Project translation onto projection axes (in meters)
+                    move_x = translation.dot(proj_x)
+                    move_y = translation.dot(proj_y)
+
+                    # Convert to UV and add to offset to compensate
+                    mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+                    tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
+
+                    offset_x = offset_x + move_x / (scale_u * tex_meters_u)
+                    offset_y = offset_y + move_y / (scale_v * tex_meters_v)
 
             # Get material for this face
             mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
