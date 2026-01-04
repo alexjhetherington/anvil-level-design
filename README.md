@@ -65,4 +65,6 @@ For a more convenient experience I strongly recommend you adjust the following (
 ## Limitations / Known Issues
 
 * Changing grid size does not work during an operation
+* Grid snapping does not work when zoomed out far in orthographic mode (blender bug: https://projects.blender.org/blender/blender/issues/137957)
+* Due to file browser API restrictions, you must hold alt-click to pick an image if it is already selected
 

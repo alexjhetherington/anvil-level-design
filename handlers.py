@@ -31,6 +31,8 @@ _last_edit_object_name = None
 _tracked_modal_operators = set()
 # Track the file browser watcher modal operator
 _file_browser_watcher_running = False
+# Track the previously selected file browser path (to avoid reapplying same image)
+_last_file_browser_path = None
 
 # The currently active image for texture operations.
 # Updated by: file browser selection, user clicking a face
@@ -490,7 +492,7 @@ class LEVELDESIGN_OT_file_browser_watcher(bpy.types.Operator):
     bl_options = {'INTERNAL'}
 
     def modal(self, context, event):
-        global _file_browser_watcher_running
+        global _file_browser_watcher_running, _last_file_browser_path
 
         # Check if we should stop (addon being unregistered)
         if not _file_browser_watcher_running:
@@ -503,12 +505,16 @@ class LEVELDESIGN_OT_file_browser_watcher(bpy.types.Operator):
                 if area.type == 'FILE_BROWSER':
                     if (area.x <= event.mouse_x <= area.x + area.width and
                             area.y <= event.mouse_y <= area.y + area.height):
-                        # Small delay to let file browser update its selection
-                        # bpy.app.timers.register(
-                        #    apply_texture_from_file_browser,
-                        #    first_interval=0.05
-                        # )
-                        apply_texture_from_file_browser()
+                        # Get current file browser selection
+                        current_path = get_selected_image_path(context)
+
+                        # Alt+click forces apply regardless of previous selection
+                        force_apply = event.alt
+
+                        # Only apply if path changed or force apply (Alt held)
+                        if force_apply or current_path != _last_file_browser_path:
+                            apply_texture_from_file_browser()
+                            _last_file_browser_path = current_path
                         break
 
         return {'PASS_THROUGH'}
@@ -625,9 +631,11 @@ def set_all_grid_scales_to_default():
 @persistent
 def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
-    global _file_browser_watcher_running
+    global _file_browser_watcher_running, _last_file_browser_path
     # Reset watcher state on file load (modal was killed when file loaded)
     _file_browser_watcher_running = False
+    # Reset last file browser path so first click applies regardless of previous session
+    _last_file_browser_path = None
     # Use a timer to ensure all UI is ready
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
     # Restart the file browser watcher
@@ -725,10 +733,11 @@ def register():
 
 
 def unregister():
-    global last_face_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running
+    global last_face_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running, _last_file_browser_path
 
     # Stop the file browser watcher modal
     _file_browser_watcher_running = False
+    _last_file_browser_path = None
 
     if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
