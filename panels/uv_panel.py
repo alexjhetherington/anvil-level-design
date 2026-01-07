@@ -3,6 +3,7 @@ from bpy.types import Panel
 
 from ..utils import (
     get_selected_face_count,
+    get_texture_node_from_material,
     get_viewport_grid_settings,
     find_material_with_image,
     get_principled_bsdf_from_material,
@@ -215,17 +216,22 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
 
             # Material settings
             mat = find_material_with_image(image)
+            tex = get_texture_node_from_material(mat)
             bsdf = get_principled_bsdf_from_material(mat) if mat else None
 
             layout.separator()
 
             row = layout.row(align=True)
-            if image:
+            if tex:
                 row.operator(
-                    "leveldesign.set_interpolation_closest", text="Closest"
+                    "leveldesign.set_interpolation_closest",
+                    text="Closest",
+                    depress=(tex.interpolation == 'Closest'),
                 )
                 row.operator(
-                    "leveldesign.set_interpolation_linear", text="Linear"
+                    "leveldesign.set_interpolation_linear",
+                    text="Linear",
+                    depress=(tex.interpolation == 'Linear'),
                 )
             else:
                 row.enabled = False
@@ -281,11 +287,22 @@ class LEVELDESIGN_PT_texture_settings_panel(Panel):
         layout = self.layout
         props = context.scene.level_design_props
 
-        layout.prop(props, "pixels_per_meter")
+        # layout.prop(props, "pixels_per_meter")
 
         row = layout.row(align=True)
-        row.operator("leveldesign.halve_pixels", text="/2")
-        row.operator("leveldesign.double_pixels", text="x2")
+
+        # halve button
+        sub = row.row(align=True)
+        sub.scale_x = 0.4
+        sub.operator("leveldesign.halve_pixels", text="/2")
+
+        # main property
+        row.prop(props, "pixels_per_meter")
+
+        # double button
+        sub = row.row(align=True)
+        sub.scale_x = 0.4
+        sub.operator("leveldesign.double_pixels", text="x2")
 
         layout.separator()
 

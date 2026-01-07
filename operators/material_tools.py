@@ -67,7 +67,7 @@ class LEVELDESIGN_OT_set_interpolation_linear(Operator):
         image = get_active_image()
         mat = find_material_with_image(image)
         tex = get_texture_node_from_material(mat)
-        if image:
+        if tex:
             tex.interpolation = 'Linear'
         return {'FINISHED'}
 

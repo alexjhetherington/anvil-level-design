@@ -5,6 +5,7 @@ from . import walk_navigation
 from . import ortho_navigation
 from . import glb_export
 from . import material_tools
+from . import pixels_per_meter
 
 
 def register():
@@ -15,6 +16,7 @@ def register():
     ortho_navigation.register()
     glb_export.register()
     material_tools.register()
+    pixels_per_meter.register()
 
 
 def unregister():
