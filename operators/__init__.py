@@ -20,6 +20,7 @@ def register():
 
 
 def unregister():
+    pixels_per_meter.unregister()
     material_tools.unregister()
     glb_export.unregister()
     ortho_navigation.unregister()
