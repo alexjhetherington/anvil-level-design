@@ -55,7 +55,33 @@ A useful hotkey to remember is numpad . to focus objects.
 
 Use '[' and ']' to double and half the grid size.
 
-### Export
+### Exporting
+
+Right now there are no bespoke export behaviours. This means you can work with Blender and your game engine as you normally would.
+
+.blend files are typically not directly imported by game engines (though it visually seems like that)
+
+Godot and Unity can both automatically translate the .blend to a hidden intermediary format (.fbx and .gltf respectively).
+
+.fbx image file paths are defined on export.
+
+.gltf image file paths are defined by the file paths blender uses. Be aware of the 'set paths to relative' and 'set paths to absolute' blender options (I'll handle this in Anvil at some point). Be aware that for Godot if your image files are in the same folder as your .blend file and paths are set to absolute, you may not notice until a collaborator opens the project and has missing textures on the imported level (because they do not have the same folder structure as you).
+
+.glb files include the images in the exported file. Good for mods but not recommended if you're making a game with multiple levels that will share the same materials.
+
+Image files getting copied into your project unexpectedly is a sign that you are referencing image files that are outside of the project folder or the exported level contains image files; your game engine is making sure the images are available in your project and their import settings can be edited.
+
+In short, the simplest workflow is to keep images used for level design in your project folder:
+* For Unity - work with a .blend file in your project
+* For Godot - ensure the reference to blender is configured in settings, then work with a .blend file in your project; ensure image paths are relative in the .blend file
+* For Unreal - export a .fbx to your project (untested)
+
+If you need non-PBR custom materials use in-engine approaches
+* For Unity - Set the import settings to search the project folder for materials with the appropriate name
+* For Godot - Write an import script to create/find and set external materials for each model material
+* For Unreal - tbd (I'm not an unreal dev)
+
+#### Scaled GLB
 
 A new import mode is provided; scaled GLB. This allows you to globally adjust the scale when exporting as GLB.
 
