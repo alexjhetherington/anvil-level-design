@@ -387,46 +387,48 @@ def register():
 
     # Register Alt+Click keymap
     wm = bpy.context.window_manager
-    kc = wm.keyconfigs.user
+    kc = wm.keyconfigs.addon
     if not kc:
         return
 
     # Register in Mesh keymap for edit mode
-    km = kc.keymaps.get('Mesh')
-    if km:
-        # Alt+Left Click to apply image to face
-        kmi = km.keymap_items.new(
-            apply_image_to_face.bl_idname,
-            'LEFTMOUSE', 'PRESS',
-            alt=True,
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    km = kc.keymaps.new(name='Mesh', space_type='EMPTY')
 
-        # Alt+Right Click to pick image from face (edit mode)
-        kmi = km.keymap_items.new(
-            pick_image_from_face.bl_idname,
-            'RIGHTMOUSE', 'PRESS',
-            alt=True,
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    # Alt+Left Click to apply image to face
+    kmi = km.keymap_items.new(
+        apply_image_to_face.bl_idname,
+        'LEFTMOUSE', 'PRESS',
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    # Alt+Right Click to pick image from face (edit mode)
+    kmi = km.keymap_items.new(
+        pick_image_from_face.bl_idname,
+        'RIGHTMOUSE', 'PRESS',
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
 
     # Register Alt+Right Click in 3D View for object mode as well
-    km = kc.keymaps.get('3D View')
-    if km:
-        kmi = km.keymap_items.new(
-            pick_image_from_face.bl_idname,
-            'RIGHTMOUSE', 'PRESS',
-            alt=True,
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+    kmi = km.keymap_items.new(
+        pick_image_from_face.bl_idname,
+        'RIGHTMOUSE', 'PRESS',
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
 
 
 def unregister():
     for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
+        try:
+            km.keymap_items.remove(kmi)
+        except ReferenceError:
+            pass
     addon_keymaps.clear()
 
     for cls in reversed(classes):

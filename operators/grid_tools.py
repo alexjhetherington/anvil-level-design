@@ -85,23 +85,23 @@ def register():
 
     # Hotkeys
     wm = bpy.context.window_manager
-    kc = wm.keyconfigs.user
+    kc = wm.keyconfigs.addon
     if not kc:
         return
 
-    km = kc.keymaps.get('3D View')
-    if km:
-        kmi = km.keymap_items.new(
-            "leveldesign.grid_scale_up", 'RIGHT_BRACKET', 'PRESS',
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
 
-        kmi = km.keymap_items.new(
-            "leveldesign.grid_scale_down", 'LEFT_BRACKET', 'PRESS',
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    kmi = km.keymap_items.new(
+        "leveldesign.grid_scale_up", 'RIGHT_BRACKET', 'PRESS',
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    kmi = km.keymap_items.new(
+        "leveldesign.grid_scale_down", 'LEFT_BRACKET', 'PRESS',
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
 
 
 def unregister():

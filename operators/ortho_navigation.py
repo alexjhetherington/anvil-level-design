@@ -139,78 +139,78 @@ def register():
         bpy.utils.register_class(cls)
 
     wm = bpy.context.window_manager
-    kc = wm.keyconfigs.user
+    kc = wm.keyconfigs.addon
     if not kc:
         return
 
     # Register in 3D View (global) keymap
-    km = kc.keymaps.get('3D View')
-    if km:
-        # Add our MMB binding with head=True so it fires first
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_pan",
-            'MIDDLEMOUSE', 'PRESS',
-            head=True
-        )
-        addon_keymaps.append((km, kmi))
+    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
 
-        # Numpad view bindings (bypass rotation lock)
-        # Numpad 1 - Front
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_1', 'PRESS',
-            head=True
-        )
-        kmi.properties.view_type = 'FRONT'
-        addon_keymaps.append((km, kmi))
+    # Add our MMB binding with head=True so it fires first
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_pan",
+        'MIDDLEMOUSE', 'PRESS',
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
 
-        # Ctrl+Numpad 1 - Back
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_1', 'PRESS',
-            ctrl=True,
-            head=True
-        )
-        kmi.properties.view_type = 'BACK'
-        addon_keymaps.append((km, kmi))
+    # Numpad view bindings (bypass rotation lock)
+    # Numpad 1 - Front
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_1', 'PRESS',
+        head=True
+    )
+    kmi.properties.view_type = 'FRONT'
+    addon_keymaps.append((km, kmi))
 
-        # Numpad 3 - Right
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_3', 'PRESS',
-            head=True
-        )
-        kmi.properties.view_type = 'RIGHT'
-        addon_keymaps.append((km, kmi))
+    # Ctrl+Numpad 1 - Back
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_1', 'PRESS',
+        ctrl=True,
+        head=True
+    )
+    kmi.properties.view_type = 'BACK'
+    addon_keymaps.append((km, kmi))
 
-        # Ctrl+Numpad 3 - Left
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_3', 'PRESS',
-            ctrl=True,
-            head=True
-        )
-        kmi.properties.view_type = 'LEFT'
-        addon_keymaps.append((km, kmi))
+    # Numpad 3 - Right
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_3', 'PRESS',
+        head=True
+    )
+    kmi.properties.view_type = 'RIGHT'
+    addon_keymaps.append((km, kmi))
 
-        # Numpad 7 - Top
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_7', 'PRESS',
-            head=True
-        )
-        kmi.properties.view_type = 'TOP'
-        addon_keymaps.append((km, kmi))
+    # Ctrl+Numpad 3 - Left
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_3', 'PRESS',
+        ctrl=True,
+        head=True
+    )
+    kmi.properties.view_type = 'LEFT'
+    addon_keymaps.append((km, kmi))
 
-        # Ctrl+Numpad 7 - Bottom
-        kmi = km.keymap_items.new(
-            "leveldesign.ortho_view",
-            'NUMPAD_7', 'PRESS',
-            ctrl=True,
-            head=True
-        )
-        kmi.properties.view_type = 'BOTTOM'
-        addon_keymaps.append((km, kmi))
+    # Numpad 7 - Top
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_7', 'PRESS',
+        head=True
+    )
+    kmi.properties.view_type = 'TOP'
+    addon_keymaps.append((km, kmi))
+
+    # Ctrl+Numpad 7 - Bottom
+    kmi = km.keymap_items.new(
+        "leveldesign.ortho_view",
+        'NUMPAD_7', 'PRESS',
+        ctrl=True,
+        head=True
+    )
+    kmi.properties.view_type = 'BOTTOM'
+    addon_keymaps.append((km, kmi))
 
 
 def unregister():

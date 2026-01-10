@@ -255,35 +255,13 @@ addon_keymaps = []
 
 # Keymaps to register our bindings in
 KEYMAPS_TO_REGISTER = [
-    "Object Mode",
-    "Mesh",
-    "Curve",
-    "Armature",
-    "Pose",
-    "Sculpt",
+    ("Object Mode", 'EMPTY'),
+    ("Mesh", 'EMPTY'),
+    ("Curve", 'EMPTY'),
+    ("Armature", 'EMPTY'),
+    ("Pose", 'EMPTY'),
+    ("Sculpt", 'EMPTY'),
 ]
-
-
-def set_rightclick_bindings_active(active):
-    """Enable or disable all plain right-click bindings (excluding ours)."""
-    wm = bpy.context.window_manager
-    kc = wm.keyconfigs.user
-    if not kc:
-        return
-
-    for km_name in KEYMAPS_TO_REGISTER:
-        if km_name not in kc.keymaps:
-            continue
-        km = kc.keymaps[km_name]
-        for kmi in km.keymap_items:
-            # Skip our own operators
-            if kmi.idname.startswith("leveldesign."):
-                continue
-            # Find plain right-click bindings
-            if (kmi.type == 'RIGHTMOUSE' and
-                kmi.value == 'PRESS' and
-                not kmi.ctrl and not kmi.shift and not kmi.alt):
-                kmi.active = active
 
 
 def register():
@@ -291,17 +269,12 @@ def register():
         bpy.utils.register_class(cls)
 
     wm = bpy.context.window_manager
-    kc = wm.keyconfigs.user
+    kc = wm.keyconfigs.addon
     if not kc:
         return
 
-    # Disable existing right-click bindings
-    set_rightclick_bindings_active(False)
-
-    for km_name in KEYMAPS_TO_REGISTER:
-        if km_name not in kc.keymaps:
-            continue
-        km = kc.keymaps[km_name]
+    for km_name, space_type in KEYMAPS_TO_REGISTER:
+        km = kc.keymaps.new(name=km_name, space_type=space_type)
 
         # Add our walk navigation binding
         kmi = km.keymap_items.new(
@@ -329,9 +302,6 @@ def unregister():
         except ReferenceError:
             pass
     addon_keymaps.clear()
-
-    # Re-enable original right-click bindings
-    set_rightclick_bindings_active(True)
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
