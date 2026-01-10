@@ -80,7 +80,7 @@ def cache_single_face(face, uv_layer, ppm=None, me=None):
             cache_entry['rotation'] = transform['rotation']
             cache_entry['offset_x'] = transform['offset_x']
             cache_entry['offset_y'] = transform['offset_y']
-
+            
     face_data_cache[face.index] = cache_entry
 
 
@@ -232,19 +232,13 @@ def apply_world_scale_uvs(obj, scene):
 
             cached = face_data_cache[face.index]
 
-            # Check if face has been transformed
-            current_verts = [v.co.copy() for v in face.verts]
-            if len(current_verts) != len(cached['verts']):
+            # Skip faces not relevant to current operation
+            # A face is relevant if any of its vertices are selected
+            if not any(v.select for v in face.verts):
                 continue
 
-            # Calculate if vertices have moved
-            has_moved = False
-            for i, (current, original) in enumerate(zip(current_verts, cached['verts'])):
-                if (current - original).length > 0.0001:
-                    has_moved = True
-                    break
-
-            if not has_moved:
+            current_verts = [v.co.copy() for v in face.verts]
+            if len(current_verts) != len(cached['verts']):
                 continue
 
             # Get cached transform (defaults if not cached)
