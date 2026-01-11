@@ -8,7 +8,7 @@ Anvil LD is particularly inspired by Trenchbroom.
 
 Anvil LD is a hobby project. It is likely buggy.
 
-# Installation
+## Installation
 
 Create a zip file of this repo (README.md should be at the root; the zip from github should be appropriate).
 
@@ -87,13 +87,20 @@ A new import mode is provided; scaled GLB. This allows you to globally adjust th
 
 The quick export button exports the scene with previously used settings, skipping popups.
 
+## Keybindings and Feature Toggling
+
+All keybinds can be adjusted in the normal Blender keymap settings.
+
+Keybinds added or modified by this addon are exposed in the addon preferences so they can be found easily.
+
+By disabling keybinds you can disable features (like the free camera).
+
 ## Additional Settings
 
 For a more convenient experience I strongly recommend you adjust the following (indeed, some features will not work correctly without these adjustments):
 * Enable Grid snapping
 * Set unit system to None; set grid subdivisions to 1 (grid size is constant regardless of zoom level)
 * Lock camera rotation for orthographic grid views
-* Enable X-Ray mode
 * Change Focal Length (it helps with interiors)
 
 ## Limitations / Known Issues
