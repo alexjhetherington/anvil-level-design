@@ -692,6 +692,13 @@ def on_depsgraph_update(scene, depsgraph):
 
         context = bpy.context
 
+        # Disable correct_uv on any active loop cut operator
+        window = context.window
+        if window:
+            for op in window.modal_operators:
+                if op.bl_idname == 'MESH_OT_loopcut_slide':
+                    op.correct_uv = False
+
         # Safety check - ensure properties are registered
         if not hasattr(scene, 'level_design_props'):
             return
