@@ -184,12 +184,6 @@ def apply_world_scale_uvs(obj, scene):
     window = bpy.context.window
     current_modals = set(op.bl_idname for op in window.modal_operators) if window else set()
 
-    # Detect modal operation just ended
-    if _tracked_modal_operators and not current_modals:
-        # Operation finished - refresh cache with final geometry state
-        _tracked_modal_operators = current_modals
-        cache_face_data(bpy.context)
-        return
 
     # Update tracking
     in_modal_operation = bool(current_modals)
@@ -303,6 +297,12 @@ def apply_world_scale_uvs(obj, scene):
             # position gives original UVs
             if not in_modal_operation:
                 cache_single_face(face, uv_layer, ppm, me)
+
+            # Detect modal operation just ended
+            if _tracked_modal_operators and not current_modals:
+                # Operation finished - refresh cache with final geometry state
+                _tracked_modal_operators = current_modals
+                cache_face_data(bpy.context)
 
         except (ReferenceError, RuntimeError, OSError):
             # BMesh data became invalid during iteration (e.g., during loop cut)
