@@ -254,7 +254,7 @@ def apply_world_scale_uvs(obj, scene):
             cached_verts = cached['verts']
 
             # HACK - premature optimisation? This cuts down a lot of faces but means we need to deal with Blender's own
-            # UV correction on other faces which is diffciult!
+            # UV correction on other faces which is difficult, but done successfully - see set_correct_uv_slide
             # Skip faces not relevant to current operation
             # A face is relevant if any of its vertices are selected
             if not any(v.select for v in face.verts):
