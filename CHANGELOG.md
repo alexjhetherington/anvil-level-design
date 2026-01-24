@@ -8,6 +8,7 @@
 - Applying UVs to non-connected faces applies offset more intelligently
 - If file is loaded into edit mode with face selected, that face is used to set active image
 - Default material is always scale 1 (initial texturing makes more sense)
+- Fix grid hotkeys not working in object mode when file first loaded (they worked once toggled in and out of edit mode)
 
 ## 1.0.2
 

@@ -78,6 +78,11 @@ classes = (
 
 addon_keymaps = []
 
+KEYMAPS_TO_REGISTER = [
+    ("Object Mode", 'EMPTY'),
+    ("Mesh", 'EMPTY'),
+]
+
 
 def register():
     for cls in classes:
@@ -89,19 +94,20 @@ def register():
     if not kc:
         return
 
-    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+    for km_name, space_type in KEYMAPS_TO_REGISTER:
+        km = kc.keymaps.new(name=km_name, space_type=space_type)
 
-    kmi = km.keymap_items.new(
-        "leveldesign.grid_scale_up", 'RIGHT_BRACKET', 'PRESS',
-        head=True
-    )
-    addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(
+            "leveldesign.grid_scale_up", 'RIGHT_BRACKET', 'PRESS',
+            head=True
+        )
+        addon_keymaps.append((km, kmi))
 
-    kmi = km.keymap_items.new(
-        "leveldesign.grid_scale_down", 'LEFT_BRACKET', 'PRESS',
-        head=True
-    )
-    addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(
+            "leveldesign.grid_scale_down", 'LEFT_BRACKET', 'PRESS',
+            head=True
+        )
+        addon_keymaps.append((km, kmi))
 
 
 def unregister():
