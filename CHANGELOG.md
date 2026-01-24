@@ -6,6 +6,7 @@
 - Speculative fix for applying UVs to faces with opposite windings
 - Applying textures to opposite faces mirrors the rotation over the reference axis
 - Applying UVs to non-connected faces applies offset more intelligently
+- If file is loaded into edit mode with face selected, that face is used to set active image
 
 ## 1.0.2
 

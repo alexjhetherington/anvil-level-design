@@ -55,6 +55,8 @@ _last_selected_face_indices = set()
 _last_active_face_index = -1
 # Track which object we're editing to detect fresh edit sessions
 _last_edit_object_name = None
+# Set True on file load to allow first depsgraph to sync active image from selected face
+_file_loaded_into_edit_depsgraph = False
 # Track modal operators for UV world-scale baseline
 _tracked_modal_operators = set()
 # Track the file browser watcher modal operator
@@ -704,26 +706,36 @@ def disable_correct_uv_slide():
     set_correct_uv_slide(False)
 
 
+def _clear_file_loaded_flag():
+    """Clear the file loaded flag after timeout."""
+    global _file_loaded_into_edit_depsgraph
+    _file_loaded_into_edit_depsgraph = False
+
+
 @persistent
 def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
-    global _file_browser_watcher_running, _last_file_browser_path
+    global _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph
     # Reset watcher state on file load (modal was killed when file loaded)
     _file_browser_watcher_running = False
     # Reset last file browser path so first click applies regardless of previous session
     _last_file_browser_path = None
+    # Allow first depsgraph update to set active image from selected face
+    _file_loaded_into_edit_depsgraph = True
     # Use a timer to ensure all UI is ready
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
     # Restart the file browser watcher
     bpy.app.timers.register(start_file_browser_watcher, first_interval=0.2)
     # Disable correct_uv for slide operations
     bpy.app.timers.register(disable_correct_uv_slide, first_interval=0.1)
+    # Clear the file loaded flag after 1 second (fallback if depsgraph doesn't fire)
+    bpy.app.timers.register(_clear_file_loaded_flag, first_interval=1.0)
 
 
 @persistent
 def on_depsgraph_update(scene, depsgraph):
     """Consolidated depsgraph update handler"""
-    global last_face_count
+    global last_face_count, _file_loaded_into_edit_depsgraph
 
     try:
         # Check for duplicate materials (from copy/paste operations)
@@ -768,21 +780,26 @@ def on_depsgraph_update(scene, depsgraph):
                     is_fresh_start = (obj.name != _last_edit_object_name)
                     _last_edit_object_name = obj.name
 
+                    # On file load, allow active image sync even if fresh start
+                    # (to restore state from previous session)
+                    allow_active_image_update = not is_fresh_start or _file_loaded_into_edit_depsgraph
+
                     # Check if topology changed (subdivision, extrusion, etc.)
                     if current_face_count != last_face_count or current_vertex_count != last_vertex_count:
                         # Topology changed - refresh cache
                         cache_face_data(context)
                         update_ui_from_selection(context)
-                        # Only update active image if not a fresh start
-                        if not is_fresh_start:
+                        # Only update active image if allowed
+                        if allow_active_image_update:
                             update_active_image_from_face(context)
+                        _file_loaded_into_edit_depsgraph = False
                         return
 
                     # Check if selection changed
                     if check_selection_changed(bm):
                         update_ui_from_selection(context)
-                        # Only update active image if not a fresh start
-                        if not is_fresh_start:
+                        # Only update active image if allowed
+                        if allow_active_image_update:
                             update_active_image_from_face(context)
 
                     # Store data before any transform if cache is empty
@@ -794,6 +811,7 @@ def on_depsgraph_update(scene, depsgraph):
                     else:
                         apply_world_scale_uvs(obj, scene)
 
+                    _file_loaded_into_edit_depsgraph = False
                     break
     except Exception as e:
         print(f"Level Design Tools: Error in depsgraph handler: {e}")
@@ -829,7 +847,7 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running, _last_file_browser_path
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph
 
     # Stop the file browser watcher timer
     _file_browser_watcher_running = False
@@ -855,3 +873,4 @@ def unregister():
     _last_active_face_index = -1
     _last_edit_object_name = None
     _active_image = None
+    _file_loaded_into_edit_depsgraph = False
