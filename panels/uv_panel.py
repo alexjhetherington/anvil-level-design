@@ -127,66 +127,6 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
         )
 
 
-class LEVELDESIGN_PT_rotation_panel(Panel):
-    """Rotation Controls"""
-
-    bl_label = "Rotation"
-    bl_idname = "LEVELDESIGN_PT_rotation_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Level Design'
-
-    def draw(self, context):
-        layout = self.layout
-        props = context.scene.level_design_props
-
-        # Quick rotate buttons
-        row = layout.row(align=True)
-        op = row.operator("leveldesign.rotate_uv", text="-90°")
-        op.angle = -90.0
-        op = row.operator("leveldesign.rotate_uv", text="+90°")
-        op.angle = 90.0
-
-        # Snap to edge - more compact layout
-        row = layout.row()
-        row.label(text="Snap to Edge:")
-        row.label(text=f"Index: {props.edge_index}")
-
-        # Use a grid layout for edge controls - 2 columns
-        col = layout.column(align=True)
-        col.scale_y = 0.9
-
-        # Top/Bottom row
-        row = col.row(align=True)
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="T ←")
-        op.texture_edge = 'TOP'
-        op.direction = 'PREV'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="→ T")
-        op.texture_edge = 'TOP'
-        op.direction = 'NEXT'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="B ←")
-        op.texture_edge = 'BOTTOM'
-        op.direction = 'PREV'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="→ B")
-        op.texture_edge = 'BOTTOM'
-        op.direction = 'NEXT'
-
-        # Left/Right row
-        row = col.row(align=True)
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="L ←")
-        op.texture_edge = 'LEFT'
-        op.direction = 'PREV'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="→ L")
-        op.texture_edge = 'LEFT'
-        op.direction = 'NEXT'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="R ←")
-        op.texture_edge = 'RIGHT'
-        op.direction = 'PREV'
-        op = row.operator("leveldesign.snap_rotation_to_edge", text="→ R")
-        op.texture_edge = 'RIGHT'
-        op.direction = 'NEXT'
-
-
 class LEVELDESIGN_PT_texture_preview_panel(Panel):
     """Texture Preview"""
 
@@ -347,7 +287,6 @@ classes = (
     LEVELDESIGN_PT_uv_lock_panel,
     LEVELDESIGN_PT_uv_settings_panel,
     LEVELDESIGN_PT_uv_shortcuts_panel,
-    LEVELDESIGN_PT_rotation_panel,
     LEVELDESIGN_PT_texture_preview_panel,
     LEVELDESIGN_PT_texture_settings_panel,
     LEVELDESIGN_PT_export_panel,
