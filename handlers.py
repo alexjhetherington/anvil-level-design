@@ -516,6 +516,20 @@ def apply_texture_from_file_browser():
             return
 
         uv_layer = bm.loops.layers.uv.verify()
+        ppm = context.scene.level_design_props.pixels_per_meter
+
+        # Capture old material info for each face BEFORE we modify the material list
+        # This is critical because appending a new material can change what materials[0] points to
+        face_old_info = {}
+        for f in selected_faces:
+            f_mat_idx = f.material_index
+            f_mat = obj.data.materials[f_mat_idx] if f_mat_idx < len(obj.data.materials) else None
+            f_img = get_image_from_material(f_mat)
+            face_old_info[f.index] = {
+                'mat': f_mat,
+                'has_image': f_img is not None,
+                'tex_dims': get_texture_dimensions_from_material(f_mat, ppm),
+            }
 
         # Get or create material
         mat = find_material_with_image(image)
@@ -527,15 +541,15 @@ def apply_texture_from_file_browser():
             obj.data.materials.append(mat)
 
         mat_index = obj.data.materials.find(mat.name)
-        ppm = context.scene.level_design_props.pixels_per_meter
 
         for target_face in selected_faces:
             # Get current transform to preserve it
             current_transform = derive_transform_from_uvs(target_face, uv_layer, ppm, obj.data)
 
-            # Get old texture dimensions before changing material
-            old_mat = obj.data.materials[target_face.material_index] if target_face.material_index < len(obj.data.materials) else None
-            old_tex_dims = get_texture_dimensions_from_material(old_mat, ppm)
+            # Get old material info that we captured before modifying the material list
+            old_info = face_old_info[target_face.index]
+            old_has_image = old_info['has_image']
+            old_tex_dims = old_info['tex_dims']
 
             target_face.material_index = mat_index
 
@@ -544,8 +558,9 @@ def apply_texture_from_file_browser():
 
             # Reapply the preserved transform with the new texture
             if current_transform:
-                # Reset scale to 1,1 if texture dimensions changed
-                if old_tex_dims != new_tex_dims:
+                # Reset scale to 1,1 if old material had no image (default material)
+                # or if texture dimensions changed
+                if not old_has_image or old_tex_dims != new_tex_dims:
                     scale_u, scale_v = 1.0, 1.0
                 else:
                     scale_u = current_transform['scale_u']
@@ -569,6 +584,9 @@ def apply_texture_from_file_browser():
                     mat, ppm, obj.data
                 )
                 cache_single_face(target_face, uv_layer, ppm, obj.data)
+
+        # Update UI to reflect the new UVs
+        update_ui_from_selection(context)
 
     except Exception as e:
         print(f"Level Design Tools: Error applying texture from file browser: {e}")
