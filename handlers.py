@@ -289,8 +289,8 @@ def apply_world_scale_uvs(obj, scene):
             # This logic is here because face aligned project does a different type of projection than the one in this method
             # consider revising?
             has_moved = False
-            for current, cached in zip(current_verts, cached_verts):
-                if (current - cached).length > 0.0001:
+            for current_vert, cached_vert in zip(current_verts, cached_verts):
+                if (current_vert - cached_vert).length > 0.0001:
                     has_moved = True
                     break
 
