@@ -34,13 +34,14 @@ class LEVELDESIGN_OT_face_aligned_project(Operator):
 
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
+        scale = props.projection_scale
 
         for face in selected_faces:
             # Get texture dimensions for this face's material
             mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
             tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
-            uv_per_meter_u = 1.0 / tex_meters_u
-            uv_per_meter_v = 1.0 / tex_meters_v
+            uv_per_meter_u = 1.0 / (tex_meters_u * scale)
+            uv_per_meter_v = 1.0 / (tex_meters_v * scale)
 
             normal = face.normal
 
@@ -72,11 +73,11 @@ class LEVELDESIGN_OT_face_aligned_project(Operator):
         bmesh.update_edit_mesh(me)
         self.report({'INFO'}, f"Projected {len(selected_faces)} faces")
 
-        # Update properties to reflect projection - scale defaults to 1,1
+        # Update properties to reflect projection
         set_updating_from_selection(True)
         try:
-            props.texture_scale_u = 1.0
-            props.texture_scale_v = 1.0
+            props.texture_scale_u = scale
+            props.texture_scale_v = scale
             props.texture_rotation = 0.0
             # Offset will be derived from the resulting UVs
         finally:

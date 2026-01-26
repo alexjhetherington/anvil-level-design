@@ -107,13 +107,16 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
 
     def draw(self, context):
         layout = self.layout
+        props = context.scene.level_design_props
 
-        # Projection
-        layout.operator(
+        # Projection with scale
+        row = layout.row(align=True)
+        row.operator(
             "leveldesign.face_aligned_project",
             text="Face-Aligned Project",
             icon='MOD_UVPROJECT',
         )
+        row.prop(props, "projection_scale", text="")
 
         # Alignment
         row = layout.row(align=True)

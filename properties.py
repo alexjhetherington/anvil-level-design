@@ -303,6 +303,14 @@ def update_texture_offset(self, context):
     apply_offset_to_selected_faces(context)
 
 
+def update_projection_scale(self, context):
+    """Called when projection_scale changes - automatically runs face-aligned projection"""
+    if get_updating_from_selection() or context.mode != 'EDIT_MESH':
+        return
+
+    bpy.ops.leveldesign.face_aligned_project()
+
+
 class LevelDesignProperties(bpy.types.PropertyGroup):
     """Combined properties for Level Design Tools"""
 
@@ -372,6 +380,15 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         description="Current edge index for snapping",
         default=0,
         min=0,
+    )
+
+    projection_scale: FloatProperty(
+        name="Scale",
+        description="Scale to use for face-aligned projection",
+        default=1.0,
+        min=0.001,
+        max=100.0,
+        update=update_projection_scale,
     )
 
     # === Export Properties (last used settings) ===

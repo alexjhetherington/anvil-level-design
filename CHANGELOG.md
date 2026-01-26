@@ -12,6 +12,7 @@
 - Face UV Mode (Press T to snap texture to edge based on mouse position) (removed UV Rotation panel)
 - Fix UV shortcut buttons
 - Manually adjusting scale, rotation, and offset only affect the value adjusted
+- Allow face aligned project to be scaled
 
 ## 1.0.2
 
