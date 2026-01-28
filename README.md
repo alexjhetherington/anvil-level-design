@@ -53,6 +53,8 @@ Click on a face in the 3d view to start drawing the cube; move your mouse and cl
 
 Cube cut avoids N-gons and T-Junctions.
 
+Cube cut only affects selected faces (if no faces are selected, it will affect all faces).
+
 ### Camera and Viewport Tools
 
 Hotkeys are intended to be blender default.
