@@ -41,7 +41,7 @@ MOVEMENT_DIRECTIONS = [
 
 
 def get_movement_key(direction):
-    """Get the configured key for a movement direction."""
+    """Get the configured key for a movement direction, or None if disabled."""
     wm = bpy.context.window_manager
     kc_user = wm.keyconfigs.user
     if kc_user:
@@ -51,20 +51,24 @@ def get_movement_key(direction):
                 if (kmi.idname == "leveldesign.freelook_movement_key" and
                     hasattr(kmi.properties, 'direction') and
                     kmi.properties.direction == direction):
+                    # Return None if the keymap item is disabled
+                    if not kmi.active:
+                        return None
                     return kmi.type
     # Return default if not found
     for d, name, default in MOVEMENT_DIRECTIONS:
         if d == direction:
             return default
-    return 'NONE'
+    return None
 
 
 def get_movement_keys_map():
-    """Get a dict mapping key types to movement directions."""
+    """Get a dict mapping key types to movement directions (only active bindings)."""
     keys = {}
     for direction, name, default in MOVEMENT_DIRECTIONS:
         key_type = get_movement_key(direction)
-        keys[key_type] = direction
+        if key_type is not None:
+            keys[key_type] = direction
     return keys
 
 
@@ -226,7 +230,6 @@ def register():
                 default_key, 'PRESS'
             )
             kmi.properties.direction = direction
-            kmi.active = False  # Don't actually intercept these keys
             freelook_movement_keymaps.append((km, kmi))
 
 
