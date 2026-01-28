@@ -3,6 +3,7 @@
 ## 1.1.0
 
 - Introduce CUBE CUT. Press C in edit mode to enter cube cut mode. See Readme for more details.
+- Fix grids not displaying in orthographic view in some cases
 
 ## 1.0.3
 

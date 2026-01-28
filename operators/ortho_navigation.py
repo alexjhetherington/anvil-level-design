@@ -1,7 +1,5 @@
 import bpy
 from bpy.types import Operator
-from mathutils import Quaternion
-from math import radians
 
 
 class LEVELDESIGN_OT_ortho_view(Operator):
@@ -23,16 +21,6 @@ class LEVELDESIGN_OT_ortho_view(Operator):
         default='FRONT'
     )
 
-    # View rotations as quaternions (matching Blender's standard views)
-    VIEW_ROTATIONS = {
-        'FRONT': Quaternion((0.7071068, 0.7071068, 0, 0)),
-        'BACK': Quaternion((0, 0, 0.7071068, 0.7071068)),
-        'RIGHT': Quaternion((0.5, 0.5, 0.5, 0.5)),
-        'LEFT': Quaternion((0.5, 0.5, -0.5, -0.5)),
-        'TOP': Quaternion((1, 0, 0, 0)),
-        'BOTTOM': Quaternion((0, 1, 0, 0)),
-    }
-
     def execute(self, context):
         if context.area.type != 'VIEW_3D':
             return {'CANCELLED'}
@@ -45,11 +33,10 @@ class LEVELDESIGN_OT_ortho_view(Operator):
         was_locked = rv3d.lock_rotation
         rv3d.lock_rotation = False
 
-        # Set the view rotation
-        rv3d.view_rotation = self.VIEW_ROTATIONS[self.view_type]
-
-        # Ensure orthographic
-        rv3d.view_perspective = 'ORTHO'
+        # Use Blender's built-in view_axis operator to properly set named orthographic view
+        # This ensures the view is registered as "Top/Front/Right" etc., not "User Ortho"
+        # which is required for proper grid display
+        bpy.ops.view3d.view_axis(type=self.view_type, align_active=False)
 
         # Restore lock state
         rv3d.lock_rotation = was_locked
