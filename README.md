@@ -111,10 +111,12 @@ By disabling keybinds you can disable features (like the free camera).
 
 ## Additional Settings
 
-For a more convenient experience I strongly recommend you adjust the following (indeed, some features will not work correctly without these adjustments):
+When the addon is loaded it sets the following:
 * Enable Grid snapping
 * Set unit system to None; set grid subdivisions to 1 (grid size is constant regardless of zoom level)
-* Lock camera rotation for orthographic grid views
+* Lock camera rotation for orthographic grid views (hotkeys still work)
+
+For a more convenient experience I recommend you adjust the following:
 * Change Focal Length (it helps with interiors)
 
 ## Limitations / Known Issues / Notes on Blender / Hacks / etc

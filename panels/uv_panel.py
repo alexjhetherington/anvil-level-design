@@ -19,7 +19,7 @@ class LEVELDESIGN_PT_grid_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_grid_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -39,7 +39,7 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_uv_lock_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -67,7 +67,7 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_uv_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -103,7 +103,7 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_uv_shortcuts_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -137,7 +137,7 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_texture_preview_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -224,7 +224,7 @@ class LEVELDESIGN_PT_texture_settings_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_texture_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout
@@ -262,7 +262,7 @@ class LEVELDESIGN_PT_export_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_export_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Level Design'
+    bl_category = 'Anvil'
 
     def draw(self, context):
         layout = self.layout

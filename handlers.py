@@ -31,7 +31,7 @@ def set_correct_uv_slide(enabled: bool):
         else:
             flag_ptr.contents.value &= ~_UVCALC_TRANSFORM_CORRECT_SLIDE
     except Exception as e:
-        print(f"Level Design Tools: Failed to set correct_uv_slide (see method comments): {e}")
+        print(f"Anvil Level Design: Failed to set correct_uv_slide (see method comments): {e}")
 
 from .utils import (
     get_image_from_material, derive_transform_from_uvs,
@@ -590,7 +590,7 @@ def apply_texture_from_file_browser():
         update_ui_from_selection(context)
 
     except Exception as e:
-        print(f"Level Design Tools: Error applying texture from file browser: {e}")
+        print(f"Anvil Level Design: Error applying texture from file browser: {e}")
 
 
 def _file_browser_watcher_timer():
@@ -859,7 +859,7 @@ def on_depsgraph_update(scene, depsgraph):
                     _file_loaded_into_edit_depsgraph = False
                     break
     except Exception as e:
-        print(f"Level Design Tools: Error in depsgraph handler: {e}")
+        print(f"Anvil Level Design: Error in depsgraph handler: {e}")
 
 
 def register():

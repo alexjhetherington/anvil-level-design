@@ -59,7 +59,7 @@ def create_level_design_workspace():
                     break
 
         if not new_workspace:
-            print(f"Level Design Tools: Could not find duplicated workspace")
+            print(f"Anvil Level Design: Could not find duplicated workspace")
             return False
 
         new_workspace.name = WORKSPACE_NAME
@@ -71,7 +71,7 @@ def create_level_design_workspace():
         )
 
     except Exception as e:
-        print(f"Level Design Tools: Error creating workspace: {e}")
+        print(f"Anvil Level Design: Error creating workspace: {e}")
         return False
 
     return True
@@ -92,7 +92,7 @@ def _setup_workspace_deferred(original_workspace):
         bpy.app.timers.register(_close_areas_step, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in deferred setup: {e}")
+        print(f"Anvil Level Design: Error in deferred setup: {e}")
 
     return None
 
@@ -128,15 +128,15 @@ def _close_areas_step():
                         bpy.app.timers.register(_close_areas_step, first_interval=0.1)
                         return None
                 except Exception as e:
-                    print(f"Level Design Tools: Close failed for area: {e}")
+                    print(f"Anvil Level Design: Close failed for area: {e}")
                     continue
 
         # If we get here, couldn't close any areas - proceed anyway
-        print("Level Design Tools: Could not close all areas, proceeding with current layout")
+        print("Anvil Level Design: Could not close all areas, proceeding with current layout")
         bpy.app.timers.register(_configure_layout_step1, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in close step: {e}")
+        print(f"Anvil Level Design: Error in close step: {e}")
         bpy.app.timers.register(_configure_layout_step1, first_interval=0.1)
 
     return None
@@ -172,7 +172,7 @@ def _configure_layout_step1():
         bpy.app.timers.register(_configure_layout_step2, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 1: {e}")
+        print(f"Anvil Level Design: Error in layout step 1: {e}")
 
     return None
 
@@ -202,7 +202,7 @@ def _configure_layout_step2():
         bpy.app.timers.register(_configure_layout_step3, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 2: {e}")
+        print(f"Anvil Level Design: Error in layout step 2: {e}")
 
     return None
 
@@ -223,7 +223,7 @@ def _configure_layout_step3():
         bpy.app.timers.register(_configure_layout_step4, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 3: {e}")
+        print(f"Anvil Level Design: Error in layout step 3: {e}")
 
     return None
 
@@ -248,7 +248,7 @@ def _configure_layout_step4():
         bpy.app.timers.register(_configure_layout_step5, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 4: {e}")
+        print(f"Anvil Level Design: Error in layout step 4: {e}")
 
     return None
 
@@ -278,7 +278,7 @@ def _configure_layout_step5():
         bpy.app.timers.register(_configure_layout_step6, first_interval=0.1)
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 5: {e}")
+        print(f"Anvil Level Design: Error in layout step 5: {e}")
 
     return None
 
@@ -287,6 +287,17 @@ def _configure_layout_step6():
     """Step 6: Configure all areas with their final settings"""
     try:
         screen = bpy.context.window.screen
+        scene = bpy.context.scene
+
+        # Configure scene-level settings
+        # Set unit system to None
+        scene.unit_settings.system = 'NONE'
+        print("Anvil Level Design: Set unit system to None")
+
+        # Enable grid snapping
+        scene.tool_settings.use_snap = True
+        scene.tool_settings.snap_elements = {'INCREMENT'}
+        print("Anvil Level Design: Enabled grid snapping")
 
         # Configure the two viewports
         view3d_areas = _get_areas_by_type(screen, 'VIEW_3D')
@@ -305,10 +316,10 @@ def _configure_layout_step6():
                     space.params.display_type = 'THUMBNAIL'
                     break
 
-        print(f"Level Design Tools: Created '{WORKSPACE_NAME}' workspace")
+        print(f"Anvil Level Design: Created '{WORKSPACE_NAME}' workspace")
 
     except Exception as e:
-        print(f"Level Design Tools: Error in layout step 6: {e}")
+        print(f"Anvil Level Design: Error in layout step 6: {e}")
 
     return None
 
@@ -336,7 +347,7 @@ def _split_area(area, direction, factor):
             bpy.ops.screen.area_split(direction=direction, factor=factor)
         return True
     except Exception as e:
-        print(f"Level Design Tools: Error splitting area: {e}")
+        print(f"Anvil Level Design: Error splitting area: {e}")
         return False
 
 
@@ -353,11 +364,15 @@ def _configure_left_viewport(area):
             # Show the toolbar (T-panel)
             space.show_region_toolbar = True
 
+            # Set grid subdivisions to 1
+            space.overlay.grid_subdivisions = 1
+            print("Anvil Level Design: Set left viewport grid subdivisions to 1")
+
             break
 
 
 def _configure_right_viewport(area):
-    """Configure the right 3D viewport: Wireframe, no panels, top-down ortho"""
+    """Configure the right 3D viewport: Wireframe, no panels, top-down ortho, locked rotation"""
     for space in area.spaces:
         if space.type == 'VIEW_3D':
             # Set shading to Wireframe
@@ -369,12 +384,19 @@ def _configure_right_viewport(area):
             # Hide the toolbar (T-panel)
             space.show_region_toolbar = False
 
+            # Set grid subdivisions to 1
+            space.overlay.grid_subdivisions = 1
+            print("Anvil Level Design: Set right viewport grid subdivisions to 1")
+
             # Set to orthographic top-down view
             region_3d = space.region_3d
             if region_3d:
                 region_3d.view_perspective = 'ORTHO'
                 # Top-down view: looking down -Z axis
                 region_3d.view_rotation = Quaternion((1, 0, 0, 0))
+                # Lock rotation for orthographic view
+                region_3d.lock_rotation = True
+                print("Anvil Level Design: Locked rotation in right viewport")
 
             break
 
@@ -388,7 +410,7 @@ def on_load_post(dummy):
             if not workspace_exists():
                 create_level_design_workspace()
         except Exception as e:
-            print(f"Level Design Tools: Error checking workspace on load: {e}")
+            print(f"Anvil Level Design: Error checking workspace on load: {e}")
         return None  # Don't repeat
 
     bpy.app.timers.register(deferred_workspace_check, first_interval=0.5)
@@ -401,7 +423,7 @@ def ensure_workspace_exists():
             if not workspace_exists():
                 create_level_design_workspace()
         except Exception as e:
-            print(f"Level Design Tools: Error ensuring workspace: {e}")
+            print(f"Anvil Level Design: Error ensuring workspace: {e}")
         return None
 
     # Defer creation to ensure Blender is ready
