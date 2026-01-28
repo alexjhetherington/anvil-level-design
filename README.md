@@ -118,8 +118,9 @@ When the addon is loaded it sets the following:
 * Set unit system to None; set grid subdivisions to 1 (grid size is constant regardless of zoom level)
 * Lock camera rotation for orthographic grid views (hotkeys still work)
 
-For a more convenient experience I recommend you adjust the following:
-* Change Focal Length (it helps with interiors)
+For a more convenient experience I recommend you consider adjusting the following:
+* Change Focal Length (view panel) (it helps with interiors)
+* Auto Merge Vertices (options in edit mode)
 
 ## Limitations / Known Issues / Notes on Blender / Hacks / etc
 
