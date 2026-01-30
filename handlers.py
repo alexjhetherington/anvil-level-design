@@ -362,6 +362,7 @@ def apply_world_scale_uvs(obj, scene):
             # Check if vertices actually moved - skip if geometry unchanged
             # In general my preference is to always update selected + adjacent faces just to keep code simple
             # This logic is here because face aligned project does a different type of projection than the one in this method
+            # i.e. If you face align an object and then edit it, unmoved faces will confusingly get overwritten with the projection used here
             # consider revising?
             has_moved = False
             for current_vert, cached_vert in zip(current_verts, cached_verts):
@@ -370,6 +371,16 @@ def apply_world_scale_uvs(obj, scene):
                     break
 
             if not has_moved:
+                # During modal operations, the cache baseline is preserved (not updated).
+                # If geometry returns to the original position, we must restore the cached
+                # UVs. Otherwise, UVs computed for an intermediate geometry state remain
+                # on the face, causing warping when the geometry is back at the baseline.
+                if in_modal_operation:
+                    cached_uvs = cached.get('uvs')
+                    if cached_uvs and len(cached_uvs) == len(face.loops):
+                        for loop, cached_uv in zip(face.loops, cached_uvs):
+                            loop[uv_layer].uv = cached_uv.copy()
+                        bmesh.update_edit_mesh(me)
                 continue
 
             # Get cached transform (defaults if not cached)
