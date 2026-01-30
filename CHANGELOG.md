@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.1.1
+- Cube cut opposite face now cuts when exactly aligned with a mesh face
+
 ## 1.1.0
 
 - Introduce CUBE CUT. Press C in edit mode to enter cube cut mode. See Readme for more details.

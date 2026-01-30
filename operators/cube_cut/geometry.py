@@ -521,30 +521,24 @@ def _find_cuboid_face_intersections(bm, cuboid):
             crosses = (d1 > EPSILON and d2 < -EPSILON) or (d1 < -EPSILON and d2 > EPSILON)
 
             # Special case: endpoint ON the face plane, other endpoint on one side
-            # Only create vertex if the on-plane endpoint is on the rectangle plane (depth=0)
+            # Only allow exact alignment cutting for front/back faces (parallel to local_z)
+            # Side faces (left/right/top/bottom) still require crossing through
             endpoint_on_face = None
             if not crosses:
-                # Check if one endpoint is on the face plane
-                if abs(d1) <= EPSILON and abs(d2) > EPSILON:
-                    # edge_start (v1) is on the face plane
-                    # Rectangle plane vertices: 0-3 if rectangle_plane_idx=0, 4-7 if rectangle_plane_idx=1
-                    is_on_rectangle_plane = (
-                        (cuboid.rectangle_plane_idx == 0 and v1_idx < 4) or
-                        (cuboid.rectangle_plane_idx == 1 and v1_idx >= 4)
-                    )
-                    if is_on_rectangle_plane:
-                        endpoint_on_face = edge_start.copy()
-                        debug_log(f"[CubeCut] Cuboid vertex {v1_idx} is ON face {face.index} and on rectangle plane")
+                # Check if mesh face is parallel to front/back planes (normal parallel to local_z)
+                face_parallel_to_depth = abs(abs(face_normal.dot(cuboid.local_z)) - 1.0) < EPSILON * 10
 
-                elif abs(d2) <= EPSILON and abs(d1) > EPSILON:
-                    # edge_end (v2) is on the face plane
-                    is_on_rectangle_plane = (
-                        (cuboid.rectangle_plane_idx == 0 and v2_idx < 4) or
-                        (cuboid.rectangle_plane_idx == 1 and v2_idx >= 4)
-                    )
-                    if is_on_rectangle_plane:
+                if face_parallel_to_depth:
+                    # Check if one endpoint is on the face plane
+                    if abs(d1) <= EPSILON and abs(d2) > EPSILON:
+                        # edge_start (v1) is on the face plane
+                        endpoint_on_face = edge_start.copy()
+                        debug_log(f"[CubeCut] Cuboid vertex {v1_idx} is ON face {face.index} (depth-aligned)")
+
+                    elif abs(d2) <= EPSILON and abs(d1) > EPSILON:
+                        # edge_end (v2) is on the face plane
                         endpoint_on_face = edge_end.copy()
-                        debug_log(f"[CubeCut] Cuboid vertex {v2_idx} is ON face {face.index} and on rectangle plane")
+                        debug_log(f"[CubeCut] Cuboid vertex {v2_idx} is ON face {face.index} (depth-aligned)")
 
             if not crosses and endpoint_on_face is None:
                 if edge_idx >= 8:  # Connecting edges are indices 8-11
