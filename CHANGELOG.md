@@ -2,6 +2,7 @@
 
 ## 1.1.1
 - Cube cut opposite face now cuts when exactly aligned with a mesh face
+- New mesh faces will be appropriately projected (extrusion was already working, bridging edges etc did not)
 
 ## 1.1.0
 

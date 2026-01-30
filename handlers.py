@@ -37,9 +37,80 @@ from .utils import (
     get_image_from_material, derive_transform_from_uvs,
     get_selected_image_path, find_material_with_image, create_material_with_image,
     get_texture_dimensions_from_material, get_face_local_axes, normalize_offset,
-    get_local_x_from_verts_3d
+    get_local_x_from_verts_3d, debug_log
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
+
+
+def _get_best_neighbor_face(face, selected_faces_set):
+    """Find the best neighboring face to use as UV source.
+
+    Prefers neighbors that are facing sideways (wall-like) over up/down (floor/ceiling).
+    A sideways face has a more horizontal normal (small Z component).
+    Only considers unselected neighbors (which have existing good UVs).
+    """
+    best_neighbor = None
+    best_score = -1  # Higher = more sideways
+
+    for edge in face.edges:
+        # Get the neighbor face through this edge
+        for linked_face in edge.link_faces:
+            if linked_face == face or not linked_face.is_valid:
+                continue
+            # Skip selected faces (they're also new and don't have good UVs)
+            if linked_face in selected_faces_set:
+                continue
+
+            # Score by how sideways the neighbor is facing
+            # Walls have normals like (1,0,0) or (0,1,0) - Z near 0
+            # Floors/ceilings have normals like (0,0,1) - Z near 1
+            neighbor_normal = linked_face.normal
+            sideways_score = 1.0 - abs(neighbor_normal.z)
+
+            if sideways_score > best_score:
+                best_score = sideways_score
+                best_neighbor = linked_face
+
+    return best_neighbor
+
+
+def _project_selected_faces_on_topology_change(context, bm):
+    """Apply UV projection to selected faces after topology change.
+
+    Operations like Bridge Edge Loops, Fill, Grid Fill select the newly created faces.
+    Uses neighboring faces as UV source for seamless tiling (like alt-click).
+    """
+    from .operators.texture_apply import set_uv_from_other_face
+
+    obj = context.object
+    me = obj.data
+    uv_layer = bm.loops.layers.uv.verify()
+    props = context.scene.level_design_props
+    ppm = props.pixels_per_meter
+
+    selected_faces = [f for f in bm.faces if f.select and f.is_valid]
+    selected_faces_set = set(selected_faces)
+
+    if not selected_faces:
+        return
+
+    projected_count = 0
+    for face in selected_faces:
+        # Find best neighboring face to use as UV source
+        source_face = _get_best_neighbor_face(face, selected_faces_set)
+
+        if source_face:
+            # Transfer UVs from neighbor for seamless tiling
+            set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
+            projected_count += 1
+        else:
+            # No valid neighbor - fall back to world-space projection
+            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+            projected_count += 1
+
+    if projected_count > 0:
+        bmesh.update_edit_mesh(me)
 
 
 # Cache for face data (UV lock functionality)
@@ -866,7 +937,9 @@ def on_depsgraph_update(scene, depsgraph):
 
                     # Check if topology changed (subdivision, extrusion, etc.)
                     if current_face_count != last_face_count or current_vertex_count != last_vertex_count:
-                        # Topology changed - refresh cache
+                        # Topology changed - but skip projection if this is just switching objects
+                        if not is_fresh_start:
+                            _project_selected_faces_on_topology_change(context, bm)
                         cache_face_data(context)
                         update_ui_from_selection(context)
                         # Only update active image if allowed
