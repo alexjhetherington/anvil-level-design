@@ -3,6 +3,8 @@ from bpy.types import Operator
 from mathutils import Vector, Euler
 import math
 
+from ..utils import is_level_design_workspace
+
 
 def get_addon_prefs(context):
     """Get addon preferences."""
@@ -24,6 +26,10 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
     bl_idname = "leveldesign.walk_navigation_hold"
     bl_label = "First Person Camera (Hold)"
     bl_options = {'REGISTER', 'GRAB_CURSOR', 'BLOCKING'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def invoke(self, context, event):
         if context.area.type != 'VIEW_3D':
@@ -227,6 +233,10 @@ class LEVELDESIGN_OT_context_menu(Operator):
     """Show the appropriate context menu for the current mode"""
     bl_idname = "leveldesign.context_menu"
     bl_label = "Context Menu"
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def execute(self, context):
         if context.mode == 'OBJECT':

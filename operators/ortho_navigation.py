@@ -1,12 +1,18 @@
 import bpy
 from bpy.types import Operator
 
+from ..utils import is_level_design_workspace
+
 
 class LEVELDESIGN_OT_ortho_view(Operator):
     """Set orthographic view orientation, bypassing rotation lock."""
     bl_idname = "leveldesign.ortho_view"
     bl_label = "Ortho View (Bypass Lock)"
     bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     view_type: bpy.props.EnumProperty(
         name="View Type",
@@ -50,6 +56,10 @@ class LEVELDESIGN_OT_ortho_pan(Operator):
     bl_idname = "leveldesign.ortho_pan"
     bl_label = "Ortho Pan"
     bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def invoke(self, context, event):
         if context.area.type != 'VIEW_3D':

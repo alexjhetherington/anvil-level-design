@@ -81,6 +81,11 @@ class LEVELDESIGN_OT_freelook_movement_key(bpy.types.Operator):
 
     direction: bpy.props.StringProperty()
 
+    @classmethod
+    def poll(cls, context):
+        from .utils import is_level_design_workspace
+        return is_level_design_workspace()
+
     def execute(self, context):
         # This operator is never actually executed - it's just for keymap UI
         return {'PASS_THROUGH'}

@@ -8,6 +8,7 @@ from ..utils import (
     find_material_with_image,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
+    is_level_design_workspace,
 )
 from ..handlers import get_active_image
 
@@ -20,6 +21,10 @@ class LEVELDESIGN_PT_grid_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout
@@ -40,6 +45,10 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout
@@ -80,6 +89,10 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
     bl_region_type = 'UI'
     bl_category = 'Anvil'
 
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
     def draw(self, context):
         layout = self.layout
         props = context.scene.level_design_props
@@ -115,6 +128,10 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout
@@ -152,6 +169,10 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout
@@ -197,6 +218,10 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout
@@ -285,6 +310,10 @@ class LEVELDESIGN_PT_texture_settings_panel(Panel):
     bl_region_type = 'UI'
     bl_category = 'Anvil'
 
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
     def draw(self, context):
         layout = self.layout
         props = context.scene.level_design_props
@@ -322,6 +351,10 @@ class LEVELDESIGN_PT_export_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def draw(self, context):
         layout = self.layout

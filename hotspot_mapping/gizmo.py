@@ -12,7 +12,7 @@ from gpu_extras.batch import batch_for_shader
 
 from . import json_storage
 from .properties import SNAP_SIZES
-from ..utils import debug_log
+from ..utils import debug_log, is_hotspot_mapping_workspace
 
 
 # Snap size adjustment operators
@@ -21,6 +21,10 @@ class HOTSPOT_OT_snap_size_up(bpy.types.Operator):
     bl_idname = "hotspot.snap_size_up"
     bl_label = "Increase Snap Size"
     bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_hotspot_mapping_workspace()
 
     def execute(self, context):
         props = context.scene.hotspot_mapping_props
@@ -46,6 +50,10 @@ class HOTSPOT_OT_snap_size_down(bpy.types.Operator):
     bl_idname = "hotspot.snap_size_down"
     bl_label = "Decrease Snap Size"
     bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_hotspot_mapping_workspace()
 
     def execute(self, context):
         props = context.scene.hotspot_mapping_props
@@ -353,6 +361,10 @@ def draw_hotspots():
 
     # Only draw in Image Editor
     if context.area is None or context.area.type != 'IMAGE_EDITOR':
+        return
+
+    # Only draw in the Hotspot Mapping workspace
+    if not is_hotspot_mapping_workspace():
         return
 
     # Only draw when hotspot edit tool is active

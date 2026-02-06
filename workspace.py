@@ -2,9 +2,7 @@ import os
 
 import bpy
 
-
-LEVEL_DESIGN_WORKSPACE_NAME = "Level Design"
-HOTSPOT_MAPPING_WORKSPACE_NAME = "Hotspot Mapping"
+from .utils import LEVEL_DESIGN_WORKSPACE_NAME, HOTSPOT_MAPPING_WORKSPACE_NAME
 
 
 def _get_workspaces_blend_path():

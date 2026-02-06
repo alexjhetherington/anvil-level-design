@@ -8,6 +8,7 @@ import bpy
 from bpy.types import Panel
 
 from . import json_storage
+from ..utils import is_hotspot_mapping_workspace
 
 
 class HOTSPOT_PT_main_panel(Panel):
@@ -18,6 +19,10 @@ class HOTSPOT_PT_main_panel(Panel):
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
+    @classmethod
+    def poll(cls, context):
+        return is_hotspot_mapping_workspace()
 
     def draw(self, context):
         layout = self.layout

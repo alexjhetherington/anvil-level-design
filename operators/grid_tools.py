@@ -1,6 +1,8 @@
 import bpy
 from bpy.types import Operator
 
+from ..utils import is_level_design_workspace
+
 # Precalculated grid scale steps (doubling / halving)
 GRID_SCALES = [
     0.0078125,
@@ -40,6 +42,10 @@ class LEVELDESIGN_OT_grid_scale_up(Operator):
     bl_idname = "leveldesign.grid_scale_up"
     bl_label = "Grid Scale Up"
 
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
     def execute(self, context):
         overlays = get_all_3d_view_overlays()
         if not overlays:
@@ -57,6 +63,10 @@ class LEVELDESIGN_OT_grid_scale_down(Operator):
     """Decrease grid scale to previous step"""
     bl_idname = "leveldesign.grid_scale_down"
     bl_label = "Grid Scale Down"
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def execute(self, context):
         overlays = get_all_3d_view_overlays()

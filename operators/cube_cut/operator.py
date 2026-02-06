@@ -11,6 +11,7 @@ from . import utils
 from . import snapping
 from . import preview
 from . import geometry
+from ...utils import is_level_design_workspace
 
 
 # Minimum rectangle size (world units) to prevent degenerate geometry
@@ -65,6 +66,7 @@ class MESH_OT_cube_cut(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         return (
+            is_level_design_workspace() and
             context.active_object is not None and
             context.active_object.type == 'MESH' and
             context.mode == 'EDIT_MESH'

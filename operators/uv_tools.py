@@ -3,6 +3,8 @@ import bmesh
 import math
 import random
 from bpy.types import Operator
+
+from ..utils import is_level_design_workspace
 from mathutils import Vector
 
 from bpy_extras.view3d_utils import location_3d_to_region_2d
@@ -1461,7 +1463,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.type == 'MESH' and context.mode == 'EDIT_MESH'
+        return is_level_design_workspace() and context.object and context.object.type == 'MESH' and context.mode == 'EDIT_MESH'
 
     def invoke(self, context, event):
         obj = context.object

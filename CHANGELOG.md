@@ -5,6 +5,10 @@
 - Add HOTSPOT MAPPING
 - Various undo / redo improvements
 - Slight colour change on 3d view snap preview
+- Refactor workspace creation to use a template .blend file (much more stable)
+- Add workspace creation buttons into Anvil addon preferences
+- Addon disabled outside of specialised workspaces
+- Cube cut stability improved massively
 
 ## 1.1.1
 - Cube cut opposite face now cuts when exactly aligned with a mesh face

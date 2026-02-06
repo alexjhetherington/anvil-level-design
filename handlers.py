@@ -37,7 +37,8 @@ from .utils import (
     get_selected_image_path, find_material_with_image, create_material_with_image,
     get_texture_dimensions_from_material, get_face_local_axes, normalize_offset,
     get_local_x_from_verts_3d, debug_log, face_has_hotspot_material,
-    any_connected_face_has_hotspot, get_all_hotspot_faces
+    any_connected_face_has_hotspot, get_all_hotspot_faces,
+    is_level_design_workspace,
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
 
@@ -991,6 +992,10 @@ class LEVELDESIGN_OT_force_apply_texture(bpy.types.Operator):
     bl_label = "Repick File Browser Selected Texture"
     bl_options = {'INTERNAL'}
 
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
     def execute(self, context):
         apply_texture_from_file_browser()
         return {'FINISHED'}
@@ -1206,6 +1211,10 @@ def on_depsgraph_update(scene, depsgraph):
 
     # Skip all depsgraph handling during undo operations
     if _undo_in_progress:
+        return
+
+    # Only process in the Level Design workspace
+    if not is_level_design_workspace():
         return
 
     try:

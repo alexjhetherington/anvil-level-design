@@ -8,13 +8,17 @@ Anvil LD is particularly inspired by Trenchbroom.
 
 Anvil LD is a hobby project. It is likely buggy.
 
-## Installation
+## Installation & Use
 
 Download the zip from github: on the main github screen click code -> Download zip.
 
 Edit -> Preferences -> v arrow -> Install From Disk -> Select the zip file
 
 (For the avoidance of doubt, the zip should contain \_\_init.py\_\_ at the root.)
+
+Anvil adds new workspaces 'Hotspot Mapping' and 'Level Design.' You must be in those workspaces to use Anvil features. If you lose them, go to addon preferences -> Anvil -> Create X Workspace.
+
+You can see and remap addon hotkeys in addon preferences.
 
 ## Features
 

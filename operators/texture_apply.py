@@ -3,6 +3,8 @@ import bmesh
 import math
 from bpy.types import Operator
 from bpy_extras import view3d_utils
+
+from ..utils import is_level_design_workspace
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
@@ -186,6 +188,10 @@ class apply_image_to_face(Operator):
     bl_label = "Apply Image to Face"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
     def invoke(self, context, event):
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
         from .uv_tools import apply_hotspots_to_mesh
@@ -328,6 +334,10 @@ class pick_image_from_face(Operator):
     bl_idname = "leveldesign.pick_image_from_face"
     bl_label = "Pick Image from Face"
     bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
 
     def invoke(self, context, event):
         # Get ray from mouse position
