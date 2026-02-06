@@ -1171,13 +1171,14 @@ def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world
                 bm.edges[edge_idx].seam = True
         debug_log(f"[Hotspot] Restored {len(original_seams)} user seams")
 
-    elif seam_mode == 'DISPLAY_ALL':
+    # Commented out because it's useful to see the islands to debug when combine faces is on but faces aren't combining
+    #elif seam_mode == 'DISPLAY_ALL':
         # Keep existing seams and add seams around single quad islands
-        for island, result in single_quad_rectangled_islands:
-            face = island[0]  # island is a list with one face for single quads
-            for edge in face.edges:
-                edge.seam = True
-        debug_log(f"[Hotspot] Added seams around {len(single_quad_rectangled_islands)} single quad islands")
+        #for island, result in single_quad_rectangled_islands:
+        #    face = island[0]  # island is a list with one face for single quads
+        #    for edge in face.edges:
+        #        edge.seam = True
+        #debug_log(f"[Hotspot] Added seams around {len(single_quad_rectangled_islands)} single quad islands")
 
     elif seam_mode == 'CLEAR_ALL':
         # Clear all seams on processed faces
