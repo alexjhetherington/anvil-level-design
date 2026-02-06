@@ -110,7 +110,7 @@ It is important to have a wide variety of aspect ratios and sizes in your textur
 
 ### Geometry Tools
 
-## Cube Cut
+#### Cube Cut
 
 Press C in edit mode to enter cube cut mode.
 
