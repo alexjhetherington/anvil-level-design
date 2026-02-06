@@ -14,6 +14,7 @@ def debug_log(msg):
         print(msg)
 
 
+
 def get_local_x_from_verts_3d(verts):
     """Get the first non-zero edge direction from a list of 3D vertices.
 

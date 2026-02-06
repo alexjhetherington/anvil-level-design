@@ -1,504 +1,114 @@
+import os
+
 import bpy
-from bpy.app.handlers import persistent
-from mathutils import Quaternion
-
-from .hotspot_mapping import workspace as hotspot_workspace
-
-WORKSPACE_NAME = "Level Design"
-
-# Flag to track when Level Design workspace setup is fully complete
-_level_design_setup_complete = False
-
-# Guard to prevent multiple simultaneous workspace creation attempts
-_workspace_setup_in_progress = False
 
 
-def workspace_exists():
+LEVEL_DESIGN_WORKSPACE_NAME = "Level Design"
+HOTSPOT_MAPPING_WORKSPACE_NAME = "Hotspot Mapping"
+
+
+def _get_workspaces_blend_path():
+    addon_dir = os.path.dirname(__file__)
+    return os.path.join(addon_dir, "workspaces.blend")
+
+
+def level_design_workspace_exists():
     """Check if the Level Design workspace already exists"""
-    return WORKSPACE_NAME in bpy.data.workspaces
+    return LEVEL_DESIGN_WORKSPACE_NAME in bpy.data.workspaces
+
+
+def hotspot_mapping_workspace_exists():
+    """Check if the Hotspot Mapping workspace already exists."""
+    return HOTSPOT_MAPPING_WORKSPACE_NAME in bpy.data.workspaces
 
 
 def create_level_design_workspace():
-    """Create the Level Design workspace if it doesn't exist.
+    """Create Level Design workspace by appending from workspaces.blend.
 
-    Layout:
-    +------------------+------------------+--------+
-    |                  |                  | OUTLNR |
-    |   VIEW_3D (L)    |   VIEW_3D (R)    +--------+
-    |   Mat Preview    |   Wireframe      | PROPS  |
-    |   N-panel open   |   Top-down ortho |        |
-    +------------------+------------------+        |
-    |      FILE_BROWSER                   |        |
-    +-------------------------------------+--------+
-
-    - Left 3D Viewport: Material preview, N-panel open (Level Design tab)
-    - Right 3D Viewport: Wireframe, N-panel closed, toolbar hidden, top-down orthographic
-    - File Browser below the viewports only (not under right column)
-    - Outliner and Properties on far right (full height)
+    Used by the manual preferences button. Does not control tab ordering.
     """
-    if workspace_exists():
+    if level_design_workspace_exists():
         return False
 
-    # Store current workspace to restore later
-    original_workspace = bpy.context.window.workspace
-    original_name = original_workspace.name
+    filepath = _get_workspaces_blend_path()
+    with bpy.data.libraries.load(filepath) as (data_from, data_to):
+        data_to.workspaces = [LEVEL_DESIGN_WORKSPACE_NAME]
 
-    try:
-        # Get workspace names before duplicate
-        existing_names = set(bpy.data.workspaces.keys())
+    return level_design_workspace_exists()
 
-        # Create new workspace by duplicating current one
-        bpy.ops.workspace.duplicate()
 
-        # Find the new workspace by checking what's new in the list
-        # (Don't rely on it becoming active - that's not guaranteed)
-        new_workspace = None
-        for ws in bpy.data.workspaces:
-            if ws.name not in existing_names:
-                new_workspace = ws
-                break
+def create_hotspot_mapping_workspace():
+    """Create Hotspot Mapping workspace by appending from workspaces.blend.
 
-        # Fallback: look for the .001 suffix pattern
-        if not new_workspace:
-            for suffix in ['.001', '.002', '.003']:
-                candidate_name = original_name + suffix
-                if candidate_name in bpy.data.workspaces:
-                    new_workspace = bpy.data.workspaces[candidate_name]
-                    break
-
-        if not new_workspace:
-            print(f"Anvil Level Design: Could not find duplicated workspace")
-            return False
-
-        new_workspace.name = WORKSPACE_NAME
-
-        # Schedule the layout configuration
-        bpy.app.timers.register(
-            lambda: _setup_workspace_deferred(original_workspace),
-            first_interval=0.1
-        )
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error creating workspace: {e}")
+    Used by the manual preferences button. Does not control tab ordering.
+    """
+    if hotspot_mapping_workspace_exists():
         return False
 
-    return True
+    filepath = _get_workspaces_blend_path()
+    with bpy.data.libraries.load(filepath) as (data_from, data_to):
+        data_to.workspaces = [HOTSPOT_MAPPING_WORKSPACE_NAME]
+
+    return hotspot_mapping_workspace_exists()
 
 
-def _setup_workspace_deferred(original_workspace):
-    """Deferred workspace setup to ensure Blender is ready"""
-    try:
-        # Make sure we're on the Level Design workspace
-        workspace = bpy.data.workspaces.get(WORKSPACE_NAME)
-        if not workspace:
-            return None
+class LEVELDESIGN_OT_create_level_design_workspace(bpy.types.Operator):
+    """Create the Level Design workspace from the bundled template"""
+    bl_idname = "leveldesign.create_level_design_workspace"
+    bl_label = "Create Level Design Workspace"
 
-        # Switch to the Level Design workspace to configure it
-        bpy.context.window.workspace = workspace
-
-        # Start by closing areas until only one remains
-        bpy.app.timers.register(_close_areas_step, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in deferred setup: {e}")
-
-    return None
-
-
-def _close_areas_step():
-    """Close areas until only one remains."""
-    try:
-        screen = bpy.context.window.screen
-        areas = list(screen.areas)
-
-        if len(areas) <= 1:
-            # Done closing, now start splitting
-            bpy.app.timers.register(_configure_layout_step1, first_interval=0.1)
-            return None
-
-        # Try to close the first area that isn't the largest
-        largest = max(areas, key=lambda a: a.width * a.height)
-
-        for area in areas:
-            if area != largest:
-                try:
-                    region = None
-                    for r in area.regions:
-                        if r.type == 'WINDOW':
-                            region = r
-                            break
-
-                    if region:
-                        with bpy.context.temp_override(area=area, region=region):
-                            bpy.ops.screen.area_close()
-
-                        # Schedule next close
-                        bpy.app.timers.register(_close_areas_step, first_interval=0.1)
-                        return None
-                except Exception as e:
-                    print(f"Anvil Level Design: Close failed for area: {e}")
-                    continue
-
-        # If we get here, couldn't close any areas - proceed anyway
-        print("Anvil Level Design: Could not close all areas, proceeding with current layout")
-        bpy.app.timers.register(_configure_layout_step1, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in close step: {e}")
-        bpy.app.timers.register(_configure_layout_step1, first_interval=0.1)
-
-    return None
-
-
-def _get_areas_by_type(screen, area_type):
-    """Get all areas of a specific type"""
-    return [a for a in screen.areas if a.type == area_type]
-
-
-def _configure_layout_step1():
-    """Step 1: Find/create the main VIEW_3D and split for right column"""
-    try:
-        workspace = bpy.data.workspaces.get(WORKSPACE_NAME)
-        if not workspace or bpy.context.window.workspace != workspace:
-            return None
-
-        screen = bpy.context.window.screen
-        areas = list(screen.areas)
-
-        # If we have one area, great. Otherwise find the largest one.
-        if len(areas) == 1:
-            main_area = areas[0]
-            main_area.type = 'VIEW_3D'
+    def execute(self, context):
+        if create_level_design_workspace():
+            self.report({'INFO'}, "Created Level Design workspace")
         else:
-            # Find the largest area and use it
-            main_area = max(areas, key=lambda a: a.width * a.height)
-            main_area.type = 'VIEW_3D'
+            self.report({'WARNING'}, "Level Design workspace already exists")
+        return {'FINISHED'}
 
-        # Split vertically: 85% left (viewports+browser), 15% right (outliner+props)
-        _split_area(main_area, 'VERTICAL', 0.85)
 
-        bpy.app.timers.register(_configure_layout_step2, first_interval=0.1)
+class LEVELDESIGN_OT_create_hotspot_mapping_workspace(bpy.types.Operator):
+    """Create the Hotspot Mapping workspace from the bundled template"""
+    bl_idname = "leveldesign.create_hotspot_mapping_workspace"
+    bl_label = "Create Hotspot Mapping Workspace"
 
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 1: {e}")
-
-    return None
-
-
-def _configure_layout_step2():
-    """Step 2: Mark right column as OUTLINER, then split it for Properties"""
-    try:
-        screen = bpy.context.window.screen
-
-        # Find the rightmost VIEW_3D area - that's our right column
-        view3d_areas = _get_areas_by_type(screen, 'VIEW_3D')
-        if len(view3d_areas) < 2:
-            # Maybe only one area, try to continue
-            bpy.app.timers.register(_configure_layout_step3, first_interval=0.1)
-            return None
-
-        # Sort by x, rightmost is our right column
-        view3d_areas.sort(key=lambda a: a.x, reverse=True)
-        right_column = view3d_areas[0]
-
-        # Mark it as OUTLINER so we can identify it later
-        right_column.type = 'OUTLINER'
-
-        # Split it horizontally: 30% top (Outliner), 70% bottom (Properties)
-        _split_area(right_column, 'HORIZONTAL', 0.3)
-
-        bpy.app.timers.register(_configure_layout_step3, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 2: {e}")
-
-    return None
-
-
-def _configure_layout_step3():
-    """Step 3: Set bottom of right column to PROPERTIES"""
-    try:
-        screen = bpy.context.window.screen
-
-        # Find OUTLINER areas (from the split in step 2)
-        outliner_areas = _get_areas_by_type(screen, 'OUTLINER')
-
-        if len(outliner_areas) >= 2:
-            # Sort by y - lowest one becomes PROPERTIES
-            outliner_areas.sort(key=lambda a: a.y)
-            outliner_areas[0].type = 'PROPERTIES'
-
-        bpy.app.timers.register(_configure_layout_step4, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 3: {e}")
-
-    return None
-
-
-def _configure_layout_step4():
-    """Step 4: Split left area horizontally for file browser at bottom"""
-    try:
-        screen = bpy.context.window.screen
-
-        # Find VIEW_3D areas (should only be on the left side now)
-        view3d_areas = _get_areas_by_type(screen, 'VIEW_3D')
-        if not view3d_areas:
-            bpy.app.timers.register(_configure_layout_step5, first_interval=0.1)
-            return None
-
-        # Get the largest VIEW_3D (our main left area)
-        main_area = max(view3d_areas, key=lambda a: a.width * a.height)
-
-        # Split horizontally: 85% top (viewports), 15% bottom (file browser)
-        _split_area(main_area, 'HORIZONTAL', 0.20)
-
-        bpy.app.timers.register(_configure_layout_step5, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 4: {e}")
-
-    return None
-
-
-def _configure_layout_step5():
-    """Step 5: Mark bottom left as FILE_BROWSER, split top for two viewports"""
-    try:
-        screen = bpy.context.window.screen
-
-        # Find VIEW_3D areas (left side only now)
-        view3d_areas = _get_areas_by_type(screen, 'VIEW_3D')
-        if not view3d_areas:
-            bpy.app.timers.register(_configure_layout_step6, first_interval=0.1)
-            return None
-
-        # Sort by y - lowest becomes file browser
-        view3d_areas.sort(key=lambda a: a.y)
-        view3d_areas[0].type = 'FILE_BROWSER'
-
-        # The remaining VIEW_3D (top area) needs to be split for two viewports
-        remaining_view3d = _get_areas_by_type(screen, 'VIEW_3D')
-        if remaining_view3d:
-            viewport_area = max(remaining_view3d, key=lambda a: a.width * a.height)
-            # Split vertically: 50/50 for left and right viewports
-            _split_area(viewport_area, 'VERTICAL', 0.5)
-
-        bpy.app.timers.register(_configure_layout_step6, first_interval=0.1)
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 5: {e}")
-
-    return None
-
-
-def _configure_layout_step6():
-    """Step 6: Configure all areas with their final settings"""
-    global _level_design_setup_complete
-
-    try:
-        screen = bpy.context.window.screen
-        scene = bpy.context.scene
-
-        # Configure scene-level settings
-        # Set unit system to None
-        scene.unit_settings.system = 'NONE'
-        print("Anvil Level Design: Set unit system to None")
-
-        # Enable grid snapping
-        scene.tool_settings.use_snap = True
-        scene.tool_settings.snap_elements = {'INCREMENT'}
-        print("Anvil Level Design: Enabled grid snapping")
-
-        # Configure the two viewports
-        view3d_areas = _get_areas_by_type(screen, 'VIEW_3D')
-        view3d_areas.sort(key=lambda a: a.x)  # Sort left to right
-
-        if len(view3d_areas) >= 1:
-            _configure_left_viewport(view3d_areas[0])
-        if len(view3d_areas) >= 2:
-            _configure_right_viewport(view3d_areas[1])
-
-        # Configure file browser
-        file_browsers = _get_areas_by_type(screen, 'FILE_BROWSER')
-        for area in file_browsers:
-            for space in area.spaces:
-                if space.type == 'FILE_BROWSER' and space.params:
-                    space.params.display_type = 'THUMBNAIL'
-                    break
-
-        print(f"Anvil Level Design: Created '{WORKSPACE_NAME}' workspace")
-
-    except Exception as e:
-        print(f"Anvil Level Design: Error in layout step 6: {e}")
-
-    # Mark Level Design setup as complete (even if there were errors, we're done trying)
-    _level_design_setup_complete = True
-    return None
-
-
-def _split_area(area, direction, factor):
-    """Split an area using operator with override context.
-
-    Args:
-        area: The area to split
-        direction: 'VERTICAL' or 'HORIZONTAL'
-        factor: Split position (0.0 to 1.0)
-    """
-    # Find a region in the area to use for context
-    region = None
-    for r in area.regions:
-        if r.type == 'WINDOW':
-            region = r
-            break
-
-    if not region:
-        return False
-
-    try:
-        with bpy.context.temp_override(area=area, region=region):
-            bpy.ops.screen.area_split(direction=direction, factor=factor)
-        return True
-    except Exception as e:
-        print(f"Anvil Level Design: Error splitting area: {e}")
-        return False
-
-
-def _configure_left_viewport(area):
-    """Configure the left 3D viewport: Material preview, N-panel open"""
-    for space in area.spaces:
-        if space.type == 'VIEW_3D':
-            # Set shading to Material Preview
-            space.shading.type = 'MATERIAL'
-
-            # Show the sidebar (N-panel) - Level Design panel will be here
-            space.show_region_ui = True
-
-            # Show the toolbar (T-panel)
-            space.show_region_toolbar = True
-
-            # Set grid subdivisions to 1
-            space.overlay.grid_subdivisions = 1
-            print("Anvil Level Design: Set left viewport grid subdivisions to 1")
-
-            break
-
-
-def _configure_right_viewport(area):
-    """Configure the right 3D viewport: Wireframe, no panels, top-down ortho, locked rotation"""
-    for space in area.spaces:
-        if space.type == 'VIEW_3D':
-            # Set shading to Wireframe
-            space.shading.type = 'WIREFRAME'
-
-            # Hide the sidebar (N-panel)
-            space.show_region_ui = False
-
-            # Hide the toolbar (T-panel)
-            space.show_region_toolbar = False
-
-            # Set grid subdivisions to 1
-            space.overlay.grid_subdivisions = 1
-            print("Anvil Level Design: Set right viewport grid subdivisions to 1")
-
-            # Set to orthographic top-down view
-            region_3d = space.region_3d
-            if region_3d:
-                region_3d.view_perspective = 'ORTHO'
-                # Top-down view: looking down -Z axis
-                region_3d.view_rotation = Quaternion((1, 0, 0, 0))
-                # Lock rotation for orthographic view
-                region_3d.lock_rotation = True
-                print("Anvil Level Design: Locked rotation in right viewport")
-
-            break
-
-
-@persistent
-def on_load_post(dummy):
-    """Handler called after a .blend file is loaded"""
-    # Use a timer to defer workspace creation until Blender is fully ready
-    bpy.app.timers.register(_ensure_all_workspaces, first_interval=0.5)
-
-
-def _ensure_all_workspaces():
-    """Ensure both Level Design and Hotspot Mapping workspaces exist.
-
-    Creates Level Design first (if needed), waits for completion,
-    then creates Hotspot Mapping (if needed).
-    """
-    global _level_design_setup_complete, _workspace_setup_in_progress
-
-    # Prevent re-entry from multiple timer calls
-    if _workspace_setup_in_progress:
-        return None
-    _workspace_setup_in_progress = True
-
-    try:
-        if not workspace_exists():
-            # Need to create Level Design first
-            _level_design_setup_complete = False
-            create_level_design_workspace()
-            # Poll until Level Design is complete, then create Hotspot Mapping
-            bpy.app.timers.register(_wait_then_create_hotspot, first_interval=0.2)
+    def execute(self, context):
+        if create_hotspot_mapping_workspace():
+            self.report({'INFO'}, "Created Hotspot Mapping workspace")
         else:
-            # Level Design exists, just ensure Hotspot Mapping
-            _level_design_setup_complete = True
-            bpy.app.timers.register(_create_hotspot_if_needed, first_interval=0.1)
-    except Exception as e:
-        print(f"Anvil Level Design: Error ensuring workspaces: {e}")
-        _workspace_setup_in_progress = False
-    return None
+            self.report({'WARNING'}, "Hotspot Mapping workspace already exists")
+        return {'FINISHED'}
 
 
-def _wait_then_create_hotspot():
-    """Poll until Level Design setup is complete, then create Hotspot Mapping."""
-    if not _level_design_setup_complete:
-        return 0.2  # Keep polling
+def _setup_addon_workspaces():
+    """Create addon workspaces and configure scene settings on first enable."""
+    create_hotspot_mapping_workspace()
+    create_level_design_workspace()
+    bpy.ops.workspace.reorder_to_front()
 
-    _create_hotspot_if_needed()
-    return None
+    # Configure scene settings
+    scene = bpy.context.scene
+    scene.unit_settings.system = 'NONE'
+    scene.tool_settings.use_snap = True
+    scene.tool_settings.snap_elements = {'INCREMENT'}
 
+    # Set grid subdivisions to 1 on all 3D viewports
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.overlay.grid_subdivisions = 1
 
-def _create_hotspot_if_needed():
-    """Create Hotspot Mapping workspace if it doesn't exist."""
-    global _workspace_setup_in_progress
-
-    try:
-        if not hotspot_workspace.workspace_exists():
-            hotspot_workspace.create_hotspot_mapping_workspace()
-    except Exception as e:
-        print(f"Anvil Level Design: Error creating Hotspot Mapping workspace: {e}")
-    finally:
-        # Reset guard to allow future workspace checks (e.g., after file load)
-        _workspace_setup_in_progress = False
-    return None
-
-
-def ensure_workspace_exists():
-    """Ensure all addon workspaces exist. Called on addon enable."""
-    # Defer creation to ensure Blender is ready
-    bpy.app.timers.register(_ensure_all_workspaces, first_interval=0.2)
+    #bpy.context.window.workspace = bpy.data.workspaces[LEVEL_DESIGN_WORKSPACE_NAME]
 
 
 def register():
-    global _level_design_setup_complete, _workspace_setup_in_progress
+    bpy.utils.register_class(LEVELDESIGN_OT_create_level_design_workspace)
+    bpy.utils.register_class(LEVELDESIGN_OT_create_hotspot_mapping_workspace)
 
-    # Reset state flags
-    _level_design_setup_complete = False
-    _workspace_setup_in_progress = False
-
-    # Create workspace on addon enable
-    ensure_workspace_exists()
-
-    # Register handler for when blend files are loaded
-    if on_load_post not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(on_load_post)
+    # Create workspaces and configure settings on addon enable
+    bpy.app.timers.register(_setup_addon_workspaces, first_interval=0.2)
 
 
 def unregister():
-    # Remove the load handler
-    if on_load_post in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(on_load_post)
-
-    # Note: We don't delete the workspace on unregister
-    # as the user may have customized it
+    bpy.utils.unregister_class(LEVELDESIGN_OT_create_hotspot_mapping_workspace)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_create_level_design_workspace)

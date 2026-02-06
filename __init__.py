@@ -139,6 +139,16 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "mouse_sensitivity")
         layout.prop(self, "move_speed")
 
+        # Workspaces section
+        layout.separator()
+        layout.label(text="Workspaces")
+        row = layout.row()
+        row.operator("leveldesign.create_level_design_workspace")
+        row.enabled = not workspace.level_design_workspace_exists()
+        row = layout.row()
+        row.operator("leveldesign.create_hotspot_mapping_workspace")
+        row.enabled = not workspace.hotspot_mapping_workspace_exists()
+
         # Keybindings section
         layout.separator()
         row = layout.row()

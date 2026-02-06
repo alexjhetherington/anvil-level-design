@@ -12,7 +12,6 @@ from . import properties
 from . import operators
 from . import panels
 from . import gizmo
-from . import workspace
 from . import json_storage
 
 
@@ -33,8 +32,6 @@ def register():
     operators.register()
     panels.register()
     gizmo.register()
-    workspace.register()
-
     # Register handlers for file sync
     bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.save_pre.append(_on_save_pre)
@@ -47,7 +44,6 @@ def unregister():
     if _on_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load_post)
 
-    workspace.unregister()
     gizmo.unregister()
     panels.unregister()
     operators.unregister()

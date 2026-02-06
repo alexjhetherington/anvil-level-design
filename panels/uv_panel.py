@@ -121,7 +121,10 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
         props = context.scene.level_design_props
 
         # Projection with scale
+        obj = context.object
+        has_mesh = obj is not None and obj.type == 'MESH'
         row = layout.row(align=True)
+        row.enabled = has_mesh
         row.operator(
             "leveldesign.face_aligned_project",
             text="Face-Aligned Project",
