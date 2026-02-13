@@ -304,6 +304,23 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     if skipped_unselected_count > 0:
         debug_log(f"[CubeCut] Skipped {skipped_unselected_count} unselected faces")
 
+    # Check for degenerate geometry (duplicate vertices at same position) on faces to be cut.
+    # This can happen from previous operations leaving zero-length edges. Proceeding would
+    # cause face creation failures and orphaned geometry, so bail out early.
+    for face in faces_to_be_cut:
+        if not face.is_valid:
+            continue
+        seen_positions = {}
+        for v in face.verts:
+            key = (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5))
+            if key in seen_positions:
+                print(f"Level Design Tools: Error - Face {face.index} has duplicate vertices at {v.co[:]}. "
+                      f"Run Mesh > Clean Up > Merge by Distance first.")
+                debug_log(f"[CubeCut] ABORTING: Face {face.index} has duplicate verts at {key}")
+                bmesh.update_edit_mesh(me)
+                return (False, "Face has duplicate vertices - run Merge by Distance first")
+            seen_positions[key] = v
+
     # === STEP 2: Find edge-plane intersections and split edges ===
     # Only split edges that belong to faces that will be cut
     debug_log(f"\n[CubeCut] === STEP 2: Find edge-plane intersections ===")

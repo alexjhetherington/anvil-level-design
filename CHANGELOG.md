@@ -3,6 +3,7 @@
 ## 1.2.1
 
 - Cube Cut cube is now oriented based on start face normal
+- More Cube Cut stability (including defensive error messaging when done on invalid faces)
 
 ## 1.2.0
 
