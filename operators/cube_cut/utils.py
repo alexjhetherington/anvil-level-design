@@ -257,8 +257,12 @@ def get_rectangle_axes(face_normal, context):
     """
     Get the local X and Y axes for the rectangle based on face normal.
 
-    The rectangle is always vertical (Y axis is world Z).
-    The X axis is horizontal and perpendicular to the face normal's horizontal component.
+    The rectangle's front face aligns with the face normal.
+    local_x stays horizontal (no roll along the cube's length).
+    local_y tilts with the face normal to match the surface angle.
+
+    For horizontal faces (floor/ceiling), uses world-aligned axes
+    with the view direction to pick orientation.
 
     Args:
         face_normal: The face normal of the hit face
@@ -266,18 +270,18 @@ def get_rectangle_axes(face_normal, context):
 
     Returns:
         tuple: (local_x, local_y, local_z) unit vectors
-               local_y is always world Z (up)
+               local_z is the face normal (depth direction)
                local_x is horizontal, perpendicular to face
-               local_z is the depth direction (perpendicular to rectangle)
+               local_y is perpendicular to both (tilts with face)
     """
-    local_y = Vector((0, 0, 1))  # Rectangle is always vertical
+    local_z = face_normal.normalized()
 
-    # Project face normal onto horizontal plane
-    horizontal_normal = Vector((face_normal.x, face_normal.y, 0))
+    # Check if face is horizontal (normal nearly parallel to world Z)
+    horizontal_component = Vector((face_normal.x, face_normal.y, 0))
 
-    if horizontal_normal.length < 0.001:
+    if horizontal_component.length < 0.001:
         # Face is horizontal (floor/ceiling)
-        # Use view direction to determine orientation
+        # Use view direction to determine which world axis to use for local_x
         rv3d = context.region_data
         if rv3d is not None:
             view_forward = Vector((
@@ -287,27 +291,30 @@ def get_rectangle_axes(face_normal, context):
             ))
             if view_forward.length > 0.001:
                 view_forward.normalize()
-                # Choose X or -Y axis based on which is closer to view direction
                 dot_x = abs(view_forward.dot(Vector((1, 0, 0))))
                 dot_y = abs(view_forward.dot(Vector((0, 1, 0))))
 
                 if dot_x > dot_y:
-                    horizontal_normal = Vector((1, 0, 0)) if view_forward.x > 0 else Vector((-1, 0, 0))
+                    local_x = Vector((0, 1, 0))
                 else:
-                    horizontal_normal = Vector((0, 1, 0)) if view_forward.y > 0 else Vector((0, -1, 0))
+                    local_x = Vector((1, 0, 0))
             else:
-                horizontal_normal = Vector((1, 0, 0))
+                local_x = Vector((1, 0, 0))
         else:
-            horizontal_normal = Vector((1, 0, 0))
+            local_x = Vector((1, 0, 0))
 
-    horizontal_normal.normalize()
+        local_y = local_z.cross(local_x)
+        local_y.normalize()
+        return (local_x, local_y, local_z)
 
-    # local_z is the depth direction (rectangle normal, pointing "outward")
-    local_z = horizontal_normal.copy()
-
-    # local_x is perpendicular to both local_y (Z) and local_z
-    local_x = local_y.cross(local_z)
+    # Non-horizontal face: local_x is horizontal, perpendicular to face normal
+    world_up = Vector((0, 0, 1))
+    local_x = world_up.cross(local_z)
     local_x.normalize()
+
+    # local_y tilts with the face, perpendicular to both
+    local_y = local_z.cross(local_x)
+    local_y.normalize()
 
     return (local_x, local_y, local_z)
 

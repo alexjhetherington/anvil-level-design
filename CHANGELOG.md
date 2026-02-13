@@ -1,5 +1,9 @@
 # Anvil Level Design Changelog
 
+## 1.2.1
+
+- Cube Cut cube is now oriented based on start face normal
+
 ## 1.2.0
 
 - Add HOTSPOT MAPPING
