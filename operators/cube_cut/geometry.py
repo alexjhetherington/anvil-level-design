@@ -413,7 +413,8 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
                     bm.verts.remove(v)
             continue
 
-        new_verts = _sort_verts_by_angle_with_normal(list(interior_verts) + edge_verts_on_face, face_normal)
+        verts_to_delete_set = set(verts_to_delete)
+        new_verts = _sort_verts_by_angle_with_normal(list(interior_verts) + [v for v in edge_verts_on_face if v not in verts_to_delete_set], face_normal)
         verts_in_original_interior = _sort_verts_by_angle_with_normal(list(interior_verts), face_normal)
         verts_on_original_exterior = _sort_verts_by_angle_with_normal([v for v in face.verts if v not in verts_to_delete], face_normal)
 
