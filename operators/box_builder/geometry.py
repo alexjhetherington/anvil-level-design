@@ -1,5 +1,5 @@
 """
-Box Create Tool - Geometry
+Box Builder - Geometry
 
 Creates box meshes with correct outward normals, material assignment, and UV mapping.
 """
@@ -13,8 +13,8 @@ from ...handlers import cache_single_face, get_active_image
 from ...utils import find_material_with_image, create_material_with_image, debug_log
 
 
-def execute_box_create(first_vertex, second_vertex, depth, local_x, local_y, local_z,
-                       obj, ppm, reverse_plane_normal):
+def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
+                        obj, ppm, reverse_plane_normal):
     """
     Create a box mesh from the modal draw parameters.
 
@@ -147,7 +147,7 @@ def _create_box(bm, origin, dx, dy, depth, lx, ly, lz, flip_count):
             f = bm.faces.new(winding)
             faces.append(f)
         except ValueError:
-            debug_log(f"[BoxCreate] Failed to create face with winding {[vt.co[:] for vt in winding]}")
+            debug_log(f"[BoxBuilder] Failed to create face with winding {[vt.co[:] for vt in winding]}")
 
     return faces
 
@@ -182,7 +182,7 @@ def _create_plane(bm, origin, dx, dy, depth, lx, ly, lz, flip_count, reverse_pla
         f = bm.faces.new(winding)
         return [f]
     except ValueError:
-        debug_log(f"[BoxCreate] Failed to create plane face")
+        debug_log(f"[BoxBuilder] Failed to create plane face")
         return []
 
 

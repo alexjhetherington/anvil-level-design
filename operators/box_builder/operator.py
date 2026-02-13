@@ -1,5 +1,5 @@
 """
-Box Create Tool - Main Modal Operator
+Box Builder - Main Modal Operator
 
 Thin subclass of ModalDrawBase that creates box geometry.
 """
@@ -11,10 +11,10 @@ from ..modal_draw.base_operator import ModalDrawBase
 from ...utils import is_level_design_workspace
 
 
-class MESH_OT_box_create(ModalDrawBase, bpy.types.Operator):
+class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
     """Create a box mesh using the 3-state draw workflow"""
-    bl_idname = "leveldesign.box_create"
-    bl_label = "Box"
+    bl_idname = "leveldesign.box_builder"
+    bl_label = "Box Builder"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -53,19 +53,19 @@ class MESH_OT_box_create(ModalDrawBase, bpy.types.Operator):
         dot = geometric_normal.dot(view_forward)
         reverse_plane_normal = dot > 0
 
-        return geometry.execute_box_create(
+        return geometry.execute_box_builder(
             first_vertex, second_vertex, depth,
             local_x, local_y, local_z,
             obj, ppm, reverse_plane_normal
         )
 
     def _get_tool_name(self):
-        return "Box"
+        return "Box Builder"
 
 
 def register():
-    bpy.utils.register_class(MESH_OT_box_create)
+    bpy.utils.register_class(MESH_OT_box_builder)
 
 
 def unregister():
-    bpy.utils.unregister_class(MESH_OT_box_create)
+    bpy.utils.unregister_class(MESH_OT_box_builder)

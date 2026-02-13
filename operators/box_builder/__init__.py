@@ -1,5 +1,5 @@
 """
-Box Create Tool
+Box Builder
 
 A modal tool for creating box meshes using the 3-state draw workflow.
 Designed for level design workflows.
@@ -15,7 +15,7 @@ _addon_keymaps = []
 
 
 def register():
-    """Register the box create operator and keymap."""
+    """Register the box builder operator and keymap."""
     operator.register()
 
     # Register keymap
@@ -24,9 +24,9 @@ def register():
     if kc:
         km = kc.keymaps.new(name='Mesh', space_type='EMPTY')
 
-        # B key to activate box create in edit mode
+        # B key to activate box builder in edit mode
         kmi = km.keymap_items.new(
-            operator.MESH_OT_box_create.bl_idname,
+            operator.MESH_OT_box_builder.bl_idname,
             type='B',
             value='PRESS',
             ctrl=False,
@@ -38,7 +38,7 @@ def register():
 
 
 def unregister():
-    """Unregister the box create operator and keymap."""
+    """Unregister the box builder operator and keymap."""
     # Clean up keymap
     for km, kmi in _addon_keymaps:
         km.keymap_items.remove(kmi)
