@@ -1,5 +1,5 @@
 """
-Cube Cut Tool - GPU Drawing / Preview
+Modal Draw - GPU Drawing / Preview
 
 Handles all visual feedback: snap indicators, rectangle preview, cuboid preview.
 """
@@ -28,9 +28,9 @@ GRID_FADE_RADIUS = 5  # Number of grid cells before fully faded
 GRID_EXTENT = 6       # Number of grid cells to draw in each direction from cursor
 
 
-class CubeCutPreview:
+class ModalDrawPreview:
     """
-    Manages all preview drawing for the cube cut tool.
+    Manages all preview drawing for modal draw tools.
 
     Registers draw handlers for all 3D viewports and draws based on current state.
     """
@@ -484,7 +484,7 @@ def get_preview():
     """Get the global preview instance."""
     global _preview_instance
     if _preview_instance is None:
-        _preview_instance = CubeCutPreview()
+        _preview_instance = ModalDrawPreview()
     return _preview_instance
 
 

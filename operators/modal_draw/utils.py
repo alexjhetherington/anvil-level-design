@@ -1,5 +1,5 @@
 """
-Cube Cut Tool - Utility Functions
+Modal Draw - Utility Functions
 
 Coordinate math, plane intersections, and helper functions.
 """

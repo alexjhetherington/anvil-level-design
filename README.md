@@ -120,6 +120,14 @@ Cube cut avoids N-gons and T-Junctions.
 
 Cube cut only affects selected faces (if no faces are selected, it will affect all faces).
 
+#### Box Builder
+
+Press B in edit mode to enter box builder mode.
+
+Click on a face in the 3d view to start drawing the cube; move your mouse and click again to define the rectangular face that will be cut. Move your mouse a third time to define the cube; click a third time to make the box.
+
+A 0 depth box will become a plane.
+
 ### Camera and Viewport Tools
 
 Hotkeys are intended to be blender default.

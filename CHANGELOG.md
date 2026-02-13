@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.2.2
+- Add Box Builder!
+
 ## 1.2.1
 
 - Cube Cut cube is now oriented based on start face normal

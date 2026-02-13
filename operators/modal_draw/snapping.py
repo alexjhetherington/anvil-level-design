@@ -1,5 +1,5 @@
 """
-Cube Cut Tool - Snapping Logic
+Modal Draw - Snapping Logic
 
 All snapping calculations are isolated here for easy modification.
 """

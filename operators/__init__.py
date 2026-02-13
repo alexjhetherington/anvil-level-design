@@ -7,6 +7,7 @@ from . import glb_export
 from . import material_tools
 from . import pixels_per_meter
 from . import cube_cut
+from . import box_create
 
 
 def register():
@@ -19,9 +20,11 @@ def register():
     material_tools.register()
     pixels_per_meter.register()
     cube_cut.register()
+    box_create.register()
 
 
 def unregister():
+    box_create.unregister()
     cube_cut.unregister()
     pixels_per_meter.unregister()
     material_tools.unregister()

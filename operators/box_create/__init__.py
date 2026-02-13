@@ -1,11 +1,8 @@
 """
-Cube Cut Tool
+Box Create Tool
 
-A modal tool for cutting cuboid-shaped voids from mesh geometry.
+A modal tool for creating box meshes using the 3-state draw workflow.
 Designed for level design workflows.
-
-This module is architecturally separate from the rest of the addon
-to maintain clean boundaries and easy modification.
 """
 
 import bpy
@@ -18,7 +15,7 @@ _addon_keymaps = []
 
 
 def register():
-    """Register the cube cut operator and keymap."""
+    """Register the box create operator and keymap."""
     operator.register()
 
     # Register keymap
@@ -27,10 +24,10 @@ def register():
     if kc:
         km = kc.keymaps.new(name='Mesh', space_type='EMPTY')
 
-        # C key to activate cube cut in edit mode
+        # B key to activate box create in edit mode
         kmi = km.keymap_items.new(
-            operator.MESH_OT_cube_cut.bl_idname,
-            type='C',
+            operator.MESH_OT_box_create.bl_idname,
+            type='B',
             value='PRESS',
             ctrl=False,
             shift=False,
@@ -41,7 +38,7 @@ def register():
 
 
 def unregister():
-    """Unregister the cube cut operator and keymap."""
+    """Unregister the box create operator and keymap."""
     # Clean up keymap
     for km, kmi in _addon_keymaps:
         km.keymap_items.remove(kmi)
