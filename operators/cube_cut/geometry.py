@@ -651,6 +651,21 @@ def _split_edges_at_intersections(bm, edge_splits):
             new_t = (intersection_point - v1.co).dot(edge_vec) / edge_vec.length_squared
             new_t = max(0.01, min(0.99, new_t))  # Clamp to avoid degenerate splits
 
+            # Check if intersection coincides with an existing vertex
+            # (happens when a cuboid edge passes through a mesh edge)
+            if (intersection_point - v1.co).length < EPSILON:
+                if v1 not in vert_plane_map:
+                    vert_plane_map[v1] = set()
+                vert_plane_map[v1].add(plane_idx)
+                debug_log(f"[CubeCut] Intersection at existing vert {v1.co[:]}, adding plane {plane_idx}")
+                continue
+            if (intersection_point - v2.co).length < EPSILON:
+                if v2 not in vert_plane_map:
+                    vert_plane_map[v2] = set()
+                vert_plane_map[v2].add(plane_idx)
+                debug_log(f"[CubeCut] Intersection at existing vert {v2.co[:]}, adding plane {plane_idx}")
+                continue
+
             # Split the edge
             old_edge_verts = (current_edge.verts[0].index, current_edge.verts[1].index)
             old_edge_coords = (current_edge.verts[0].co.copy(), current_edge.verts[1].co.copy())
