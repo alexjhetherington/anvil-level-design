@@ -1063,6 +1063,14 @@ def _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original
     created_faces = []
 
     for v1, v2 in created_edges:
+        # Check if starting from v2 produces correct winding by examining the first step
+        first_next = find_next_vert_angular(v2, v1, v1)
+        if first_next is not None:
+            edge_dir = v2.co - v1.co
+            next_dir = first_next.co - v2.co
+            if edge_dir.cross(next_dir).dot(face_normal) < 0:
+                v1, v2 = v2, v1
+
         # Walk around edges to form a closed loop starting with this edge
         # Start at v1, go to v2, then continue in angular order until we return to v1
         face_verts = [v1, v2]
