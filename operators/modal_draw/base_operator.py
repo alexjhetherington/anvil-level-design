@@ -95,6 +95,10 @@ class ModalDrawBase:
 
     # --- Hook methods (may override) ---
 
+    def _is_valid_mode(self, context):
+        """Check if the current mode is valid for this operator. Override to allow other modes."""
+        return context.mode == 'EDIT_MESH'
+
     def _calculate_first_vertex_snap_2d(self, context, event):
         return snapping.calculate_first_vertex_snap_2d(context, event)
 
@@ -164,8 +168,8 @@ class ModalDrawBase:
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
-        # Exit if user left edit mode
-        if context.mode != 'EDIT_MESH':
+        # Exit if user left a valid mode
+        if not self._is_valid_mode(context):
             self._cleanup(context)
             return {'CANCELLED'}
 

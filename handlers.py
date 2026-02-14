@@ -215,12 +215,15 @@ def _get_best_neighbor_face(face, selected_faces_set):
     return best_neighbor
 
 
-def _project_selected_faces_on_topology_change(context, bm):
-    """Apply UV projection to selected non-hotspot faces after topology change.
+def _project_new_selected_faces_on_topology_change(context, bm):
+    """Apply UV projection to newly created selected faces after topology change.
 
     Operations like Bridge Edge Loops, Fill, Grid Fill select the newly created faces.
     Uses neighboring faces as UV source for seamless tiling (like alt-click).
     Hotspot faces are handled by the deferred auto-hotspot system.
+
+    Only processes faces not already in the cache (new faces). Pre-existing faces
+    that were already selected are left untouched to preserve their UV settings.
     """
     from .operators.texture_apply import set_uv_from_other_face
 
@@ -236,8 +239,10 @@ def _project_selected_faces_on_topology_change(context, bm):
     if not selected_faces:
         return
 
-    # Only process non-hotspot faces - hotspot faces handled by deferred system
-    normal_faces = [f for f in selected_faces if not face_has_hotspot_material(f, me)]
+    # Only process non-hotspot faces that are NEW (not in cache).
+    # Pre-existing cached faces keep their UV settings.
+    normal_faces = [f for f in selected_faces
+                    if not face_has_hotspot_material(f, me) and f.index not in face_data_cache]
 
     # Apply normal UVs (world-space projection from neighbors)
     projected_count = 0
@@ -1280,7 +1285,7 @@ def on_depsgraph_update(scene, depsgraph):
                         # Project new faces only on actual topology changes
                         # (not after undo/redo cache invalidation or object switch)
                         if not is_fresh_start and not is_undo_recovery:
-                            _project_selected_faces_on_topology_change(context, bm)
+                            _project_new_selected_faces_on_topology_change(context, bm)
                         cache_face_data(context)
                         update_ui_from_selection(context)
                         # Only update active image if allowed

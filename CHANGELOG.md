@@ -3,6 +3,7 @@
 ## 1.2.2
 - Add BOX BUILDER
 - Fix an issue with undo and UVs
+- Cube Cut from orthogonal view has infinite depth
 
 ## 1.2.1
 

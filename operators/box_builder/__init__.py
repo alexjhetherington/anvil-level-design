@@ -36,6 +36,18 @@ def register():
 
         _addon_keymaps.append((km, kmi))
 
+        # B key in object mode
+        km_obj = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+        kmi_obj = km_obj.keymap_items.new(
+            operator.MESH_OT_box_builder.bl_idname,
+            type='B',
+            value='PRESS',
+            ctrl=False,
+            shift=False,
+            alt=False
+        )
+        _addon_keymaps.append((km_obj, kmi_obj))
+
 
 def unregister():
     """Unregister the box builder operator and keymap."""

@@ -4,6 +4,7 @@ Box Builder - Geometry
 Creates box meshes with correct outward normals, material assignment, and UV mapping.
 """
 
+import bpy
 import bmesh
 from mathutils import Vector
 
@@ -58,6 +59,9 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
 
     # Track axis flips for winding correction
     flip_count = 0
+    # Detect left-handed axis system (e.g. TOP, BACK, RIGHT ortho views).
+    # Only affects boxes; planes already handle view-facing via reverse_plane_normal.
+    left_handed = lx.cross(ly).dot(lz) < 0
     if dx < 0:
         dx = -dx
         lx = -lx
@@ -79,8 +83,9 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         new_faces = _create_plane(bm, local_first, dx, dy, local_depth,
                                   lx, ly, lz, flip_count, reverse_plane_normal)
     else:
+        box_flip_count = flip_count + (1 if left_handed else 0)
         new_faces = _create_box(bm, local_first, dx, dy, local_depth,
-                                lx, ly, lz, flip_count)
+                                lx, ly, lz, box_flip_count)
 
     if not new_faces:
         bmesh.update_edit_mesh(me)
@@ -235,3 +240,118 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
             face.material_index = mat_idx
             apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0, 0, 0, mat, ppm, me)
             cache_single_face(face, uv_layer, ppm, me)
+
+
+def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
+                                    local_x, local_y, local_z,
+                                    ppm, reverse_plane_normal):
+    """Create a new object with box geometry in object mode.
+
+    Object origin is placed at first_vertex; geometry is built relative to it.
+
+    Args:
+        first_vertex: First corner of the rectangle (world space)
+        second_vertex: Opposite corner of the rectangle (world space)
+        depth: Depth of the box (can be negative or zero)
+        local_x: Rectangle's local X axis
+        local_y: Rectangle's local Y axis
+        local_z: Rectangle's local Z axis (depth direction)
+        ppm: Pixels per meter setting
+        reverse_plane_normal: If True, zero-depth plane faces -lz instead of +lz
+
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    # Compute dimensions relative to first_vertex (will be object origin)
+    diff = second_vertex - first_vertex
+    dx = diff.dot(local_x)
+    dy = diff.dot(local_y)
+
+    flip_count = 0
+    lx = local_x.copy()
+    ly = local_y.copy()
+    lz = local_z.copy()
+
+    # Detect left-handed axis system (e.g. TOP, BACK, RIGHT ortho views).
+    # Only affects boxes; planes already handle view-facing via reverse_plane_normal.
+    left_handed = lx.cross(ly).dot(lz) < 0
+    if dx < 0:
+        dx = -dx
+        lx = -lx
+        flip_count += 1
+    if dy < 0:
+        dy = -dy
+        ly = -ly
+        flip_count += 1
+
+    is_zero_depth = abs(depth) < 1e-5
+
+    # Build geometry in a new bmesh (origin at 0,0,0)
+    bm = bmesh.new()
+    origin = Vector((0, 0, 0))
+
+    if is_zero_depth:
+        new_faces = _create_plane(bm, origin, dx, dy, depth,
+                                  lx, ly, lz, flip_count, reverse_plane_normal)
+    else:
+        box_flip_count = flip_count + (1 if left_handed else 0)
+        new_faces = _create_box(bm, origin, dx, dy, depth,
+                                lx, ly, lz, box_flip_count)
+
+    if not new_faces:
+        bm.free()
+        return (False, "Failed to create box geometry")
+
+    bm.normal_update()
+
+    # Create new mesh data and object
+    me = bpy.data.meshes.new("Box")
+    obj = bpy.data.objects.new("Box", me)
+    obj.location = first_vertex
+
+    # Link to active collection
+    collection = bpy.context.collection
+    collection.objects.link(obj)
+
+    # Write initial geometry to mesh
+    bm.to_mesh(me)
+    bm.free()
+
+    # Deselect all, then set new object as active and selected
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    # Apply material and UVs via edit mode (apply_uv_to_face requires edit mesh)
+    image = get_active_image()
+    if image is not None:
+        mat = find_material_with_image(image)
+        if mat is None:
+            mat = create_material_with_image(image)
+
+        me.materials.append(mat)
+        mat_idx = 0
+
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        bm_edit = bmesh.from_edit_mesh(me)
+        bm_edit.faces.ensure_lookup_table()
+
+        uv_layer = bm_edit.loops.layers.uv.active
+        if uv_layer is None:
+            uv_layer = bm_edit.loops.layers.uv.new("UVMap")
+
+        for face in bm_edit.faces:
+            if not face.is_valid:
+                continue
+            face.material_index = mat_idx
+            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0, 0, 0, mat, ppm, me)
+            cache_single_face(face, uv_layer, ppm, me)
+
+        bmesh.update_edit_mesh(me)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    if is_zero_depth:
+        return (True, "Plane object created")
+    return (True, "Box object created")

@@ -114,19 +114,24 @@ It is important to have a wide variety of aspect ratios and sizes in your textur
 
 Press C in edit mode to enter cube cut mode.
 
-Click on a face in the 3d view to start drawing the cube; move your mouse and click again to define the rectangular face that will be cut. Move your mouse a third time to define the cube; click a third time to make the cut.
-
-Cube cut avoids N-gons and T-Junctions.
+Click on a face in the 3d perspective view to start drawing the cube; move your mouse and click again to define the rectangular face that will be cut. Move your mouse a third time to define the cube; click a third time to make the cut.
 
 Cube cut only affects selected faces (if no faces are selected, it will affect all faces).
 
+Draw a rectangle in an orthogonal view to do an infinite depth cut (I advise taking advantage of cube cut only affecting selected faces.)
+
+Cube cut avoids N-gons and T-Junctions.
+
+
 #### Box Builder
 
-Press B in edit mode to enter box builder mode.
+Press B in edit or object mode to enter box builder mode.
 
 Click on a face in the 3d view to start drawing the cube; move your mouse and click again to define the rectangular face that will be cut. Move your mouse a third time to define the cube; click a third time to make the box.
 
 A 0 depth box will become a plane.
+
+Select a vertex to align the box creation when not building on an existing face
 
 ### Camera and Viewport Tools
 
