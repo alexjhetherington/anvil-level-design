@@ -246,6 +246,36 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
         if any_faces_selected and not face.select:
             continue
 
+        # Skip faces coplanar with side boundary planes (2-5).
+        # For zero-depth cuts, ONLY allow faces coplanar with the depth
+        # planes (0-1) — nothing else should be cut.
+        is_coplanar_side = False
+        for plane_point, plane_normal in cuboid.planes[2:]:
+            if all(
+                abs((v.co - plane_point).dot(plane_normal)) <= EPSILON
+                for v in face.verts
+            ):
+                is_coplanar_side = True
+                break
+        if is_coplanar_side:
+            debug_log(f"[CubeCut] Face {face.index} is coplanar with cuboid side boundary - skipping")
+            continue
+
+        zero_depth = abs(cuboid.depth_max - cuboid.depth_min) <= EPSILON * 3
+        debug_log(f"[CubeCut] Face {face.index} zero_depth={zero_depth} (depth_min={cuboid.depth_min}, depth_max={cuboid.depth_max})")
+        if zero_depth:
+            is_coplanar_depth = False
+            for plane_point, plane_normal in cuboid.planes[:2]:
+                if all(
+                    abs((v.co - plane_point).dot(plane_normal)) <= EPSILON
+                    for v in face.verts
+                ):
+                    is_coplanar_depth = True
+                    break
+            if not is_coplanar_depth:
+                debug_log(f"[CubeCut] Face {face.index} skipped - zero-depth cut only affects coplanar faces")
+                continue
+
         # Collect all edges that have crossings within cuboid bounds
         edges_with_crossings = set()
         for edge in face.edges:
@@ -291,6 +321,34 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
             continue
         if any_faces_selected and not face.select:
             continue
+
+        # Skip faces coplanar with a cuboid side boundary (same guard as Second)
+        is_coplanar_side = False
+        for plane_point, plane_normal in cuboid.planes[2:]:
+            if all(
+                abs((v.co - plane_point).dot(plane_normal)) <= EPSILON
+                for v in face.verts
+            ):
+                is_coplanar_side = True
+                break
+        if is_coplanar_side:
+            debug_log(f"[CubeCut] Face {face.index} is coplanar with cuboid side boundary - skipping vertex check")
+            continue
+
+        # Zero-depth: only cut faces coplanar with depth planes (same guard as Second)
+        zero_depth = abs(cuboid.depth_max - cuboid.depth_min) <= EPSILON * 3
+        if zero_depth:
+            is_coplanar_depth = False
+            for plane_point, plane_normal in cuboid.planes[:2]:
+                if all(
+                    abs((v.co - plane_point).dot(plane_normal)) <= EPSILON
+                    for v in face.verts
+                ):
+                    is_coplanar_depth = True
+                    break
+            if not is_coplanar_depth:
+                debug_log(f"[CubeCut] Face {face.index} skipped - zero-depth cut only affects coplanar faces")
+                continue
 
         for vert in face.verts:
             if cuboid.point_inside(vert.co):
