@@ -229,6 +229,77 @@ def calculate_second_vertex_snap(context, event, first_vertex, local_x, local_y,
         return point
 
 
+def calculate_line_end_snap(context, event, first_vertex, plane_point, plane_normal, is_2d_view):
+    """
+    Calculate the snapped position for the line end point in line mode.
+
+    Uses absolute grid snapping (same as first vertex) since the line endpoint
+    defines a new anchor point that should align to the world grid.
+
+    Args:
+        context: Blender context
+        event: Mouse event
+        first_vertex: The first vertex position
+        plane_point: A point on the rectangle's plane
+        plane_normal: The rectangle's plane normal
+        is_2d_view: Whether we're in a 2D orthographic view
+
+    Returns:
+        Vector or None: Snapped position, or None if invalid
+    """
+    point = utils.mouse_to_3d_on_plane(context, event, plane_point, plane_normal)
+    if point is None:
+        return None
+
+    grid_size = utils.get_grid_size(context)
+
+    if utils.is_snapping_enabled(context):
+        if is_2d_view:
+            return snap_to_grid(point, grid_size)
+        else:
+            return snap_to_grid_on_face(point, plane_normal, grid_size)
+    else:
+        return point
+
+
+def calculate_width_snap(context, event, first_vertex, line_length, local_x, local_y,
+                         plane_point, plane_normal):
+    """
+    Calculate the snapped second vertex position in line mode.
+
+    The local_x extent is fixed to line_length. Only the local_y (width)
+    component varies based on mouse position, snapped to grid increments.
+
+    Args:
+        context: Blender context
+        event: Mouse event
+        first_vertex: The first vertex position
+        line_length: Fixed length along local_x (from line drawing)
+        local_x: Line direction axis
+        local_y: Perpendicular width axis
+        plane_point: A point on the rectangle's plane
+        plane_normal: The rectangle's plane normal
+
+    Returns:
+        Vector or None: Snapped second vertex position, or None if invalid
+    """
+    point = utils.mouse_to_3d_on_plane(context, event, plane_point, plane_normal)
+    if point is None:
+        return None
+
+    # Extract only the local_y component (width) relative to first_vertex
+    offset = point - first_vertex
+    dy = offset.dot(local_y)
+
+    grid_size = utils.get_grid_size(context)
+
+    if utils.is_snapping_enabled(context):
+        dy = round(dy / grid_size) * grid_size
+
+    # Reconstruct: fixed line_length along local_x, variable width along local_y
+    return first_vertex + local_x * line_length + local_y * dy
+
+
 def calculate_depth_from_mouse_3d(context, event, first_vertex, second_vertex, local_z, initial_mouse_pos):
     """
     Calculate depth by intersecting the mouse ray with a plane containing

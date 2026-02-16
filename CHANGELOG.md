@@ -2,11 +2,12 @@
 
 ## 1.2.2
 - Add BOX BUILDER
-- Fix an issue with undo and UVs
+- Cube Cut and Box Builder can make rotated construction boxes by holding shift
 - Cube Cut from orthogonal view has infinite depth
 - Improve Cube Cut and Box Builder snapping (fix bug; improve mouse feel)
 - Even more Cube Cut and Box Builder stability
 - Fix active image stale reference on undo
+- Fix an issue with undo and UVs
 
 ## 1.2.1
 

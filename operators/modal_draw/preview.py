@@ -56,6 +56,10 @@ class ModalDrawPreview:
         self._face_plane_normal = None # Face normal for grid orientation
         self._snap_was_clamped = False # Whether snap position was clamped to edge
 
+        # Line mode data
+        self._line_mode = False        # Whether in rotated/line mode
+        self._line_end = None          # Current line end point
+
     def register_handlers(self):
         """Register draw handlers for all 3D view spaces."""
         self.unregister_handlers()
@@ -101,6 +105,14 @@ class ModalDrawPreview:
         self._grid_size = grid_size
         self._snap_was_clamped = snap_was_clamped
 
+    def set_line_mode(self, line_mode):
+        """Set whether we're in line/rotation mode."""
+        self._line_mode = line_mode
+
+    def update_line_end(self, point):
+        """Update the current line end point."""
+        self._line_end = point
+
     def clear_face_grid(self):
         """Clear the face grid overlay data."""
         self._face_plane_point = None
@@ -138,6 +150,8 @@ class ModalDrawPreview:
         self._face_plane_normal = None
         self._grid_size = 1.0
         self._snap_was_clamped = False
+        self._line_mode = False
+        self._line_end = None
 
     def _draw_3d(self):
         """Main 3D drawing callback."""
@@ -154,6 +168,10 @@ class ModalDrawPreview:
             if self._state == 'FIRST_VERTEX':
                 self._draw_face_grid()
                 self._draw_snap_point()
+            elif self._state == 'LINE_END':
+                self._draw_face_grid()
+                self._draw_snap_point()
+                self._draw_line_preview()
             elif self._state == 'SECOND_VERTEX':
                 self._draw_rectangle_preview()
             elif self._state == 'DEPTH':
@@ -178,6 +196,35 @@ class ModalDrawPreview:
             tangent2 = self._snap_tangent2
 
         self._draw_cross(self._snap_point, tangent1, tangent2, COLOR_SNAP_POINT)
+
+    def _draw_line_preview(self):
+        """Draw the line segment from first vertex to line end point."""
+        if self._first_vertex is None or self._line_end is None:
+            return
+
+        line_points = [self._first_vertex[:], self._line_end[:]]
+
+        try:
+            shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+
+            region = bpy.context.region
+            if region is None:
+                return
+            shader.uniform_float("viewportSize", (region.width, region.height))
+            shader.uniform_float("lineWidth", LINE_WIDTH)
+            shader.uniform_float("color", COLOR_RECTANGLE)
+
+            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": line_points})
+            batch.draw(shader)
+        except Exception:
+            try:
+                shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                shader.uniform_float("color", COLOR_RECTANGLE)
+
+                batch = batch_for_shader(shader, 'LINES', {"pos": line_points})
+                batch.draw(shader)
+            except Exception:
+                pass
 
     def _draw_face_grid(self):
         """Draw a fading grid overlay on the face under the cursor.

@@ -75,6 +75,7 @@ class ModalDrawBase:
 
     # State machine states
     STATE_FIRST_VERTEX = 'FIRST_VERTEX'
+    STATE_LINE_END = 'LINE_END'
     STATE_SECOND_VERTEX = 'SECOND_VERTEX'
     STATE_DEPTH = 'DEPTH'
 
@@ -133,6 +134,11 @@ class ModalDrawBase:
         # Rectangle plane (for mouse projection)
         self._plane_point = None
         self._plane_normal = None
+
+        # Line mode (rotated draw)
+        self._line_mode = False
+        self._line_end = None
+        self._line_length = 0.0
 
         # Second vertex
         self._second_vertex = None
@@ -218,6 +224,8 @@ class ModalDrawBase:
         """Handle mouse movement based on current state."""
         if self._state == self.STATE_FIRST_VERTEX:
             self._update_first_vertex_preview(context, event)
+        elif self._state == self.STATE_LINE_END:
+            self._update_line_end_preview(context, event)
         elif self._state == self.STATE_SECOND_VERTEX:
             self._update_second_vertex_preview(context, event)
         elif self._state == self.STATE_DEPTH:
@@ -227,6 +235,8 @@ class ModalDrawBase:
         """Handle left click based on current state."""
         if self._state == self.STATE_FIRST_VERTEX:
             return self._confirm_first_vertex(context, event)
+        elif self._state == self.STATE_LINE_END:
+            return self._confirm_line_end(context, event)
         elif self._state == self.STATE_SECOND_VERTEX:
             return self._confirm_second_vertex(context, event)
         elif self._state == self.STATE_DEPTH:
@@ -261,17 +271,48 @@ class ModalDrawBase:
                 self._preview.update_snap_point(None, None, None)
                 self._preview.clear_face_grid()
 
+    def _update_line_end_preview(self, context, event):
+        """Update the line end preview during line mode."""
+        if self._first_vertex is None:
+            return
+
+        snapped = snapping.calculate_line_end_snap(
+            context, event,
+            self._first_vertex,
+            self._plane_point, self._plane_normal,
+            self._is_2d_view
+        )
+
+        if snapped is not None:
+            self._line_end = snapped
+            self._preview.update_line_end(snapped)
+            # Update snap point for crosshair display
+            if self._is_2d_view:
+                tangent1, tangent2 = utils.get_2d_view_tangents(context)
+            else:
+                tangent1, tangent2 = utils.get_snap_aligned_tangents(self._hit_face_normal)
+            self._preview.update_snap_point(snapped, tangent1, tangent2)
+
     def _update_second_vertex_preview(self, context, event):
         """Update the rectangle preview."""
         if self._first_vertex is None:
             return
 
-        snapped = snapping.calculate_second_vertex_snap(
-            context, event,
-            self._first_vertex,
-            self._local_x, self._local_y,
-            self._plane_point, self._plane_normal
-        )
+        if self._line_mode:
+            snapped = snapping.calculate_width_snap(
+                context, event,
+                self._first_vertex,
+                self._line_length,
+                self._local_x, self._local_y,
+                self._plane_point, self._plane_normal
+            )
+        else:
+            snapped = snapping.calculate_second_vertex_snap(
+                context, event,
+                self._first_vertex,
+                self._local_x, self._local_y,
+                self._plane_point, self._plane_normal
+            )
 
         if snapped is not None:
             self._preview.update_second_vertex(snapped)
@@ -358,15 +399,91 @@ class ModalDrawBase:
             self._first_vertex,
             self._local_x, self._local_y, self._local_z
         )
+
+        # Check if line mode modifier is held
+        if self._is_line_mode_key_held(context, event):
+            self._line_mode = True
+            self._preview.set_line_mode(True)
+            self._preview.set_state(self.STATE_LINE_END)
+            self._state = self.STATE_LINE_END
+            self._line_end = self._first_vertex.copy()
+        else:
+            self._preview.set_state(self.STATE_SECOND_VERTEX)
+            self._state = self.STATE_SECOND_VERTEX
+
+            # Initialize second vertex to first (will update on mouse move)
+            self._second_vertex = self._first_vertex.copy()
+            self._preview.update_second_vertex(self._second_vertex)
+
+        self._update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def _confirm_line_end(self, context, event):
+        """Confirm the line end point and advance to width (second vertex) state."""
+        if self._first_vertex is None or self._line_end is None:
+            return {'RUNNING_MODAL'}
+
+        # Check minimum line length
+        line_vec = self._line_end - self._first_vertex
+        line_length = line_vec.length
+
+        if line_length < MIN_RECTANGLE_SIZE:
+            return {'RUNNING_MODAL'}
+
+        # Compute new local axes from line direction
+        line_dir = line_vec.normalized()
+        local_z = self._local_z.copy()  # Depth direction stays the same
+
+        # Line defines one edge: local_x = line direction
+        local_x = line_dir
+        # Perpendicular width axis
+        local_y = local_z.cross(local_x)
+        local_y.normalize()
+
+        # Update axes
+        self._local_x = local_x
+        self._local_y = local_y
+        self._line_length = line_length
+
+        # Update preview with new axes
+        self._preview.set_first_vertex(
+            self._first_vertex,
+            self._local_x, self._local_y, self._local_z
+        )
+
+        # Transition to second vertex (width) state
         self._preview.set_state(self.STATE_SECOND_VERTEX)
         self._state = self.STATE_SECOND_VERTEX
 
-        # Initialize second vertex to first (will update on mouse move)
-        self._second_vertex = self._first_vertex.copy()
+        # Initialize second vertex at line end (zero width)
+        self._second_vertex = self._line_end.copy()
         self._preview.update_second_vertex(self._second_vertex)
 
         self._update_header(context)
         return {'RUNNING_MODAL'}
+
+    def _is_line_mode_key_held(self, context, event):
+        """Check if the configured line mode modifier key is held during the event."""
+        wm = context.window_manager
+        kc_user = wm.keyconfigs.user
+
+        if kc_user:
+            km = kc_user.keymaps.get("Mesh")
+            if km:
+                for kmi in km.keymap_items:
+                    if kmi.idname == "leveldesign.line_mode_activate" and kmi.active:
+                        key_type = kmi.type
+                        if key_type in ('LEFT_SHIFT', 'RIGHT_SHIFT'):
+                            return event.shift
+                        elif key_type in ('LEFT_CTRL', 'RIGHT_CTRL'):
+                            return event.ctrl
+                        elif key_type in ('LEFT_ALT', 'RIGHT_ALT'):
+                            return event.alt
+                        # Non-modifier key — can't reliably detect "held" state
+                        return False
+
+        # Default: check shift
+        return event.shift
 
     def _confirm_second_vertex(self, context, event):
         """Confirm the second vertex and advance to depth state."""
@@ -433,8 +550,13 @@ class ModalDrawBase:
         tool_name = self._get_tool_name()
         if self._state == self.STATE_FIRST_VERTEX:
             text = f"{tool_name}: Click to set first corner | ESC to cancel"
+        elif self._state == self.STATE_LINE_END:
+            text = f"{tool_name}: Click to set line end point | ESC to cancel"
         elif self._state == self.STATE_SECOND_VERTEX:
-            text = f"{tool_name}: Click to set opposite corner | ESC to cancel"
+            if self._line_mode:
+                text = f"{tool_name}: Click to set width | ESC to cancel"
+            else:
+                text = f"{tool_name}: Click to set opposite corner | ESC to cancel"
         elif self._state == self.STATE_DEPTH:
             text = f"{tool_name}: Move mouse to set depth ({self._depth:.3f}) | Click to confirm | ESC to cancel"
         else:

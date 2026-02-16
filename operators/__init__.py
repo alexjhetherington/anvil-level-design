@@ -6,6 +6,7 @@ from . import ortho_navigation
 from . import glb_export
 from . import material_tools
 from . import pixels_per_meter
+from . import modal_draw
 from . import cube_cut
 from . import box_builder
 
@@ -19,6 +20,7 @@ def register():
     glb_export.register()
     material_tools.register()
     pixels_per_meter.register()
+    modal_draw.register()
     cube_cut.register()
     box_builder.register()
 
@@ -26,6 +28,7 @@ def register():
 def unregister():
     box_builder.unregister()
     cube_cut.unregister()
+    modal_draw.unregister()
     pixels_per_meter.unregister()
     material_tools.unregister()
     glb_export.unregister()

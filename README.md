@@ -122,6 +122,7 @@ Draw a rectangle in an orthogonal view to do an infinite depth cut (I advise tak
 
 Cube cut avoids N-gons and T-Junctions.
 
+Hold shift on first click to start with a line (allows rotated cube cuts).
 
 #### Box Builder
 
@@ -132,6 +133,8 @@ Click on a face in the 3d view to start drawing the cube; move your mouse and cl
 A 0 depth box will become a plane.
 
 Select a vertex to align the box creation when not building on an existing face
+
+Hold shift on first click to start with a line (allows rotated built boxes).
 
 ### Camera and Viewport Tools
 
