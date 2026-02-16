@@ -297,8 +297,19 @@ _active_image = None
 
 
 def get_active_image():
-    """Get the currently active image for texture operations."""
-    return _active_image
+    """Get the currently active image for texture operations.
+
+    Returns None if the stored reference has been invalidated (e.g. by undo).
+    """
+    global _active_image
+    if _active_image is None:
+        return None
+    try:
+        _active_image.name
+        return _active_image
+    except ReferenceError:
+        _active_image = None
+        return None
 
 
 def set_active_image(image):

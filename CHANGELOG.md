@@ -6,6 +6,7 @@
 - Cube Cut from orthogonal view has infinite depth
 - Improve Cube Cut and Box Builder snapping (fix bug; improve mouse feel)
 - Even more Cube Cut and Box Builder stability
+- Fix active image stale reference on undo
 
 ## 1.2.1
 
