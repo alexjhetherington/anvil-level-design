@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Anvil Level Design",
     "author": "Alex Hetherington",
-    "version": (1, 2, 3),
+    "version": (1, 2, 4),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Level Design",
     "description": "TrenchBroom-style UV tools, texture application, and grid controls for level design",

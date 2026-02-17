@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.2.4
+- Fix hotspot mapping orientation type icon sizing (probably)
+
 ## 1.2.3
 - Reorganise N panels
 - Introduce default material settings

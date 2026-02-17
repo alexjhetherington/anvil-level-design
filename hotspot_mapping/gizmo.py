@@ -139,13 +139,12 @@ COLOR_ICON = (1.0, 1.0, 1.0, 0.9)              # White - orientation icons
 LINE_WIDTH = 2.0
 HANDLE_SIZE = 8  # pixels
 
-# Icon sizing - scales with zoom between defined thresholds
-# Note: pixels_per_uv is HIGH when zoomed IN (close), LOW when zoomed OUT (far)
-ICON_SIZE_MIN = 8        # icon size in pixels when zoomed out
-ICON_SIZE_MAX = 140       # icon size in pixels when zoomed in
-ZOOM_FULL_SIZE = 4000     # zoomed in past this → icons at max size
-ZOOM_HIDE = 400           # zoomed out past this → icons disappear
-ICON_REFERENCE_SIZE = 256  # baseline image size; icons scale proportionally to image dimensions
+# Icon sizing - relative to viewport and image size
+# Thresholds are based on how much the image fills the viewport ("fit" zoom)
+ICON_FRACTION_MAX = 1 / 20   # max icon size as fraction of viewport height
+ICON_FRACTION_MIN = 1 / 40   # min icon size as fraction of viewport height
+ZOOM_HIDE_FACTOR = 0.8       # hide icons when zoomed out past this fraction of fit zoom
+ZOOM_FULL_FACTOR = 5.0       # icons reach max size at this multiple of fit zoom
 
 
 # Global draw handler reference
@@ -398,24 +397,32 @@ def draw_hotspots():
     region = context.region
     view2d = region.view2d
 
-    # Calculate zoom-based icon size (consistent for all hotspots)
-    # Measure how many screen pixels span one UV unit
+    # Calculate zoom level: screen pixels per UV unit (vertical)
+    # Measured vertically so it directly relates to image height vs viewport height
     origin_x, origin_y = view2d.view_to_region(0, 0, clip=False)
-    unit_x, unit_y = view2d.view_to_region(1, 0, clip=False)
-    pixels_per_uv = abs(unit_x - origin_x)
+    _, unit_y = view2d.view_to_region(0, 1, clip=False)
+    pixels_per_uv = abs(unit_y - origin_y)
 
-    # Scale icon size based on zoom with linear interpolation between thresholds
-    if pixels_per_uv >= ZOOM_FULL_SIZE:
-        zoom_icon_size = ICON_SIZE_MAX
-    elif pixels_per_uv <= ZOOM_HIDE:
-        zoom_icon_size = ICON_SIZE_MIN
+    # "Fit" zoom = when image height fills the viewport
+    viewport_height = region.height
+    fit_zoom = viewport_height
+
+    # Zoom thresholds relative to fit zoom
+    zoom_hide = fit_zoom * ZOOM_HIDE_FACTOR
+    zoom_full = fit_zoom * ZOOM_FULL_FACTOR
+
+    # Icon size limits based on viewport size
+    icon_size_max = viewport_height * ICON_FRACTION_MAX
+    icon_size_min = viewport_height * ICON_FRACTION_MIN
+
+    # Interpolate icon size based on zoom
+    if pixels_per_uv >= zoom_full:
+        zoom_icon_size = icon_size_max
+    elif pixels_per_uv <= zoom_hide:
+        zoom_icon_size = icon_size_min
     else:
-        t = (pixels_per_uv - ZOOM_HIDE) / (ZOOM_FULL_SIZE - ZOOM_HIDE)
-        zoom_icon_size = ICON_SIZE_MIN + t * (ICON_SIZE_MAX - ICON_SIZE_MIN)
-
-    # Scale proportionally to image size (larger images get larger icons)
-    image_scale = max(img_width, img_height) / ICON_REFERENCE_SIZE
-    zoom_icon_size = zoom_icon_size * image_scale
+        t = (pixels_per_uv - zoom_hide) / (zoom_full - zoom_hide)
+        zoom_icon_size = icon_size_min + t * (icon_size_max - icon_size_min)
 
     # Set up GPU state
     gpu.state.blend_set('ALPHA')
@@ -459,7 +466,7 @@ def draw_hotspots():
                 _draw_handles(rx1, ry1, rx2, ry2)
 
         # Second pass: draw all icons on top
-        if pixels_per_uv >= ZOOM_HIDE:
+        if pixels_per_uv >= zoom_hide:
             for rx1, ry1, rx2, ry2, orientation in hotspot_regions:
                 icon_cx = (rx1 + rx2) / 2
                 icon_cy = (ry1 + ry2) / 2
@@ -584,32 +591,38 @@ def _draw_orientation_icon(cx, cy, orientation_type, color, icon_size):
     blf.draw(font_id, symbol)
 
 
-def _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, img_width, img_height):
+def _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, viewport_height):
     """Get the icon click region for a hotspot.
 
     Args:
         rx1, ry1, rx2, ry2: Hotspot bounds in region coords
         pixels_per_uv: Zoom level (screen pixels per UV unit)
-        img_width, img_height: Image dimensions for proportional scaling
+        viewport_height: Region height in pixels
 
     Returns:
         Tuple (icon_x1, icon_y1, icon_x2, icon_y2) for icon bounds,
         or None if zoomed out too far to show icons
     """
+    # Thresholds relative to fit zoom (image height fills viewport)
+    fit_zoom = viewport_height
+    zoom_hide = fit_zoom * ZOOM_HIDE_FACTOR
+    zoom_full = fit_zoom * ZOOM_FULL_FACTOR
+
     # No icon if zoomed out too far
-    if pixels_per_uv < ZOOM_HIDE:
+    if pixels_per_uv < zoom_hide:
         return None
 
-    # Calculate icon size based on zoom with linear interpolation
-    if pixels_per_uv >= ZOOM_FULL_SIZE:
-        icon_size = ICON_SIZE_MAX
-    else:
-        t = (pixels_per_uv - ZOOM_HIDE) / (ZOOM_FULL_SIZE - ZOOM_HIDE)
-        icon_size = ICON_SIZE_MIN + t * (ICON_SIZE_MAX - ICON_SIZE_MIN)
+    # Icon size limits based on viewport
+    icon_size_max = viewport_height * ICON_FRACTION_MAX
+    icon_size_min = viewport_height * ICON_FRACTION_MIN
 
-    # Scale proportionally to image size
-    image_scale = max(img_width, img_height) / ICON_REFERENCE_SIZE
-    icon_size = icon_size * image_scale
+    # Calculate icon size based on zoom with linear interpolation
+    if pixels_per_uv >= zoom_full:
+        icon_size = icon_size_max
+    else:
+        t = (pixels_per_uv - zoom_hide) / (zoom_full - zoom_hide)
+        icon_size = icon_size_min + t * (icon_size_max - icon_size_min)
+
 
     # Icon is centered on hotspot
     icon_cx = (rx1 + rx2) / 2
@@ -633,10 +646,10 @@ def _is_click_on_icon(context, event, hotspot, image):
     region = context.region
     view2d = region.view2d
 
-    # Calculate zoom level (pixels per UV unit)
+    # Calculate zoom level: screen pixels per UV unit (vertical)
     origin_x, origin_y = view2d.view_to_region(0, 0, clip=False)
-    unit_x, unit_y = view2d.view_to_region(1, 0, clip=False)
-    pixels_per_uv = abs(unit_x - origin_x)
+    _, unit_y = view2d.view_to_region(0, 1, clip=False)
+    pixels_per_uv = abs(unit_y - origin_y)
 
     img_width = image.size[0] if image.size[0] > 0 else 1
     img_height = image.size[1] if image.size[1] > 0 else 1
@@ -655,7 +668,7 @@ def _is_click_on_icon(context, event, hotspot, image):
     rx2, ry2 = view2d.view_to_region(x2, y2, clip=False)
 
     # Get icon bounds (returns None if zoomed out too far)
-    icon_bounds = _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, img_width, img_height)
+    icon_bounds = _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, region.height)
     if icon_bounds is None:
         return False
 
