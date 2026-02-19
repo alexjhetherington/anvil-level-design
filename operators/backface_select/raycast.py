@@ -60,6 +60,39 @@ def raycast_bvh_skip_backfaces(bvh, ray_origin_local, ray_direction_local,
     return (None, None, None, None)
 
 
+def raycast_bvh_skip_backfaces_polys(bvh, ray_origin_local, ray_direction_local,
+                                      polygons, materials, max_iterations):
+    """Raycast through a BVHTree built from polygons, skipping culled backfaces.
+
+    Same as raycast_bvh_skip_backfaces but uses Mesh.polygons instead of
+    bmesh faces. For use with evaluated meshes (BVHTree.FromPolygons).
+
+    Returns (location, normal, face_index, distance) or
+            (None, None, None, None) if no visible face is hit.
+    """
+    origin = ray_origin_local.copy()
+    total_distance = 0.0
+    epsilon = 0.0001
+
+    for _ in range(max_iterations):
+        location, normal, face_index, distance = bvh.ray_cast(origin, ray_direction_local)
+
+        if face_index is None:
+            return (None, None, None, None)
+
+        poly = polygons[face_index]
+
+        if (is_face_backfacing(Vector(poly.normal), ray_direction_local)
+                and has_backface_culling_enabled(poly.material_index, materials)):
+            total_distance += distance + epsilon
+            origin = origin + ray_direction_local * (distance + epsilon)
+            continue
+
+        return (location, normal, face_index, total_distance + distance)
+
+    return (None, None, None, None)
+
+
 def raycast_scene_skip_backfaces(depsgraph, scene, origin, direction,
                                   max_iterations):
     """Raycast through the scene, skipping back-facing faces with culling enabled.

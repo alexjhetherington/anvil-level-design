@@ -234,9 +234,14 @@ class apply_image_to_face(Operator):
         bm = bmesh.from_edit_mesh(obj.data)
         bm.faces.ensure_lookup_table()
 
-        # Raycast against bmesh BVHTree
+        # Raycast against bmesh BVHTree, skipping backface-culled faces
+        from .backface_select.raycast import raycast_bvh_skip_backfaces
+
         bvh = BVHTree.FromBMesh(bm)
-        location, normal, face_index, distance = bvh.ray_cast(ray_origin_local, ray_direction_local)
+        location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+            bvh, ray_origin_local, ray_direction_local,
+            bm, obj.data.materials, max_iterations=64
+        )
 
         if face_index is None:
             return {'CANCELLED'}
@@ -397,14 +402,20 @@ class pick_image_from_face(Operator):
 
             # Create BVHTree from the mesh
             # For objects in edit mode, use bmesh; otherwise use evaluated mesh
+            from .backface_select.raycast import (
+                raycast_bvh_skip_backfaces,
+                raycast_bvh_skip_backfaces_polys,
+            )
+
             if obj.mode == 'EDIT' and obj == context.object:
                 bm = bmesh.from_edit_mesh(me)
                 bm.faces.ensure_lookup_table()
                 bvh = BVHTree.FromBMesh(bm)
 
-                # Raycast
-                location, normal, face_index, distance = bvh.ray_cast(
-                    ray_origin_local, ray_direction_local
+                # Raycast, skipping backface-culled faces
+                location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+                    bvh, ray_origin_local, ray_direction_local,
+                    bm, me.materials, max_iterations=64
                 )
 
                 if face_index is not None and distance < closest_distance:
@@ -426,9 +437,10 @@ class pick_image_from_face(Operator):
                     [p.vertices for p in me_eval.polygons]
                 )
 
-                # Raycast
-                location, normal, face_index, distance = bvh.ray_cast(
-                    ray_origin_local, ray_direction_local
+                # Raycast, skipping backface-culled faces
+                location, normal, face_index, distance = raycast_bvh_skip_backfaces_polys(
+                    bvh, ray_origin_local, ray_direction_local,
+                    me_eval.polygons, me_eval.materials, max_iterations=64
                 )
 
                 # Get material index before clearing eval mesh

@@ -220,8 +220,12 @@ def raycast_scene(context, event):
     if origin is None or direction is None:
         return (False, None, None, None, None, None)
 
+    from ..backface_select.raycast import raycast_scene_skip_backfaces
+
     depsgraph = context.evaluated_depsgraph_get()
-    result = context.scene.ray_cast(depsgraph, origin, direction)
+    result = raycast_scene_skip_backfaces(
+        depsgraph, context.scene, origin, direction, max_iterations=64
+    )
 
     return result
 
