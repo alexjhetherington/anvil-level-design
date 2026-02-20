@@ -10,6 +10,7 @@ from . import modal_draw
 from . import cube_cut
 from . import box_builder
 from . import backface_select
+from . import select_linked
 
 
 def register():
@@ -25,9 +26,11 @@ def register():
     cube_cut.register()
     box_builder.register()
     backface_select.register()
+    select_linked.register()
 
 
 def unregister():
+    select_linked.unregister()
     backface_select.unregister()
     box_builder.unregister()
     cube_cut.unregister()

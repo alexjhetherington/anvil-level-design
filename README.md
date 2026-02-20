@@ -114,13 +114,23 @@ It is important to have a wide variety of aspect ratios and sizes in your textur
 
 #### Selection
 
+#### Backface Culling
+
 Anvil overrides some selection behaviours to ignore culled backfaces when not in x-ray mode.
 
 This works for box select and lasso select when single clicking, shift clicking, and alt clicking on items. 
 
 Due to blender api limitations it does not work for box selecting or lasso-ing items, and it does not work with circle select or the tweak tool.
 
+#### Paint Select
+
 Ctrl Left mouse paint selects, which is similar to circle select (hold and drag to add crossed items to the selection) but respects backface culling.
+
+#### Select Connected
+
+Anvil also has its own select connected. Press L while hovering your cursor over a 3d element so select all connected elements.
+
+Press Ctrl-L while hovering your cursor over a 3d element to select all connect elements with matching normals. Press Ctrl-L to add to the selection all faces at normals that are closest to facing the seed face normal. Continued Ctrl-Ls will select further faces. Ctrl-Shift-L will go back a step
 
 #### Cube Cut
 

@@ -194,6 +194,12 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                             kmi.properties.direction == kmi_addon.properties.direction):
                                             kmi_user = kmi
                                             break
+                                    elif kmi_addon.idname == "leveldesign.select_linked":
+                                        if (hasattr(kmi.properties, "normal_mode") and
+                                            hasattr(kmi_addon.properties, "normal_mode") and
+                                            kmi.properties.normal_mode == kmi_addon.properties.normal_mode):
+                                            kmi_user = kmi
+                                            break
                                     elif kmi_addon.idname in ("leveldesign.backface_select",
                                                               "leveldesign.backface_object_select"):
                                         # Match on extend + loop properties
@@ -219,6 +225,15 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             display_name = f"{base_name} - {kmi_addon.properties.view_type.title()}"
                         elif kmi_addon.idname == "leveldesign.freelook_movement_key" and hasattr(kmi_addon.properties, "direction"):
                             display_name = f"Freelook {kmi_addon.properties.direction.title()}"
+                        elif kmi_addon.idname == "leveldesign.select_linked":
+                            mode = getattr(kmi_addon.properties, "normal_mode", "NONE")
+                            if mode == 'EXPAND':
+                                suffix = "Expand"
+                            elif mode == 'SHRINK':
+                                suffix = "Shrink"
+                            else:
+                                suffix = "Linked"
+                            display_name = f"Select Linked ({suffix})"
                         elif kmi_addon.idname == "leveldesign.backface_select":
                             extend = getattr(kmi_addon.properties, "extend", False)
                             loop = getattr(kmi_addon.properties, "loop", False)

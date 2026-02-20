@@ -1,8 +1,11 @@
 # Anvil Level Design Changelog
 
+## 1.2.6
+- Add Anvil's own SELECT CONNECTED
+
 ## 1.2.5
 - Selecting, texture application, cube cut and box builder all now ignore culled backfaces
-- New select mode: PAINT SELECT. Hold ctrl, left mouse, and drag to add all vertices, edges, or faces crossed to the selection (by default overrides 'shortest path to')
+- New select mode: PAINT SELECT. Hold ctrl, left mouse, and drag to add all vertices, edges, or faces crossed to the selection (by default overrides 'shortest path to'). 
 - Alt left mouse to apply textures now works hold left mouse and drag
 
 ## 1.2.4
