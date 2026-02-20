@@ -51,6 +51,11 @@ _multi_face_mode = False
 _multi_face_unset_scale = False
 _multi_face_unset_rotation = False
 _multi_face_unset_offset = False
+_all_selected_hotspot = False
+
+
+def get_all_selected_hotspot():
+    return _all_selected_hotspot
 
 
 def get_multi_face_mode():
@@ -468,7 +473,7 @@ def _check_multi_face_consistency(selected_faces, uv_layer, ppm, me, first_trans
 
 def update_ui_from_selection(context):
     """Update UI properties when selection changes"""
-    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset
+    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot
 
     if context.mode != 'EDIT_MESH':
         return
@@ -488,6 +493,14 @@ def update_ui_from_selection(context):
     props = context.scene.level_design_props
 
     selected_faces = [f for f in bm.faces if f.select]
+
+    # Check if all selected faces have hotspot materials
+    if selected_faces:
+        _all_selected_hotspot = all(
+            face_has_hotspot_material(f, me) for f in selected_faces
+        )
+    else:
+        _all_selected_hotspot = False
 
     if len(selected_faces) > 1:
         _multi_face_mode = True
@@ -1553,7 +1566,7 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot
 
     # Stop the file browser watcher timer
     _file_browser_watcher_running = False
@@ -1599,3 +1612,4 @@ def unregister():
     _multi_face_unset_scale = False
     _multi_face_unset_rotation = False
     _multi_face_unset_offset = False
+    _all_selected_hotspot = False

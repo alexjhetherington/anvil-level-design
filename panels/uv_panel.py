@@ -17,6 +17,7 @@ from ..handlers import (
     is_multi_face_unset_rotation,
     is_multi_face_unset_offset,
     get_selected_faces_share_image,
+    get_all_selected_hotspot,
 )
 
 
@@ -102,10 +103,14 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
                         context.tool_settings.mesh_select_mode[2])
         has_selection = in_face_mode and get_selected_face_count(context) > 0
         multi_face = has_selection and get_multi_face_mode()
+        all_hotspot = has_selection and get_all_selected_hotspot()
+
+        if all_hotspot:
+            layout.label(text="Hotspot texture", icon='INFO')
 
         col = layout.column(align=True)
 
-        col.enabled = has_selection
+        col.enabled = has_selection and not all_hotspot
 
         # Scale row with link toggle
         scale_row = col.row(align=True)
