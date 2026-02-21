@@ -21,9 +21,10 @@ MIN_RECTANGLE_SIZE = 0.001
 
 class _MousePosition:
     """Simple container for mouse position, used when re-snapping after grid change."""
-    def __init__(self, x, y):
+    def __init__(self, x, y, ctrl=False):
         self.mouse_region_x = x
         self.mouse_region_y = y
+        self.ctrl = ctrl
 
 
 def _get_undo_redo_keys(context):
@@ -150,6 +151,10 @@ class ModalDrawBase:
         # View tracking
         self._is_2d_view = utils.is_2d_view(context)
 
+        # Axis lock (Ctrl held during FIRST_VERTEX to extend face plane infinitely)
+        self._axis_lock_normal = None
+        self._axis_lock_plane_point = None
+
         # Grid size tracking (for detecting changes)
         self._last_grid_size = utils.get_grid_size(context)
         self._last_mouse_region_pos = None  # (x, y) tuple
@@ -188,7 +193,8 @@ class ModalDrawBase:
             self._last_grid_size = current_grid_size
             # Re-snap with new grid size using last known mouse position
             if self._last_mouse_region_pos is not None:
-                fake_event = _MousePosition(*self._last_mouse_region_pos)
+                ctrl = self._axis_lock_normal is not None
+                fake_event = _MousePosition(*self._last_mouse_region_pos, ctrl=ctrl)
                 self._handle_mouse_move(context, fake_event)
                 utils.tag_redraw_all_3d_views()
 
@@ -209,6 +215,18 @@ class ModalDrawBase:
             result = self._handle_click(context, event)
             utils.tag_redraw_all_3d_views()
             return result
+
+        # Ctrl press/release during FIRST_VERTEX - update axis lock preview
+        if (event.type in ('LEFT_CTRL', 'RIGHT_CTRL')
+                and self._state == self.STATE_FIRST_VERTEX
+                and not self._is_2d_view
+                and self._last_mouse_region_pos is not None):
+            ctrl = (event.value == 'PRESS')
+            fake_event = _MousePosition(*self._last_mouse_region_pos, ctrl=ctrl)
+            self._handle_mouse_move(context, fake_event)
+            self._update_header(context)
+            utils.tag_redraw_all_3d_views()
+            return {'PASS_THROUGH'}
 
         # Undo/redo - exit cleanly (uses cached key bindings)
         if event.value == 'PRESS':
@@ -258,6 +276,40 @@ class ModalDrawBase:
                 self._preview.update_snap_point(None, None, None)
                 self._preview.clear_face_grid()
         else:
+            ctrl_held = getattr(event, 'ctrl', False)
+
+            if ctrl_held:
+                # Axis lock: capture the current face plane on first ctrl frame
+                if self._axis_lock_normal is None:
+                    snapped, face_normal, obj, was_clamped = self._calculate_first_vertex_snap_3d(
+                        context, event
+                    )
+                    if snapped is not None and face_normal is not None:
+                        self._axis_lock_normal = face_normal.copy()
+                        self._axis_lock_plane_point = snapped.copy()
+
+                # Use locked plane if available
+                if self._axis_lock_normal is not None:
+                    snapped, face_normal, _, _ = snapping.calculate_first_vertex_snap_3d_on_plane(
+                        context, event,
+                        self._axis_lock_plane_point, self._axis_lock_normal
+                    )
+                    if snapped is not None:
+                        tangent1, tangent2 = utils.get_snap_aligned_tangents(face_normal)
+                        self._preview.update_snap_point(snapped, tangent1, tangent2)
+                        grid_size = utils.get_grid_size(context)
+                        self._preview.update_face_grid(snapped, face_normal, grid_size, False)
+                    else:
+                        self._preview.update_snap_point(None, None, None)
+                        self._preview.clear_face_grid()
+                    return
+
+                # Ctrl held but no face to lock - fall through to normal behavior
+            else:
+                # Ctrl released - clear axis lock
+                self._axis_lock_normal = None
+                self._axis_lock_plane_point = None
+
             snapped, face_normal, obj, was_clamped = self._calculate_first_vertex_snap_3d(context, event)
             if snapped is not None:
                 # Get snap-aligned tangent axes (match the grid snapping axes)
@@ -376,8 +428,14 @@ class ModalDrawBase:
             self._plane_normal = self._local_z.copy()
 
         else:
-            # 3D view
-            snapped, face_normal, obj, _was_clamped = self._calculate_first_vertex_snap_3d(context, event)
+            # 3D view - use axis-locked plane if active, otherwise normal raycast
+            if self._axis_lock_normal is not None:
+                snapped, face_normal, obj, _was_clamped = snapping.calculate_first_vertex_snap_3d_on_plane(
+                    context, event,
+                    self._axis_lock_plane_point, self._axis_lock_normal
+                )
+            else:
+                snapped, face_normal, obj, _was_clamped = self._calculate_first_vertex_snap_3d(context, event)
             if snapped is None:
                 return {'RUNNING_MODAL'}  # Ignore click - no face hit
 
@@ -549,7 +607,8 @@ class ModalDrawBase:
         """Update header text based on current state."""
         tool_name = self._get_tool_name()
         if self._state == self.STATE_FIRST_VERTEX:
-            text = f"{tool_name}: Click to set first corner | ESC to cancel"
+            lock_hint = " (Axis Locked)" if self._axis_lock_normal is not None else " | Ctrl to lock axis"
+            text = f"{tool_name}: Click to set first corner{lock_hint} | ESC to cancel"
         elif self._state == self.STATE_LINE_END:
             text = f"{tool_name}: Click to set line end point | ESC to cancel"
         elif self._state == self.STATE_SECOND_VERTEX:

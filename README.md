@@ -159,6 +159,8 @@ Cube cut avoids N-gons and T-Junctions.
 
 Hold shift on first click to start with a line (allows rotated cube cuts).
 
+Hold ctrl to lock the axis, allowing you to move the cursor off a given face while keeping the same draw plane.
+
 #### Box Builder
 
 Press B in edit or object mode to enter box builder mode.
@@ -170,6 +172,9 @@ A 0 depth box will become a plane.
 Select a vertex to align the box creation when not building on an existing face
 
 Hold shift on first click to start with a line (allows rotated built boxes).
+
+Hold ctrl to lock the axis, allowing you to move the cursor off a given face while keeping the same draw plane.
+
 
 ### Camera and Viewport Tools
 

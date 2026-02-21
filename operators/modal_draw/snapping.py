@@ -129,6 +129,35 @@ def snap_depth_relative(depth, grid_size):
     return round(depth / grid_size) * grid_size
 
 
+def calculate_first_vertex_snap_3d_on_plane(context, event, plane_point, plane_normal):
+    """
+    Calculate the snapped position on an infinite plane (no face clamping).
+
+    Used when axis lock is active to extend a face plane infinitely.
+
+    Args:
+        context: Blender context
+        event: Mouse event
+        plane_point: A point on the plane
+        plane_normal: The plane's normal vector
+
+    Returns:
+        tuple: (snapped_position, plane_normal, None, False) or (None, None, None, False) if invalid
+    """
+    point = utils.mouse_to_3d_on_plane(context, event, plane_point, plane_normal)
+    if point is None:
+        return (None, None, None, False)
+
+    grid_size = utils.get_grid_size(context)
+
+    if utils.is_snapping_enabled(context):
+        snapped = snap_to_grid_on_face(point, plane_normal, grid_size)
+    else:
+        snapped = point.copy()
+
+    return (snapped, plane_normal, None, False)
+
+
 def calculate_first_vertex_snap_3d(context, event):
     """
     Calculate the snapped position for the first vertex in 3D view.
