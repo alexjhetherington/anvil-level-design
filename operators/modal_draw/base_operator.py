@@ -74,6 +74,9 @@ class ModalDrawBase:
                                        second_vertex, local_z, initial_mouse_pos)
     """
 
+    # The currently running modal draw instance, if any.
+    _active_instance = None
+
     # State machine states
     STATE_FIRST_VERTEX = 'FIRST_VERTEX'
     STATE_LINE_END = 'LINE_END'
@@ -119,6 +122,14 @@ class ModalDrawBase:
     # --- Operator lifecycle ---
 
     def invoke(self, context, event):
+        # Cancel any existing modal draw tool (same as pressing ESC on it)
+        prev = ModalDrawBase._active_instance
+        if prev is not None:
+            prev._cleanup(context)
+            prev._cancelled = True
+        ModalDrawBase._active_instance = self
+        self._cancelled = False
+
         # Initialize state
         self._state = self.STATE_FIRST_VERTEX
 
@@ -179,6 +190,10 @@ class ModalDrawBase:
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
+        # Another modal draw tool cancelled us - just exit
+        if self._cancelled:
+            return {'CANCELLED'}
+
         # Exit if user left a valid mode
         if not self._is_valid_mode(context):
             self._cleanup(context)
@@ -591,6 +606,9 @@ class ModalDrawBase:
 
     def _cleanup(self, context):
         """Clean up resources and restore state."""
+        if ModalDrawBase._active_instance is self:
+            ModalDrawBase._active_instance = None
+
         # Clear preview
         preview.cleanup_preview()
 

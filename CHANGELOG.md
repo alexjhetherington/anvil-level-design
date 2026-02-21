@@ -3,6 +3,7 @@
 ## 1.2.6
 - Add Anvil's own SELECT CONNECTED
 - Hold Ctrl at the start of a box build or cube cut to lock the axis
+- Prevent cube cut and box builder being active at the same time
 
 ## 1.2.5
 - Selecting, texture application, cube cut and box builder all now ignore culled backfaces
