@@ -12,6 +12,7 @@ from ..texture_apply import set_uv_from_other_face
 from ...properties import apply_uv_to_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
 from ...utils import find_material_with_image, create_material_with_image, debug_log
+from ...handlers import _get_compensated_scales
 
 
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
@@ -240,7 +241,8 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0, 0, 0, mat, ppm, me)
+            comp_u, comp_v = _get_compensated_scales(face, obj.matrix_world) if obj else (1.0, 1.0)
+            apply_uv_to_face(face, uv_layer, comp_u, comp_v, 0, 0, 0, mat, ppm, me)
             cache_single_face(face, uv_layer, ppm, me)
 
 

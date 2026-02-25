@@ -582,10 +582,10 @@ class pick_image_from_face(Operator):
                         cache_single_face(face, uv_layer, ppm, me)
 
             from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, edit_obj.matrix_world)
         else:
             from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, edit_obj.matrix_world)
 
         bmesh.update_edit_mesh(me)
 

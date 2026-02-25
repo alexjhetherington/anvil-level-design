@@ -316,7 +316,8 @@ def _project_new_selected_faces_on_topology_change(context, bm):
         else:
             # No valid neighbor - fall back to world-space projection
             mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+            comp_u, comp_v = _get_compensated_scales(face, obj.matrix_world)
+            apply_uv_to_face(face, uv_layer, comp_u, comp_v, 0.0, 0.0, 0.0, mat, ppm, me)
             projected_count += 1
 
     if projected_count > 0:
@@ -444,7 +445,7 @@ def cache_single_face(face, uv_layer, ppm=None, me=None):
             cache_entry['rotation'] = transform['rotation']
             cache_entry['offset_x'] = transform['offset_x']
             cache_entry['offset_y'] = transform['offset_y']
-            
+
     face_data_cache[face.index] = cache_entry
 
 
@@ -783,7 +784,8 @@ def apply_world_scale_uvs(obj, scene):
                 else:
                     # No valid neighbor - fall back to world-space projection
                     mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-                    apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+                    comp_u, comp_v = _get_compensated_scales(face, obj.matrix_world)
+                    apply_uv_to_face(face, uv_layer, comp_u, comp_v, 0.0, 0.0, 0.0, mat, ppm, me)
                     uv_applied_count += 1
                 continue
 
@@ -1199,11 +1201,11 @@ def apply_texture_from_file_browser():
                         cache_single_face(face, uv_layer, ppm, obj.data)
 
             # Apply regular UV projection to the selected faces (non-hotspot texture)
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, obj.matrix_world)
         else:
             # Either auto_hotspot is off, or it's a non-hotspot texture without hotspot neighbors
             # Regular UV projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, obj.matrix_world)
 
         if in_edit_mode:
             bmesh.update_edit_mesh(obj.data)
@@ -1226,7 +1228,18 @@ def apply_texture_from_file_browser():
         print(f"Anvil Level Design: Error applying texture from file browser: {e}", flush=True)
 
 
-def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info):
+def _get_compensated_scales(face, obj_matrix):
+    scale_u, scale_v = 1.0, 1.0
+    if obj_matrix is not None:
+        face_axes = get_face_local_axes(face)
+        if face_axes:
+            local_x, local_y = face_axes
+            scale_u = 1.0 / max(0.0001, (obj_matrix.to_3x3() @ local_x).length)
+            scale_v = 1.0 / max(0.0001, (obj_matrix.to_3x3() @ local_y).length)
+    return scale_u, scale_v
+
+
+def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, obj_matrix=None):
     """Apply regular UV projection to selected faces, preserving transform where possible.
 
     Args:
@@ -1255,7 +1268,7 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
             # Had a previous image - preserve or reset transform
             if old_tex_dims != new_tex_dims:
                 # Texture dimensions changed - reset scale but keep rotation/offset
-                scale_u, scale_v = 1.0, 1.0
+                scale_u, scale_v = _get_compensated_scales(target_face, obj_matrix)
             else:
                 # Same texture dimensions - preserve everything
                 scale_u = current_transform['scale_u']
@@ -1272,9 +1285,10 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
         else:
             # Blank face (no previous image) or transform can't be derived
             # - use clean defaults
+            comp_u, comp_v = _get_compensated_scales(target_face, obj_matrix)
             apply_uv_to_face(
                 target_face, uv_layer,
-                1.0, 1.0,  # scale
+                comp_u, comp_v,  # scale
                 0.0,       # rotation
                 0.0, 0.0,  # offset
                 mat, ppm, me
