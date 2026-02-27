@@ -1,5 +1,5 @@
 @echo off
-REM Run Anvil Level Design tests via Blender in background mode.
+REM Run Anvil Level Design tests via Blender in GUI mode.
 REM
 REM Usage:
 REM   run_tests.bat                                          Run all tests
@@ -19,9 +19,9 @@ if "%BLENDER_EXE%"=="" (
 pushd "%~dp0"
 
 if "%~1"=="" (
-    "%BLENDER_EXE%" --background --python tests/run_tests.py
+    "%BLENDER_EXE%" --python tests/run_tests.py
 ) else (
-    "%BLENDER_EXE%" --background --python tests/run_tests.py -- %*
+    "%BLENDER_EXE%" --python tests/run_tests.py -- %*
 )
 
 popd

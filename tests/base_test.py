@@ -2,9 +2,28 @@ import os
 import unittest
 import bpy
 
+from ..utils import LEVEL_DESIGN_WORKSPACE_NAME
+from ..workspace import create_level_design_workspace
+
 # Set by run_tests.py when --save flag is used
 save_outputs = False
 output_dir = ""
+
+
+def _get_window():
+    """Get the active window, working around timer callbacks lacking window context."""
+    return bpy.context.window or bpy.context.window_manager.windows[0]
+
+
+def _reset_scene():
+    """Reset to empty scene with Level Design workspace active."""
+    window = _get_window()
+    with bpy.context.temp_override(window=window):
+        bpy.ops.wm.read_homefile(use_empty=True)
+    create_level_design_workspace()
+    window = _get_window()
+    window.workspace = bpy.data.workspaces[LEVEL_DESIGN_WORKSPACE_NAME]
+    bpy.context.scene.level_design_props.pixels_per_meter = 1024
 
 
 class AnvilTestCase(unittest.TestCase):
@@ -15,7 +34,7 @@ class AnvilTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        bpy.ops.wm.read_homefile(use_empty=True)
+        _reset_scene()
 
     def setUp(self):
         pass
@@ -24,6 +43,8 @@ class AnvilTestCase(unittest.TestCase):
         if save_outputs:
             test_name = self.id()  # e.g. anvil_level_design.tests.test_smoke.SmokeTest.test_passes
             filepath = os.path.join(output_dir, f"{test_name}.blend")
-            bpy.ops.wm.save_as_mainfile(filepath=filepath)
+            window = _get_window()
+            with bpy.context.temp_override(window=window):
+                bpy.ops.wm.save_as_mainfile(filepath=filepath)
 
-        bpy.ops.wm.read_homefile(use_empty=True)
+        _reset_scene()

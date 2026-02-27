@@ -1,10 +1,10 @@
-"""Test runner script invoked by Blender in background mode.
+"""Test runner script invoked by Blender in GUI mode.
 
 Usage:
-    blender --background --python tests/run_tests.py
-    blender --background --python tests/run_tests.py -- test_smoke
-    blender --background --python tests/run_tests.py -- --save
-    blender --background --python tests/run_tests.py -- --save test_smoke.SmokeTest.test_passes
+    blender --python tests/run_tests.py
+    blender --python tests/run_tests.py -- test_smoke
+    blender --python tests/run_tests.py -- --save
+    blender --python tests/run_tests.py -- --save test_smoke.SmokeTest.test_passes
 """
 
 import sys
@@ -74,8 +74,9 @@ def main():
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
-    # Exit with non-zero code on failure so CI can detect it
-    sys.exit(0 if result.wasSuccessful() else 1)
+    # os._exit works from timer context to terminate Blender
+    os._exit(0 if result.wasSuccessful() else 1)
 
 
-main()
+# Defer test execution so Blender's GUI and depsgraph are fully initialized
+bpy.app.timers.register(main, first_interval=1.0)
