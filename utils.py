@@ -259,6 +259,21 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
     if len(uvs) < 3:
         return None
 
+    # Check for zero-area UV (all UVs collapsed to same point)
+    uv_area = 0.0
+    for i in range(1, len(uvs) - 1):
+        edge_a = uvs[i] - uvs[0]
+        edge_b = uvs[i + 1] - uvs[0]
+        uv_area += abs(edge_a.x * edge_b.y - edge_a.y * edge_b.x)
+    if uv_area < 1e-8:
+        return {
+            'scale_u': 0.0,
+            'scale_v': 0.0,
+            'rotation': 0.0,
+            'offset_x': normalize_offset(uvs[0].x),
+            'offset_y': normalize_offset(uvs[0].y)
+        }
+
     # Get texture dimensions from face's material
     mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
     tu, tv = get_texture_dimensions_from_material(mat, ppm)
