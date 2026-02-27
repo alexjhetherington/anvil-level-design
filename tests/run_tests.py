@@ -54,7 +54,12 @@ def main():
 
         # Clean and recreate output directory
         if os.path.exists(base_test.output_dir):
-            shutil.rmtree(base_test.output_dir)
+            try:
+                shutil.rmtree(base_test.output_dir)
+            except PermissionError:
+                print("Level Design Tools: ERROR - Cannot clean test_outputs/. "
+                      "Close any .blend files open from that folder and retry.")
+                os._exit(1)
         os.makedirs(base_test.output_dir)
 
     loader = unittest.TestLoader()

@@ -43,8 +43,11 @@ class AnvilTestCase(unittest.TestCase):
         if save_outputs:
             test_name = self.id()  # e.g. anvil_level_design.tests.test_smoke.SmokeTest.test_passes
             filepath = os.path.join(output_dir, f"{test_name}.blend")
-            window = _get_window()
-            with bpy.context.temp_override(window=window):
-                bpy.ops.wm.save_as_mainfile(filepath=filepath)
+            try:
+                window = _get_window()
+                with bpy.context.temp_override(window=window):
+                    bpy.ops.wm.save_as_mainfile(filepath=filepath)
+            except Exception as e:
+                print(f"Level Design Tools: WARNING - Could not save {filepath}: {e}")
 
         _reset_scene()
