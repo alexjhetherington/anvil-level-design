@@ -19,9 +19,9 @@ if "%BLENDER_EXE%"=="" (
 pushd "%~dp0"
 
 if "%~1"=="" (
-    "%BLENDER_EXE%" --python tests/run_tests.py
+    "%BLENDER_EXE%" --enable-event-simulate --python tests/run_tests.py
 ) else (
-    "%BLENDER_EXE%" --python tests/run_tests.py -- %*
+    "%BLENDER_EXE%" --enable-event-simulate --python tests/run_tests.py -- %*
 )
 
 popd

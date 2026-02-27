@@ -15,6 +15,13 @@ def _get_window():
     return bpy.context.window or bpy.context.window_manager.windows[0]
 
 
+def _redraw():
+    """Force Blender to redraw the UI so test results are visible."""
+    window = _get_window()
+    with bpy.context.temp_override(window=window):
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+
+
 def _reset_scene():
     """Reset to empty scene with Level Design workspace active."""
     window = _get_window()
@@ -40,6 +47,8 @@ class AnvilTestCase(unittest.TestCase):
         pass
 
     def tearDown(self):
+        _redraw()
+
         if save_outputs:
             test_name = self.id()  # e.g. anvil_level_design.tests.test_smoke.SmokeTest.test_passes
             filepath = os.path.join(output_dir, f"{test_name}.blend")

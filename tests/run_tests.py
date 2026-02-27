@@ -83,5 +83,13 @@ def main():
     os._exit(0 if result.wasSuccessful() else 1)
 
 
-# Defer test execution so Blender's GUI and depsgraph are fully initialized
+def _dismiss_splash():
+    """Dismiss the splash screen by simulating an ESC key press."""
+    window = bpy.context.window_manager.windows[0]
+    window.event_simulate('ESC', 'PRESS')
+    return None
+
+
+# Dismiss splash screen immediately, defer tests until GUI is ready
+bpy.app.timers.register(_dismiss_splash, first_interval=0.0)
 bpy.app.timers.register(main, first_interval=1.0)
