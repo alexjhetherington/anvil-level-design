@@ -83,15 +83,8 @@ def main():
     os._exit(0 if result.wasSuccessful() else 1)
 
 
-def _dismiss_splash():
-    """Dismiss the splash screen by simulating an ESC key press."""
-    window = bpy.context.window_manager.windows[0]
-    window.event_simulate('ESC', 'PRESS')
-    return None
-
-
 def _setup_workspace():
-    """Delete all workspaces except Level Design so it becomes active.
+    """Ensure Level Design workspace exists and queue a switch to it.
 
     The workspace switch is deferred until Blender's next event loop cycle,
     so tests are scheduled to run in a later timer.
@@ -100,9 +93,8 @@ def _setup_workspace():
     activate_level_design_workspace()
 
 
-# Dismiss splash screen immediately, set up workspace, then run tests.
-# The workspace switch queued by _setup_workspace takes effect between the
-# two timer callbacks when Blender processes its event loop.
-bpy.app.timers.register(_dismiss_splash, first_interval=0.0)
+# Set up workspace, then run tests. The workspace switch queued by
+# _setup_workspace takes effect between the two timer callbacks when
+# Blender processes its event loop.
 bpy.app.timers.register(_setup_workspace, first_interval=0.5)
 bpy.app.timers.register(main, first_interval=1.0)

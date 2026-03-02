@@ -68,25 +68,15 @@ def _purge_all():
 
 
 def activate_level_design_workspace():
-    """Ensure Level Design workspace exists and remove all others.
+    """Ensure Level Design workspace exists and queue a switch to it.
 
-    Must be called from a timer callback. The actual workspace switch is
-    deferred until Blender processes the next event loop cycle, so tests
-    must run in a LATER timer.
+    Must be called from a timer callback. The workspace switch is deferred
+    until Blender processes the next event loop cycle, so tests must run
+    in a LATER timer.
     """
     create_level_design_workspace()
     window = _get_window()
-    current_ws = window.workspace
-    # Batch-remove all workspaces except current and Level Design
-    to_remove = [ws for ws in bpy.data.workspaces
-                 if ws != current_ws and ws.name != LEVEL_DESIGN_WORKSPACE_NAME]
-    if to_remove:
-        bpy.data.batch_remove(ids=to_remove)
-    # Delete the current workspace if it's not Level Design — the delete
-    # operator queues a switch to the only remaining workspace.
-    if current_ws.name != LEVEL_DESIGN_WORKSPACE_NAME:
-        with bpy.context.temp_override(window=window):
-            bpy.ops.workspace.delete()
+    window.workspace = bpy.data.workspaces[LEVEL_DESIGN_WORKSPACE_NAME]
 
 
 def _init_scene():
