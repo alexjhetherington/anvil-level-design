@@ -90,6 +90,19 @@ def _dismiss_splash():
     return None
 
 
-# Dismiss splash screen immediately, defer tests until GUI is ready
+def _setup_workspace():
+    """Delete all workspaces except Level Design so it becomes active.
+
+    The workspace switch is deferred until Blender's next event loop cycle,
+    so tests are scheduled to run in a later timer.
+    """
+    from anvil_level_design.tests.base_test import activate_level_design_workspace
+    activate_level_design_workspace()
+
+
+# Dismiss splash screen immediately, set up workspace, then run tests.
+# The workspace switch queued by _setup_workspace takes effect between the
+# two timer callbacks when Blender processes its event loop.
 bpy.app.timers.register(_dismiss_splash, first_interval=0.0)
+bpy.app.timers.register(_setup_workspace, first_interval=0.5)
 bpy.app.timers.register(main, first_interval=1.0)
