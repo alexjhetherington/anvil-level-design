@@ -9,9 +9,8 @@ import bmesh
 from mathutils import Vector
 
 from ..texture_apply import set_uv_from_other_face
-from ...properties import apply_uv_to_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
-from ...utils import find_material_with_image, create_material_with_image, debug_log
+from ...utils import find_material_with_image, create_material_with_image, face_aligned_project, debug_log
 
 
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
@@ -252,7 +251,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0, 0, 0, mat, ppm, me)
+            face_aligned_project(face, uv_layer, mat, ppm)
             cache_single_face(face, uv_layer, ppm, me)
 
 
@@ -362,7 +361,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0, 0, 0, mat, ppm, me)
+            face_aligned_project(face, uv_layer, mat, ppm)
             cache_single_face(face, uv_layer, ppm, me)
 
         bmesh.update_edit_mesh(me)

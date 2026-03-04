@@ -3,7 +3,7 @@ import os
 import bpy
 import bmesh
 
-from ..utils import create_material_with_image, find_material_with_image
+from ..utils import create_material_with_image, find_material_with_image, face_aligned_project
 from ..properties import apply_uv_to_face
 
 TEXTURE_PATH = os.path.join(os.path.dirname(__file__), "dev_orange_wall.png")
@@ -47,10 +47,17 @@ def create_vertical_plane(name):
     return obj
 
 
-def create_textured_cube(name, scale_u, scale_v):
+def create_textured_cube(name, scale_u, scale_v, face_aligned=False):
     """Create a 1x1x1 cube with all faces textured at the given UV scale.
 
     The cube spans (0,0,0) to (1,1,1). Returns the object in object mode.
+
+    Args:
+        name: Object name
+        scale_u: Horizontal UV scale (ignored when face_aligned is True)
+        scale_v: Vertical UV scale (ignored when face_aligned is True)
+        face_aligned: If True, use face-aligned world-axis projection
+                      instead of per-face local projection
     """
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
@@ -70,9 +77,40 @@ def create_textured_cube(name, scale_u, scale_v):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
 
-    _apply_material(obj, scale_u, scale_v)
+    if face_aligned:
+        _apply_material_face_aligned(obj)
+    else:
+        _apply_material(obj, scale_u, scale_v)
 
     return obj
+
+
+def _apply_material_face_aligned(obj):
+    """Load dev_orange_wall.png and apply it with face-aligned projection."""
+    image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+
+    mat = find_material_with_image(image)
+    if not mat:
+        mat = create_material_with_image(image)
+
+    obj.data.materials.append(mat)
+    mat_index = obj.data.materials.find(mat.name)
+
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+
+    for face in bm.faces:
+        face.material_index = mat_index
+        face_aligned_project(face, uv_layer, mat, ppm)
+
+    bmesh.update_edit_mesh(obj.data)
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def _apply_material(obj, scale_u=1.0, scale_v=1.0):

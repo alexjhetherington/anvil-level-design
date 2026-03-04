@@ -13,6 +13,7 @@ from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
 from ...utils import compute_uv_projection_from_face, apply_uv_projection_to_face, debug_log, compute_normal_from_verts
+from ...handlers import cache_face_data
 
 
 # Epsilon for floating point comparisons
@@ -586,6 +587,9 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     bm.normal_update()
 
     bmesh.update_edit_mesh(me)
+
+    # Cache faces so the depsgraph handler doesn't overwrite our UVs
+    cache_face_data(context)
 
     return (True, "Cut complete")
 

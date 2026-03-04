@@ -12,6 +12,7 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d
 from ..utils import (
     align_2d_shape_to_square,
     derive_transform_from_uvs,
+    face_aligned_project,
     get_texture_dimensions_from_material,
     get_selected_faces_or_report,
     get_image_from_material,
@@ -865,38 +866,8 @@ class LEVELDESIGN_OT_face_aligned_project(Operator):
             if face_has_hotspot_material(face, me):
                 continue
 
-            # Get texture dimensions for this face's material
             mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-            tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
-            uv_per_meter_u = 1.0 / (tex_meters_u * scale)
-            uv_per_meter_v = 1.0 / (tex_meters_v * scale)
-
-            normal = face.normal
-
-            # Determine best projection axis based on face normal
-            abs_normal = Vector((abs(normal.x), abs(normal.y), abs(normal.z)))
-
-            if abs_normal.z > abs_normal.x and abs_normal.z > abs_normal.y:
-                # Project from Z (top/bottom view)
-                for loop in face.loops:
-                    loop[uv_layer].uv = (
-                        loop.vert.co.x * uv_per_meter_u,
-                        loop.vert.co.y * uv_per_meter_v
-                    )
-            elif abs_normal.y > abs_normal.x:
-                # Project from Y (front/back view)
-                for loop in face.loops:
-                    loop[uv_layer].uv = (
-                        loop.vert.co.x * uv_per_meter_u,
-                        loop.vert.co.z * uv_per_meter_v
-                    )
-            else:
-                # Project from X (side view)
-                for loop in face.loops:
-                    loop[uv_layer].uv = (
-                        loop.vert.co.y * uv_per_meter_u,
-                        loop.vert.co.z * uv_per_meter_v
-                    )
+            face_aligned_project(face, uv_layer, mat, ppm, scale)
             projected_count += 1
 
         bmesh.update_edit_mesh(me)

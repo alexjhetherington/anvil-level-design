@@ -194,6 +194,49 @@ def get_texture_dimensions_from_material(mat, ppm, default_size=128):
     return (tex_width / ppm, tex_height / ppm)
 
 
+def face_aligned_project(face, uv_layer, mat, ppm, scale=1.0):
+    """Project UVs aligned to the face using world-axis planar projection.
+
+    Chooses the best projection plane (XY, XZ, or YZ) based on the face
+    normal's dominant component, then maps vertex positions to UVs using
+    the texture's pixels-per-meter scale.
+
+    Args:
+        face: BMFace to project
+        uv_layer: BMesh UV layer
+        mat: Blender material assigned to the face
+        ppm: Pixels per meter setting
+        scale: Uniform scale multiplier for the projection
+    """
+    tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
+    uv_per_meter_u = 1.0 / (tex_meters_u * scale)
+    uv_per_meter_v = 1.0 / (tex_meters_v * scale)
+
+    normal = face.normal
+    abs_x = abs(normal.x)
+    abs_y = abs(normal.y)
+    abs_z = abs(normal.z)
+
+    if abs_z > abs_x and abs_z > abs_y:
+        for loop in face.loops:
+            loop[uv_layer].uv = (
+                loop.vert.co.x * uv_per_meter_u,
+                loop.vert.co.y * uv_per_meter_v,
+            )
+    elif abs_y > abs_x:
+        for loop in face.loops:
+            loop[uv_layer].uv = (
+                loop.vert.co.x * uv_per_meter_u,
+                loop.vert.co.z * uv_per_meter_v,
+            )
+    else:
+        for loop in face.loops:
+            loop[uv_layer].uv = (
+                loop.vert.co.y * uv_per_meter_u,
+                loop.vert.co.z * uv_per_meter_v,
+            )
+
+
 def get_face_local_axes(face):
     """Compute local X and Y axes for a face.
 
