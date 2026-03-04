@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 ## 1.3.0
+- Integration tests
 - Fix increasing size of 0 area face failing to apply UVs
 - Significant refactor of new face UVing (moved to a general rather than tool specific approach)
 
