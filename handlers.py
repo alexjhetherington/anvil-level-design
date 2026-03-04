@@ -229,7 +229,7 @@ def _apply_auto_hotspots():
     bpy.app.timers.register(_apply_auto_hotspots_deferred, first_interval=0.1)
 
 
-def _get_best_neighbor_face(face, selected_faces_set):
+def _get_best_neighbor_face(face, excluded_faces):
     """Find the best neighboring face to use as UV source.
 
     Priority 1: Prefer neighbors facing a similar direction (positive normal dot product).
@@ -247,7 +247,7 @@ def _get_best_neighbor_face(face, selected_faces_set):
         for linked_face in edge.link_faces:
             if linked_face == face or not linked_face.is_valid:
                 continue
-            if linked_face in selected_faces_set:
+            if linked_face in excluded_faces:
                 continue
 
             sideways_score = 1.0 - abs(linked_face.normal.z)
@@ -264,15 +264,14 @@ def _get_best_neighbor_face(face, selected_faces_set):
     return best_similar if best_similar else best_fallback
 
 
-def _project_new_selected_faces_on_topology_change(context, bm):
-    """Apply UV projection to newly created selected faces after topology change.
+def _project_new_faces(context, bm):
+    """Apply UV projection to newly created faces after topology changes.
 
-    Operations like Bridge Edge Loops, Fill, Grid Fill select the newly created faces.
-    Uses neighboring faces as UV source for seamless tiling (like alt-click).
-    Hotspot faces are handled by the deferred auto-hotspot system.
-
-    Only processes faces not already in the cache (new faces). Pre-existing faces
-    that were already selected are left untouched to preserve their UV settings.
+    Uses a BFS approach to handle both new faces and existing faces displaced
+    by topology operations (e.g. the original face pushed aside during extrude):
+    1. Seed from new faces (not in cache, not hotspot)
+    2. BFS expand through adjacency to cached faces with moved vertices
+    3. Project all affected faces using unchanged neighbors as UV source
     """
     from .operators.texture_apply import set_uv_from_other_face
 
@@ -282,36 +281,85 @@ def _project_new_selected_faces_on_topology_change(context, bm):
     props = context.scene.level_design_props
     ppm = props.pixels_per_meter
 
-    selected_faces = [f for f in bm.faces if f.select and f.is_valid]
-    selected_faces_set = set(selected_faces)
+    # Seed: new faces that border at least one cached face (changed or unchanged).
+    # Interior new faces (surrounded entirely by other new faces) are left alone —
+    # we haven't found a case where interior faces need our projection (Blender handles
+    # extruded copies, subdivide interiors, etc.), but there may be one we haven't considered.
+    new_faces = set()
+    for f in bm.faces:
+        if f.is_valid and f.index not in face_data_cache and not face_has_hotspot_material(f, me):
+            new_faces.add(f)
 
-    if not selected_faces:
+    if not new_faces:
         return
 
-    # Only process non-hotspot faces that are NEW (not in cache).
-    # Pre-existing cached faces keep their UV settings.
-    normal_faces = [f for f in selected_faces
-                    if not face_has_hotspot_material(f, me) and f.index not in face_data_cache]
+    affected = set()
+    queue = []
+    for f in new_faces:
+        for edge in f.edges:
+            has_unchanged_neighbor = False
+            for neighbor in edge.link_faces:
+                if neighbor not in new_faces and neighbor.is_valid and neighbor.index in face_data_cache:
+                    has_unchanged_neighbor = True
+                    break
+            if has_unchanged_neighbor:
+                affected.add(f)
+                queue.append(f)
+                break
 
-    # Save pre-projection UVs for selected faces. If the next depsgraph tick
-    # reveals an extrude modal, these are restored (Blender's extrude already
-    # copies correct UVs from the original face).
-    global _pre_projection_uvs
-    _pre_projection_uvs = {}
-    for face in selected_faces:
-        try:
-            _pre_projection_uvs[face.index] = [loop[uv_layer].uv.copy() for loop in face.loops]
-        except (ReferenceError, RuntimeError):
-            pass
+    if not queue:
+        return
 
-    # Apply normal UVs (world-space projection from neighbors)
+    # BFS expand: from seed faces, find adjacent cached faces with moved vertices.
+    # Also mark all new faces as visited so they aren't traversed or used as sources.
+    visited = set(affected) | new_faces
+    while queue:
+        current = queue.pop(0)
+        for edge in current.edges:
+            for neighbor in edge.link_faces:
+                if neighbor in visited or not neighbor.is_valid:
+                    continue
+                visited.add(neighbor)
+
+                if face_has_hotspot_material(neighbor, me):
+                    continue
+
+                cached = face_data_cache.get(neighbor.index)
+                if not cached:
+                    continue
+
+                # Check if any vertex has moved from cached position
+                cached_verts = cached['verts']
+                current_verts = [v.co for v in neighbor.verts]
+                if len(current_verts) != len(cached_verts):
+                    affected.add(neighbor)
+                    queue.append(neighbor)
+                    continue
+
+                has_moved = False
+                for cv, cached_v in zip(current_verts, cached_verts):
+                    if (cv - cached_v).length > 0.0001:
+                        has_moved = True
+                        break
+                if has_moved:
+                    affected.add(neighbor)
+                    queue.append(neighbor)
+
+    # Project all affected faces using unchanged neighbors as source.
+    # Only exclude new faces from being sources — BFS-expanded cached faces
+    # still have valid UV transforms (just moved vertices) and can serve as sources.
+    # Skip zero-area faces — they can't be projected meaningfully (e.g. during
+    # modal extrude, new faces start collapsed). They'll be handled later when
+    # the modal moves them and they gain area (see _was_zero_area check in main loop).
+    excluded = new_faces
     projected_count = 0
-    for face in normal_faces:
-        # Find best neighboring face to use as UV source
-        source_face = _get_best_neighbor_face(face, selected_faces_set)
+    for face in affected:
+        if face.calc_area() < 1e-8:
+            continue
+
+        source_face = _get_best_neighbor_face(face, excluded)
 
         if source_face:
-            # Transfer UVs from neighbor for seamless tiling
             set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
             projected_count += 1
         else:
@@ -345,9 +393,6 @@ _last_edit_object_name = None
 _file_loaded_into_edit_depsgraph = False
 # Track modal operators for UV world-scale baseline
 _tracked_modal_operators = set()
-# Pre-projection UVs saved before topology change projection, keyed by face index.
-# If the next depsgraph tick reveals an extrude modal, these are restored.
-_pre_projection_uvs = None
 # Track the file browser watcher modal operator
 _file_browser_watcher_running = False
 # Track the previously selected file browser path (to avoid reapplying same image)
@@ -668,39 +713,6 @@ def apply_world_scale_uvs(obj, scene):
     props = scene.level_design_props
     ppm = props.pixels_per_meter
 
-    # If we saved pre-projection UVs and an extrude/duplicate modal appeared, restore them.
-    # Blender's extrude and duplicate copy correct UVs from the original face; our topology
-    # change projection overwrote them, so we undo that here.
-    global _pre_projection_uvs
-    if _pre_projection_uvs is not None:
-        if 'MESH_OT_extrude_region_move' in current_modals or 'MESH_OT_duplicate_move' in current_modals:
-            restored = 0
-            for face_idx, saved_uvs in _pre_projection_uvs.items():
-                try:
-                    if face_idx < len(bm.faces):
-                        face = bm.faces[face_idx]
-                        loops = list(face.loops)
-                        if len(loops) == len(saved_uvs):
-                            for loop, uv in zip(loops, saved_uvs):
-                                loop[uv_layer].uv = uv.copy()
-                            restored += 1
-                except (ReferenceError, RuntimeError):
-                    pass
-            if restored > 0:
-                bmesh.update_edit_mesh(me)
-                cache_face_data(bpy.context)
-                debug_log(f"[WorldScale] Restored {restored} pre-projection UVs (extrude/duplicate detected)")
-        _pre_projection_uvs = None
-
-    # Check if we're in an extrude operation - non-selected faces need special handling
-    is_extrude = 'MESH_OT_extrude_region_move' in current_modals
-    if is_extrude:
-        from .operators.texture_apply import set_uv_from_other_face
-        # Exclude faces that are affected by the extrude: selected faces AND
-        # non-selected faces that have selected vertices (they'll be updated too)
-        extrude_affected_faces_set = {f for f in bm.faces
-                                      if f.select or any(v.select for v in f.verts)}
-
     # Iterate using indices to be more resilient during topology changes
     face_indices = list(range(len(bm.faces)))
     uv_applied_count = 0
@@ -773,27 +785,32 @@ def apply_world_scale_uvs(obj, scene):
                     skipped_no_move += 1
                 continue
 
-            # During extrude, non-selected faces should copy UVs from an
-            # adjacent non-selected face rather than using cached-transform
-            # re-projection. This keeps their texture consistent with neighbors.
-            if is_extrude and not face.select:
-                source_face = _get_best_neighbor_face(face, extrude_affected_faces_set)
-                if source_face:
-                    set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
-                    uv_applied_count += 1
-                else:
-                    # No valid neighbor - fall back to world-space projection
-                    mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-                    apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
-                    uv_applied_count += 1
-                continue
-
             # Get cached transform (defaults if not cached)
             scale_u = cached.get('scale_u', 1.0)
             scale_v = cached.get('scale_v', 1.0)
             rotation = cached.get('rotation', 0.0)
             offset_x = cached.get('offset_x', 0.0)
             offset_y = cached.get('offset_y', 0.0)
+
+            # Face was zero-area when cached (e.g. collapsed during modal extrude
+            # start) but now has real geometry — project from a neighbor instead
+            # of using the meaningless cached transform.
+            _was_zero_area = abs(scale_u) < 1e-8 and abs(scale_v) < 1e-8
+            if _was_zero_area and face.calc_area() > 1e-8:
+                from .operators.texture_apply import set_uv_from_other_face
+                excluded = {f for f in bm.faces
+                            if f.is_valid and f.index in face_data_cache
+                            and abs(face_data_cache[f.index].get('scale_u', 1.0)) < 1e-8
+                            and abs(face_data_cache[f.index].get('scale_v', 1.0)) < 1e-8}
+                source_face = _get_best_neighbor_face(face, excluded)
+                if source_face:
+                    set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
+                    uv_applied_count += 1
+                else:
+                    mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+                    apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+                    uv_applied_count += 1
+                continue
 
             # Compensate for first edge rotation to keep texture fixed in world space
             # The local coordinate system is based on the first non-zero edge, so if the face
@@ -1681,10 +1698,10 @@ def on_depsgraph_update(scene, depsgraph):
                         is_undo_recovery = _cache_invalidated_by_undo
                         _cache_invalidated_by_undo = False
 
-                        # Project new faces only on actual topology changes
+                        # Project new faces when faces were added
                         # (not after undo/redo cache invalidation or object switch)
-                        if not is_fresh_start and not is_undo_recovery:
-                            _project_new_selected_faces_on_topology_change(context, bm)
+                        if not is_fresh_start and not is_undo_recovery and current_face_count > last_face_count:
+                            _project_new_faces(context, bm)
                         cache_face_data(context)
                         debug_log(f"[Depsgraph] Cache rebuilt ({len(face_data_cache)} faces)")
                         update_ui_from_selection(context)

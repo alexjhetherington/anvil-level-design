@@ -1,7 +1,8 @@
 # Anvil Level Design Changelog
 
 ## 1.3.0
-- Fix extrude not UVing faces correctly
+- Fix increasing size of 0 area face failing to apply UVs
+- Significant refactor of new face UVing (moved to a general rather than tool specific approach)
 
 ## 1.2.11
 - Fix duplicating objects resets UVs
