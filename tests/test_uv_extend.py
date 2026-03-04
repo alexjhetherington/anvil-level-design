@@ -4,7 +4,7 @@ from mathutils import Vector
 
 from ..utils import derive_transform_from_uvs
 from .base_test import AnvilTestCase
-from .helpers import create_vertical_plane, create_textured_cube, _get_context_override
+from .helpers import create_vertical_plane, create_textured_cube, add_uv_layer, _get_context_override
 
 
 def _setup_cube_and_select_top_face(name, scale_u, scale_v):
@@ -13,6 +13,7 @@ def _setup_cube_and_select_top_face(name, scale_u, scale_v):
     Returns the object (in edit mode with top face selected).
     """
     obj = create_textured_cube(name, scale_u, scale_v)
+    add_uv_layer(obj, "UVMap.001", 0.5, 0.5)
 
     ctx = _get_context_override()
     with bpy.context.temp_override(**ctx):
@@ -33,15 +34,18 @@ def _setup_cube_and_select_top_face(name, scale_u, scale_v):
     return obj
 
 
-def _read_all_face_transforms(obj):
-    """Read UV transforms from all faces.
+def _read_all_face_transforms(obj, uv_layer_index):
+    """Read UV transforms from all faces on the UV layer at the given index.
 
     Returns a list of transform dicts.
     """
     ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
     bm = bmesh.from_edit_mesh(obj.data)
-    uv_layer = bm.loops.layers.uv.verify()
+    uv_layer = bm.loops.layers.uv[uv_layer_index]
     bm.faces.ensure_lookup_table()
 
     transforms = []
@@ -84,6 +88,7 @@ def _setup_plane_and_select_edge(name, vert_filter):
     Returns the object (in edit mode with edge selected).
     """
     obj = create_vertical_plane(name)
+    add_uv_layer(obj, "UVMap.001", 0.5, 0.5)
 
     ctx = _get_context_override()
     with bpy.context.temp_override(**ctx):
@@ -94,15 +99,18 @@ def _setup_plane_and_select_edge(name, vert_filter):
     return obj
 
 
-def _read_transforms(obj):
-    """Read UV transforms from both faces (original and new).
+def _read_transforms(obj, uv_layer_index):
+    """Read UV transforms from both faces (original and new) on the UV layer at the given index.
 
     Returns (original_transform, new_transform).
     """
     ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
     bm = bmesh.from_edit_mesh(obj.data)
-    uv_layer = bm.loops.layers.uv.verify()
+    uv_layer = bm.loops.layers.uv[uv_layer_index]
     bm.faces.ensure_lookup_table()
 
     original_face = bm.faces[0]
@@ -146,9 +154,12 @@ class UVExtendKeyboardTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
         )
         yield from self.simulate_extrude(axis='Z', value=1)
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 0.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 0.0, 0.0, 0.0)
 
     def test_extend_down(self):
         obj = _setup_plane_and_select_edge(
@@ -156,9 +167,12 @@ class UVExtendKeyboardTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.z) < 1e-5,
         )
         yield from self.simulate_extrude(axis='Z', value=-1)
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 180.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 180.0, 0.0, 0.0)
 
     def test_extend_left(self):
         obj = _setup_plane_and_select_edge(
@@ -166,9 +180,12 @@ class UVExtendKeyboardTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.x) < 1e-5,
         )
         yield from self.simulate_extrude(axis='X', value=-1)
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 90.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 90.0, 0.0, 0.0)
 
     def test_extend_right(self):
         obj = _setup_plane_and_select_edge(
@@ -176,18 +193,24 @@ class UVExtendKeyboardTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,
         )
         yield from self.simulate_extrude(axis='X', value=1)
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
-
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, -90.0, 0.0, 0.0)
 
     def test_cube_extrude_preserves_scale(self):
         obj = _setup_cube_and_select_top_face("kb_cube_extrude", 2.0, 2.0)
         yield from self.simulate_extrude(value=1)
-        transforms = _read_all_face_transforms(obj)
+        transforms = _read_all_face_transforms(obj, 0)
         for t in transforms:
             self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
             self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
+        transforms2 = _read_all_face_transforms(obj, 1)
+        for t in transforms2:
+            self.assertAlmostEqual(t['scale_u'], 0.5, places=3)
+            self.assertAlmostEqual(t['scale_v'], 0.5, places=3)
 
 
 class UVExtendToolTest(_UVExtendBase):
@@ -223,9 +246,12 @@ class UVExtendToolTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
         )
         yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 0.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 0.0, 0.0, 0.0)
 
     def test_extend_down(self):
         obj = _setup_plane_and_select_edge(
@@ -233,9 +259,12 @@ class UVExtendToolTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.z) < 1e-5,
         )
         yield from self._extrude_non_modal(obj, Vector((0, 0, -1)))
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 180.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 180.0, 0.0, 0.0)
 
     def test_extend_left(self):
         obj = _setup_plane_and_select_edge(
@@ -243,9 +272,12 @@ class UVExtendToolTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.x) < 1e-5,
         )
         yield from self._extrude_non_modal(obj, Vector((-1, 0, 0)))
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 90.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, 90.0, 0.0, 0.0)
 
     def test_extend_right(self):
         obj = _setup_plane_and_select_edge(
@@ -253,14 +285,21 @@ class UVExtendToolTest(_UVExtendBase):
             vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,
         )
         yield from self._extrude_non_modal(obj, Vector((1, 0, 0)))
-        orig, new = _read_transforms(obj)
+        orig, new = _read_transforms(obj, 0)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
+        orig2, new2 = _read_transforms(obj, 1)
+        self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
+        self._assert_transform(new2, 0.5, 0.5, -90.0, 0.0, 0.0)
 
     def test_cube_extrude_preserves_scale(self):
         obj = _setup_cube_and_select_top_face("tool_cube_extrude", 2.0, 2.0)
         yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
-        transforms = _read_all_face_transforms(obj)
+        transforms = _read_all_face_transforms(obj, 0)
         for t in transforms:
             self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
             self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
+        transforms2 = _read_all_face_transforms(obj, 1)
+        for t in transforms2:
+            self.assertAlmostEqual(t['scale_u'], 0.5, places=3)
+            self.assertAlmostEqual(t['scale_v'], 0.5, places=3)

@@ -119,7 +119,8 @@ class AnvilTestCase(unittest.TestCase):
         pass
 
     def tearDown(self):
-        _redraw()
+        if not save_outputs:
+            _redraw()
 
         if save_outputs:
             test_name = self.id()  # e.g. anvil_level_design.tests.test_smoke.SmokeTest.test_passes

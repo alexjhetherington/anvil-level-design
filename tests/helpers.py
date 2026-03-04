@@ -113,6 +113,51 @@ def _apply_material_face_aligned(obj):
         bpy.ops.object.mode_set(mode='OBJECT')
 
 
+def add_uv_layer(obj, layer_name, scale_u, scale_v):
+    """Add a new UV layer and project all faces with apply_uv_to_face."""
+    mat = obj.data.materials[0]
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+    was_edit = (obj.mode == 'EDIT')
+
+    ctx = _get_context_override()
+    if not was_edit:
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.new(layer_name)
+
+    for face in bm.faces:
+        apply_uv_to_face(face, uv_layer, scale_u, scale_v, 0.0, 0.0, 0.0,
+                         mat, ppm, obj.data)
+
+    bmesh.update_edit_mesh(obj.data)
+    if not was_edit:
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def add_uv_layer_face_aligned(obj, layer_name, scale):
+    """Add a new UV layer and project all faces with face_aligned_project."""
+    mat = obj.data.materials[0]
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+    was_edit = (obj.mode == 'EDIT')
+
+    ctx = _get_context_override()
+    if not was_edit:
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.new(layer_name)
+
+    for face in bm.faces:
+        face_aligned_project(face, uv_layer, mat, ppm, scale=scale)
+
+    bmesh.update_edit_mesh(obj.data)
+    if not was_edit:
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+
 def _apply_material(obj, scale_u=1.0, scale_v=1.0):
     """Load dev_orange_wall.png and apply it as a material with UVs to all faces."""
     image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)

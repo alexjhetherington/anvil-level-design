@@ -5,7 +5,7 @@ from mathutils import Vector
 from ..utils import derive_transform_from_uvs
 from ..operators.cube_cut.geometry import execute_cube_cut
 from .base_test import AnvilTestCase
-from .helpers import create_textured_cube, _get_context_override
+from .helpers import create_textured_cube, add_uv_layer_face_aligned, _get_context_override
 
 
 def _face_key(face):
@@ -26,6 +26,8 @@ class CubeCutTest(AnvilTestCase):
         ctx = _get_context_override()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='EDIT')
+
+        add_uv_layer_face_aligned(obj, "UVMap.001", 0.5)
 
         # Select all faces so cube cut processes them
         bm = bmesh.from_edit_mesh(obj.data)
@@ -52,7 +54,8 @@ class CubeCutTest(AnvilTestCase):
         self.assertTrue(success, msg)
 
         bm = bmesh.from_edit_mesh(obj.data)
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = bm.loops.layers.uv[0]
+        uv_layer2 = bm.loops.layers.uv[1]
         bm.faces.ensure_lookup_table()
 
         self.assertEqual(len(bm.faces), 12,
@@ -65,41 +68,67 @@ class CubeCutTest(AnvilTestCase):
         # inherit those rotations. Cut frame pieces preserve the original
         # face's UV mapping via planar re-projection.
         # Key: (nx, ny, nz, cx, cy, cz)
+        # Values: (rotation, L1_offset_x, L1_offset_y, L2_offset_x, L2_offset_y)
         expected = {
             # Uncut faces
-            (-1, 0, 0, 0.0, 0.5, 0.5):   (90.0, 0.0, 0.0),    # left
-            (1, 0, 0, 1.0, 0.5, 0.5):     (90.0, 0.0, 0.0),    # right
-            (0, 0, -1, 0.5, 0.5, 0.0):    (0.0, 0.0, 0.0),     # bottom
-            (0, 0, 1, 0.5, 0.5, 1.0):     (180.0, 0.0, 0.0),   # top
+            (-1, 0, 0, 0.0, 0.5, 0.5):   (90.0, 0.0, 0.0, 0.0, 0.0),
+            (1, 0, 0, 1.0, 0.5, 0.5):     (90.0, 0.0, 0.0, 0.0, 0.0),
+            (0, 0, -1, 0.5, 0.5, 0.0):    (0.0, 0.0, 0.0, 0.0, 0.0),
+            (0, 0, 1, 0.5, 0.5, 1.0):     (180.0, 0.0, 0.0, 0.0, 0.0),
             # Front frame (-Y normal at y=0)
-            (0, -1, 0, 0.88, 0.0, 0.5):   (-90.0, 0.75, 0.75),
-            (0, -1, 0, 0.5, 0.0, 0.88):   (0.0, 0.25, 0.75),
-            (0, -1, 0, 0.5, 0.0, 0.12):   (180.0, 0.75, 0.25),
-            (0, -1, 0, 0.12, 0.0, 0.5):   (90.0, 0.25, 0.25),
+            (0, -1, 0, 0.88, 0.0, 0.5):   (-90.0, 0.75, 0.75, 0.5, 0.5),
+            (0, -1, 0, 0.5, 0.0, 0.88):   (0.0, 0.25, 0.75, 0.5, 0.5),
+            (0, -1, 0, 0.5, 0.0, 0.12):   (180.0, 0.75, 0.25, 0.5, 0.5),
+            (0, -1, 0, 0.12, 0.0, 0.5):   (90.0, 0.25, 0.25, 0.5, 0.5),
             # Back frame (+Y normal at y=1)
-            (0, 1, 0, 0.5, 1.0, 0.88):    (180.0, 0.75, 0.75),
-            (0, 1, 0, 0.12, 1.0, 0.5):    (-90.0, 0.25, 0.75),
-            (0, 1, 0, 0.5, 1.0, 0.12):    (0.0, 0.25, 0.25),
-            (0, 1, 0, 0.88, 1.0, 0.5):    (90.0, 0.75, 0.25),
+            (0, 1, 0, 0.5, 1.0, 0.88):    (180.0, 0.75, 0.75, 0.5, 0.5),
+            (0, 1, 0, 0.12, 1.0, 0.5):    (-90.0, 0.25, 0.75, 0.5, 0.5),
+            (0, 1, 0, 0.5, 1.0, 0.12):    (0.0, 0.25, 0.25, 0.5, 0.5),
+            (0, 1, 0, 0.88, 1.0, 0.5):    (90.0, 0.75, 0.25, 0.5, 0.5),
         }
 
         for face in bm.faces:
             key = _face_key(face)
             self.assertIn(key, expected, f"Unexpected face key {key}")
-            rot, off_x, off_y = expected[key]
+            rot, off_x, off_y, off2_x, off2_y = expected[key]
+
+            # Layer 1: scale=1.0
             t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
             self.assertAlmostEqual(
                 t['scale_u'], 1.0, places=2,
-                msg=f"Face {key} scale_u={t['scale_u']}")
+                msg=f"Face {key} L1 scale_u={t['scale_u']}")
             self.assertAlmostEqual(
                 t['scale_v'], 1.0, places=2,
-                msg=f"Face {key} scale_v={t['scale_v']}")
+                msg=f"Face {key} L1 scale_v={t['scale_v']}")
             self.assertAlmostEqual(
                 t['rotation'], rot, places=2,
-                msg=f"Face {key} rotation={t['rotation']}")
+                msg=f"Face {key} L1 rotation={t['rotation']}")
             self.assertAlmostEqual(
                 t['offset_x'], off_x, places=2,
-                msg=f"Face {key} offset_x={t['offset_x']}")
+                msg=f"Face {key} L1 offset_x={t['offset_x']}")
             self.assertAlmostEqual(
                 t['offset_y'], off_y, places=2,
-                msg=f"Face {key} offset_y={t['offset_y']}")
+                msg=f"Face {key} L1 offset_y={t['offset_y']}")
+
+            # Layer 2: scale=0.5, same rotation
+            t2 = derive_transform_from_uvs(face, uv_layer2, ppm, obj.data)
+            self.assertAlmostEqual(
+                t2['scale_u'], 0.5, places=2,
+                msg=f"Face {key} L2 scale_u={t2['scale_u']}")
+            self.assertAlmostEqual(
+                t2['scale_v'], 0.5, places=2,
+                msg=f"Face {key} L2 scale_v={t2['scale_v']}")
+            self.assertAlmostEqual(
+                t2['rotation'], rot, places=2,
+                msg=f"Face {key} L2 rotation={t2['rotation']}")
+            self.assertAlmostEqual(
+                t2['offset_x'], off2_x, places=2,
+                msg=f"Face {key} L2 offset_x={t2['offset_x']}")
+            self.assertAlmostEqual(
+                t2['offset_y'], off2_y, places=2,
+                msg=f"Face {key} L2 offset_y={t2['offset_y']}")
+
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()
