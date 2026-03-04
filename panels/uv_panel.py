@@ -80,6 +80,30 @@ class LEVELDESIGN_OT_set_active_render_uv(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_toggle_uv_lock(Operator):
+    """Toggle UV map lock (sticker mode)"""
+    bl_idname = "leveldesign.toggle_uv_lock"
+    bl_label = "Toggle UV Lock"
+    bl_options = {'INTERNAL'}
+
+    uv_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        obj = context.object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+
+        from ..utils import sync_uv_map_settings
+        sync_uv_map_settings(obj)
+
+        for setting in obj.anvil_uv_map_settings:
+            if setting.name == self.uv_name:
+                setting.locked = not setting.locked
+                return {'FINISHED'}
+
+        return {'CANCELLED'}
+
+
 class LEVELDESIGN_PT_uv_lock_panel(Panel):
     """UV Maps - per-layer lock/unlock"""
 
@@ -145,15 +169,14 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
             row.label(text=uv_map.name)
 
             # Lock toggle
-            if setting is not None:
-                row.prop(
-                    setting,
-                    "locked",
-                    text="Locked" if setting.locked else "Unlocked",
-                    icon='LOCKED' if setting.locked else 'UNLOCKED',
-                )
-            else:
-                row.label(text="Unlocked", icon='UNLOCKED')
+            is_locked = setting.locked if setting is not None else False
+            op = row.operator(
+                "leveldesign.toggle_uv_lock",
+                text="Locked" if is_locked else "Unlocked",
+                icon='LOCKED' if is_locked else 'UNLOCKED',
+                depress=is_locked,
+            )
+            op.uv_name = uv_map.name
 
 
 class LEVELDESIGN_PT_uv_settings_panel(Panel):
@@ -610,6 +633,7 @@ class LEVELDESIGN_PT_debug_panel(Panel):
 classes = (
     LEVELDESIGN_PT_grid_panel,
     LEVELDESIGN_OT_set_active_render_uv,
+    LEVELDESIGN_OT_toggle_uv_lock,
     LEVELDESIGN_PT_uv_lock_panel,
     LEVELDESIGN_PT_uv_settings_panel,
     LEVELDESIGN_PT_uv_shortcuts_panel,
