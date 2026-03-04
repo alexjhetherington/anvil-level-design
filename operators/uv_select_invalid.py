@@ -2,7 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Operator
 
-from ..utils import is_level_design_workspace
+from ..utils import is_level_design_workspace, get_render_active_uv_layer
 
 
 class LEVELDESIGN_OT_select_invalid_uvs(Operator):
@@ -24,7 +24,9 @@ class LEVELDESIGN_OT_select_invalid_uvs(Operator):
             bpy.ops.object.mode_set(mode='EDIT')
 
         bm = bmesh.from_edit_mesh(me)
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
         invalid_count = 0
         for face in bm.faces:

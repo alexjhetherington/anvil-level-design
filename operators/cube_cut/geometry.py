@@ -12,7 +12,7 @@ import bmesh
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-from ...utils import compute_uv_projection_from_face, apply_uv_projection_to_face, debug_log, compute_normal_from_verts
+from ...utils import compute_uv_projection_from_face, apply_uv_projection_to_face, debug_log, compute_normal_from_verts, get_all_uv_layers
 from ...handlers import cache_face_data
 
 
@@ -435,7 +435,7 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     # Capture vertex data for each face BEFORE deleting faces
     debug_log(f"\n[CubeCut] === STEP 4: Capture face data and delete faces ===")
     split_verts_set = set(split_verts)
-    face_data_list = []  # List of (new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projection) tuples
+    face_data_list = []  # List of (new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index) tuples
     faces_to_delete = []
 
     # Get UV layer for capturing projection data
@@ -494,15 +494,18 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
         verts_in_original_interior = _sort_verts_by_angle_with_normal(list(interior_verts), face_normal)
         verts_on_original_exterior = _sort_verts_by_angle_with_normal([v for v in face.verts if v not in verts_to_delete], face_normal)
 
-        # Capture UV projection data and material index before deleting the face
-        uv_projection = None
-        if uv_layer is not None:
-            uv_projection = compute_uv_projection_from_face(face, uv_layer)
+        # Capture UV projection data for ALL layers and material index before deleting the face
+        uv_projections = {}
+        all_layers = get_all_uv_layers(bm, me)
+        for layer in all_layers:
+            proj = compute_uv_projection_from_face(face, layer)
+            if proj is not None:
+                uv_projections[layer.name] = proj
         material_index = face.material_index
 
-        face_data_list.append((new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projection, material_index))
+        face_data_list.append((new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index))
         faces_to_delete.append(face)
-        debug_log(f"[CubeCut] Captured data for face {face.index}: {len(new_verts)} new_verts, {len(verts_on_original_exterior)} exterior, {len(verts_in_original_interior)} interior, uv={'yes' if uv_projection else 'no'}")
+        debug_log(f"[CubeCut] Captured data for face {face.index}: {len(new_verts)} new_verts, {len(verts_on_original_exterior)} exterior, {len(verts_in_original_interior)} interior, uv_layers={len(uv_projections)}")
 
     # Delete only the faces we're processing
     debug_log(f"[CubeCut] Deleting {len(faces_to_delete)} faces")
@@ -514,16 +517,18 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     bm.edges.ensure_lookup_table()
 
     newly_created_faces = []
-    for new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projection, material_index in face_data_list:
+    for new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index in face_data_list:
         new_faces = _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, cuboid, me, ppm, vert_plane_map)
         if new_faces:
             for new_face in new_faces:
                 # Apply material from original face
                 new_face.material_index = material_index
-                # Apply UV projection from the original face
-                if uv_projection is not None and uv_layer is not None:
-                    u_axis, v_axis, origin_uv, origin_pos, source_normal = uv_projection
-                    apply_uv_projection_to_face(new_face, uv_layer, u_axis, v_axis, origin_uv, origin_pos, source_normal)
+                # Apply UV projection from original face to ALL layers
+                for layer_name, proj in uv_projections.items():
+                    layer = bm.loops.layers.uv.get(layer_name)
+                    if layer is not None:
+                        u_axis, v_axis, origin_uv, origin_pos, source_normal = proj
+                        apply_uv_projection_to_face(new_face, layer, u_axis, v_axis, origin_uv, origin_pos, source_normal)
             newly_created_faces.extend(new_faces)
     #
     # === STEP 6: Quadrilate n-gons created by edge splits ===

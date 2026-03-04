@@ -2,7 +2,7 @@ import bpy
 import bmesh
 import math
 import time
-from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty, EnumProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty, EnumProperty, CollectionProperty
 
 
 # Flag to prevent recursive updates
@@ -41,10 +41,20 @@ def sync_scale_tracking(context):
     _last_scale_v = props.texture_scale_v
 
 
-def update_uv_lock(self, context):
-    """Called when UV lock is toggled on an object"""
+def update_uv_map_lock(self, context):
+    """Called when a per-UV-map lock is toggled"""
     from .handlers import cache_face_data
     cache_face_data(context)
+
+
+class AnvilUVMapSettings(bpy.types.PropertyGroup):
+    """Per-UV-map settings (lock state)"""
+    locked: BoolProperty(
+        name="Locked",
+        description="Lock this UV map to geometry (sticker mode)",
+        default=False,
+        update=update_uv_map_lock,
+    )
 
 
 def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, offset_y,
@@ -130,7 +140,11 @@ def apply_scale_to_selected_faces(context):
 
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
-    uv_layer = bm.loops.layers.uv.verify()
+
+    from .utils import get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        return
 
     props = context.scene.level_design_props
     new_scale_u = props.texture_scale_u
@@ -159,7 +173,7 @@ def apply_scale_to_selected_faces(context):
         apply_uv_to_face(face, uv_layer, new_scale_u, new_scale_v,
                          current['rotation'], current['offset_x'], current['offset_y'],
                          mat, ppm, me)
-        cache_single_face(face, uv_layer, ppm, me)
+        cache_single_face(face, bm, ppm, me)
 
 
 def apply_rotation_to_selected_faces(context):
@@ -173,7 +187,11 @@ def apply_rotation_to_selected_faces(context):
 
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
-    uv_layer = bm.loops.layers.uv.verify()
+
+    from .utils import get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        return
 
     props = context.scene.level_design_props
     new_rotation = props.texture_rotation
@@ -201,7 +219,7 @@ def apply_rotation_to_selected_faces(context):
         apply_uv_to_face(face, uv_layer, current['scale_u'], current['scale_v'],
                          new_rotation, current['offset_x'], current['offset_y'],
                          mat, ppm, me)
-        cache_single_face(face, uv_layer, ppm, me)
+        cache_single_face(face, bm, ppm, me)
 
 
 def apply_offset_to_selected_faces(context):
@@ -215,7 +233,11 @@ def apply_offset_to_selected_faces(context):
 
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
-    uv_layer = bm.loops.layers.uv.verify()
+
+    from .utils import get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        return
 
     props = context.scene.level_design_props
     new_offset_x = props.texture_offset_x
@@ -244,7 +266,7 @@ def apply_offset_to_selected_faces(context):
         apply_uv_to_face(face, uv_layer, current['scale_u'], current['scale_v'],
                          current['rotation'], new_offset_x, new_offset_y,
                          mat, ppm, me)
-        cache_single_face(face, uv_layer, ppm, me)
+        cache_single_face(face, bm, ppm, me)
 
 
 def update_texture_scale(self, context):
@@ -539,16 +561,12 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
 
 
 def register():
+    bpy.utils.register_class(AnvilUVMapSettings)
     bpy.utils.register_class(LevelDesignProperties)
     bpy.types.Scene.level_design_props = PointerProperty(type=LevelDesignProperties)
 
-    # Per-object UV lock property
-    bpy.types.Object.anvil_uv_lock = BoolProperty(
-        name="UV Lock",
-        description="Lock UVs to geometry when transforming",
-        default=False,
-        update=update_uv_lock,
-    )
+    # Per-object, per-UV-map settings collection
+    bpy.types.Object.anvil_uv_map_settings = CollectionProperty(type=AnvilUVMapSettings)
 
     # Per-object allow combined faces property for hotspotting
     bpy.types.Object.anvil_allow_combined_faces = BoolProperty(
@@ -571,6 +589,7 @@ def register():
 def unregister():
     del bpy.types.Object.anvil_hotspot_size_weight
     del bpy.types.Object.anvil_allow_combined_faces
-    del bpy.types.Object.anvil_uv_lock
+    del bpy.types.Object.anvil_uv_map_settings
     del bpy.types.Scene.level_design_props
     bpy.utils.unregister_class(LevelDesignProperties)
+    bpy.utils.unregister_class(AnvilUVMapSettings)

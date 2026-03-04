@@ -39,6 +39,8 @@ from .utils import (
     get_local_x_from_verts_3d, debug_log, face_has_hotspot_material,
     any_connected_face_has_hotspot, get_all_hotspot_faces,
     is_level_design_workspace,
+    get_render_active_uv_layer, get_unlocked_uv_layers, get_locked_uv_layers,
+    get_all_uv_layers, sync_uv_map_settings,
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
 
@@ -203,12 +205,22 @@ def _apply_auto_hotspots_deferred():
         if active_face_index is not None and active_face_index < len(bm.faces):
             bm.faces.active = bm.faces[active_face_index]
 
+        # Copy hotspot UVs from primary unlocked layer to other unlocked layers
+        unlocked_layers = get_unlocked_uv_layers(bm, obj, me)
+        if len(unlocked_layers) > 1:
+            primary_layer = unlocked_layers[0]
+            for face in all_hotspot_faces:
+                if not face.is_valid:
+                    continue
+                for other_layer in unlocked_layers[1:]:
+                    for loop in face.loops:
+                        loop[other_layer].uv = loop[primary_layer].uv.copy()
+
         # Update cache for processed faces
-        uv_layer = bm.loops.layers.uv.verify()
         ppm = props.pixels_per_meter
         for face in all_hotspot_faces:
             if face.is_valid:
-                cache_single_face(face, uv_layer, ppm, me)
+                cache_single_face(face, bm, ppm, me)
 
         bmesh.update_edit_mesh(me)
 
@@ -277,7 +289,10 @@ def _project_new_faces(context, bm):
 
     obj = context.object
     me = obj.data
-    uv_layer = bm.loops.layers.uv.verify()
+    unlocked_layers = get_unlocked_uv_layers(bm, obj, me)
+    if not unlocked_layers:
+        return
+
     props = context.scene.level_design_props
     ppm = props.pixels_per_meter
 
@@ -359,14 +374,15 @@ def _project_new_faces(context, bm):
 
         source_face = _get_best_neighbor_face(face, excluded)
 
-        if source_face:
-            set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
-            projected_count += 1
-        else:
-            # No valid neighbor - fall back to world-space projection
-            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-            apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
-            projected_count += 1
+        # Project on all unlocked layers
+        for uv_layer in unlocked_layers:
+            if source_face:
+                set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
+            else:
+                # No valid neighbor - fall back to world-space projection
+                mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+                apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+        projected_count += 1
 
     if projected_count > 0:
         bmesh.update_edit_mesh(me)
@@ -465,33 +481,75 @@ def set_previous_image(image):
     _previous_image = image
 
 
-def cache_single_face(face, uv_layer, ppm=None, me=None):
-    """Cache vertex positions, UVs, and transform for a single face.
+def cache_single_face(face, bm, ppm=None, me=None):
+    """Cache vertex positions, per-layer UVs, and transform for a single face.
 
     Updates the face_data_cache entry for this face without clearing the cache.
-    Used by apply_uv_to_face after modifying a face's UVs.
+    Caches UV data for ALL UV layers in a 'uv_layers' dict keyed by layer name.
+
+    Args:
+        face: BMesh face to cache
+        bm: BMesh instance (used to access all UV layers)
+        ppm: Pixels per meter (optional, for deriving transform)
+        me: Mesh data (optional, for deriving transform)
     """
     if face is None or not face.is_valid:
         return
 
     cache_entry = {
         'verts': [v.co.copy() for v in face.verts],
-        'uvs': [loop[uv_layer].uv.copy() for loop in face.loops],
         'normal': face.normal.copy(),
-        'center': face.calc_center_median().copy()
+        'center': face.calc_center_median().copy(),
+        'uv_layers': {},
     }
 
-    # Cache the derived transform (scale, rotation, offset) if we have the required data
+    # Cache UVs for each UV layer, keyed by layer name
+    for layer_idx in range(len(bm.loops.layers.uv)):
+        uv_layer = bm.loops.layers.uv[layer_idx]
+        layer_data = {
+            'uvs': [loop[uv_layer].uv.copy() for loop in face.loops],
+        }
+        # Cache the derived transform for this layer
+        if ppm is not None and me is not None:
+            transform = derive_transform_from_uvs(face, uv_layer, ppm, me)
+            if transform:
+                layer_data['scale_u'] = transform['scale_u']
+                layer_data['scale_v'] = transform['scale_v']
+                layer_data['rotation'] = transform['rotation']
+                layer_data['offset_x'] = transform['offset_x']
+                layer_data['offset_y'] = transform['offset_y']
+        cache_entry['uv_layers'][uv_layer.name] = layer_data
+
+    # Also store render-active layer transform at top level for backwards compat
     if ppm is not None and me is not None:
-        transform = derive_transform_from_uvs(face, uv_layer, ppm, me)
-        if transform:
-            cache_entry['scale_u'] = transform['scale_u']
-            cache_entry['scale_v'] = transform['scale_v']
-            cache_entry['rotation'] = transform['rotation']
-            cache_entry['offset_x'] = transform['offset_x']
-            cache_entry['offset_y'] = transform['offset_y']
-            
+        render_layer = get_render_active_uv_layer(bm, me) if me else None
+        if render_layer is not None:
+            transform = derive_transform_from_uvs(face, render_layer, ppm, me)
+            if transform:
+                cache_entry['scale_u'] = transform['scale_u']
+                cache_entry['scale_v'] = transform['scale_v']
+                cache_entry['rotation'] = transform['rotation']
+                cache_entry['offset_x'] = transform['offset_x']
+                cache_entry['offset_y'] = transform['offset_y']
+
     face_data_cache[face.index] = cache_entry
+
+
+def get_cached_layer_data(face_index, layer_name):
+    """Get cached UV data for a specific face and UV layer.
+
+    Args:
+        face_index: Face index in the cache
+        layer_name: UV layer name
+
+    Returns:
+        Dict with 'uvs', 'scale_u', 'scale_v', 'rotation', 'offset_x', 'offset_y'
+        or None if not cached.
+    """
+    cached = face_data_cache.get(face_index)
+    if not cached:
+        return None
+    return cached.get('uv_layers', {}).get(layer_name)
 
 
 def cache_face_data(context):
@@ -516,13 +574,12 @@ def cache_face_data(context):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    uv_layer = bm.loops.layers.uv.verify()
     ppm = context.scene.level_design_props.pixels_per_meter
 
     face_data_cache.clear()
 
     for face in bm.faces:
-        cache_single_face(face, uv_layer, ppm, me)
+        cache_single_face(face, bm, ppm, me)
 
     last_face_count = len(bm.faces)
     last_vertex_count = len(bm.verts)
@@ -589,7 +646,9 @@ def update_ui_from_selection(context):
 
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
-    uv_layer = bm.loops.layers.uv.verify()
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        return
 
     props = context.scene.level_design_props
 
@@ -709,7 +768,11 @@ def apply_world_scale_uvs(obj, scene):
         debug_log("[WorldScale] Skip: lookup table failed")
         return
 
-    uv_layer = bm.loops.layers.uv.verify()
+    unlocked_layers = get_unlocked_uv_layers(bm, obj, me)
+    if not unlocked_layers:
+        debug_log("[WorldScale] Skip: no unlocked UV layers")
+        return
+
     props = scene.level_design_props
     ppm = props.pixels_per_meter
 
@@ -759,10 +822,6 @@ def apply_world_scale_uvs(obj, scene):
                 continue
 
             # Check if vertices actually moved - skip if geometry unchanged
-            # In general my preference is to always update selected + adjacent faces just to keep code simple
-            # This logic is here because face aligned project does a different type of projection than the one in this method
-            # i.e. If you face align an object and then edit it, unmoved faces will confusingly get overwritten with the projection used here
-            # consider revising?
             has_moved = False
             for current_vert, cached_vert in zip(current_verts, cached_verts):
                 if (current_vert - cached_vert).length > 0.0001:
@@ -775,68 +834,75 @@ def apply_world_scale_uvs(obj, scene):
                 # UVs. Otherwise, UVs computed for an intermediate geometry state remain
                 # on the face, causing warping when the geometry is back at the baseline.
                 if in_modal_operation:
-                    cached_uvs = cached.get('uvs')
-                    if cached_uvs and len(cached_uvs) == len(face.loops):
-                        for loop, cached_uv in zip(face.loops, cached_uvs):
-                            loop[uv_layer].uv = cached_uv.copy()
+                    restored = False
+                    for uv_layer in unlocked_layers:
+                        layer_data = get_cached_layer_data(face.index, uv_layer.name)
+                        if layer_data:
+                            cached_uvs = layer_data.get('uvs')
+                            if cached_uvs and len(cached_uvs) == len(face.loops):
+                                for loop, cached_uv in zip(face.loops, cached_uvs):
+                                    loop[uv_layer].uv = cached_uv.copy()
+                                restored = True
+                    if restored:
                         bmesh.update_edit_mesh(me)
                         uv_restored_count += 1
                 else:
                     skipped_no_move += 1
                 continue
 
-            # Get cached transform (defaults if not cached)
-            scale_u = cached.get('scale_u', 1.0)
-            scale_v = cached.get('scale_v', 1.0)
-            rotation = cached.get('rotation', 0.0)
-            offset_x = cached.get('offset_x', 0.0)
-            offset_y = cached.get('offset_y', 0.0)
-
-            # Face was zero-area when cached (e.g. collapsed during modal extrude
-            # start) but now has real geometry — project from a neighbor instead
-            # of using the meaningless cached transform.
-            _was_zero_area = abs(scale_u) < 1e-8 and abs(scale_v) < 1e-8
-            if _was_zero_area and face.calc_area() > 1e-8:
-                from .operators.texture_apply import set_uv_from_other_face
-                excluded = {f for f in bm.faces
-                            if f.is_valid and f.index in face_data_cache
-                            and abs(face_data_cache[f.index].get('scale_u', 1.0)) < 1e-8
-                            and abs(face_data_cache[f.index].get('scale_v', 1.0)) < 1e-8}
-                source_face = _get_best_neighbor_face(face, excluded)
-                if source_face:
-                    set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
-                    uv_applied_count += 1
-                else:
-                    mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-                    apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
-                    uv_applied_count += 1
-                continue
-
-            # Compensate for first edge rotation to keep texture fixed in world space
-            # The local coordinate system is based on the first non-zero edge, so if the face
-            # rotates, we need to counter-rotate the texture rotation
+            # Pre-compute shared geometry for this face (used by all layers)
             old_edge = get_local_x_from_verts_3d(cached_verts)
             new_edge = get_local_x_from_verts_3d(current_verts)
+
+            edge_rotation = 0.0
             if old_edge is not None and new_edge is not None:
-
-                # Compute signed angle between old and new edge directions
-                # using the face normal as the rotation axis
                 cross = old_edge.cross(new_edge)
-                dot = old_edge.dot(new_edge)
-                dot = max(-1.0, min(1.0, dot))  # Clamp for numerical stability
-                edge_rotation = math.degrees(math.atan2(cross.dot(face.normal), dot))
+                dot_val = old_edge.dot(new_edge)
+                dot_val = max(-1.0, min(1.0, dot_val))
+                edge_rotation = math.degrees(math.atan2(cross.dot(face.normal), dot_val))
 
-                # Counter-rotate texture rotation to keep it fixed in world space
+            translation = current_verts[0] - cached_verts[0]
+            face_axes = get_face_local_axes(face)
+            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+
+            # Apply to each unlocked layer
+            for uv_layer in unlocked_layers:
+                layer_data = get_cached_layer_data(face.index, uv_layer.name)
+
+                if layer_data:
+                    scale_u = layer_data.get('scale_u', 1.0)
+                    scale_v = layer_data.get('scale_v', 1.0)
+                    rotation = layer_data.get('rotation', 0.0)
+                    offset_x = layer_data.get('offset_x', 0.0)
+                    offset_y = layer_data.get('offset_y', 0.0)
+                else:
+                    # Fallback to top-level cached transform
+                    scale_u = cached.get('scale_u', 1.0)
+                    scale_v = cached.get('scale_v', 1.0)
+                    rotation = cached.get('rotation', 0.0)
+                    offset_x = cached.get('offset_x', 0.0)
+                    offset_y = cached.get('offset_y', 0.0)
+
+                # Face was zero-area when cached — project from a neighbor
+                _was_zero_area = abs(scale_u) < 1e-8 and abs(scale_v) < 1e-8
+                if _was_zero_area and face.calc_area() > 1e-8:
+                    from .operators.texture_apply import set_uv_from_other_face
+                    excluded = {f for f in bm.faces
+                                if f.is_valid and f.index in face_data_cache
+                                and abs(face_data_cache[f.index].get('scale_u', 1.0)) < 1e-8
+                                and abs(face_data_cache[f.index].get('scale_v', 1.0)) < 1e-8}
+                    source_face = _get_best_neighbor_face(face, excluded)
+                    if source_face:
+                        set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
+                    else:
+                        apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+                    continue
+
+                # Apply edge rotation compensation
                 rotation = rotation + edge_rotation
 
-                # Compensate offset for translation of first vertex
-                # The texture should stay fixed in world space, so when the first
-                # vertex moves, the offset must change to keep the same world position
-                translation = current_verts[0] - cached_verts[0]
-
-                # Get the world-aligned projection axes (after rotation compensation)
-                face_axes = get_face_local_axes(face)
-                if face_axes:
+                # Compensate offset for translation
+                if face_axes and abs(scale_u) > 1e-8 and abs(scale_v) > 1e-8:
                     face_local_x, face_local_y = face_axes
                     rot_rad = math.radians(rotation)
                     cos_rot = math.cos(rot_rad)
@@ -844,33 +910,25 @@ def apply_world_scale_uvs(obj, scene):
                     proj_x = face_local_x * cos_rot - face_local_y * sin_rot
                     proj_y = face_local_x * sin_rot + face_local_y * cos_rot
 
-                    # Project translation onto projection axes (in meters)
                     move_x = translation.dot(proj_x)
                     move_y = translation.dot(proj_y)
 
-                    # Convert to UV and add to offset to compensate
-                    mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
                     tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
 
                     offset_x = normalize_offset(offset_x + move_x / (scale_u * tex_meters_u))
                     offset_y = normalize_offset(offset_y + move_y / (scale_v * tex_meters_v))
 
-            # Get material for this face
-            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+                apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
+                                 mat, ppm, me)
 
-            # Re-project UVs using apply_uv_to_face which properly handles rotation
-            apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
-                             mat, ppm, me)
             uv_applied_count += 1
 
             # Only update cache when NOT in a modal operation
-            # During modal ops, we keep the baseline stable so returning to original
-            # position gives original UVs
             if not in_modal_operation:
-                cache_single_face(face, uv_layer, ppm, me)
-                debug_log(f"[WorldScale] Face {face.index}: applied UVs + cached (s={scale_u:.3f},{scale_v:.3f} r={rotation:.1f} o={offset_x:.3f},{offset_y:.3f})")
+                cache_single_face(face, bm, ppm, me)
+                debug_log(f"[WorldScale] Face {face.index}: applied UVs + cached")
             else:
-                debug_log(f"[WorldScale] Face {face.index}: applied UVs (modal, no cache) (s={scale_u:.3f},{scale_v:.3f} r={rotation:.1f} o={offset_x:.3f},{offset_y:.3f})")
+                debug_log(f"[WorldScale] Face {face.index}: applied UVs (modal, no cache)")
 
         except (ReferenceError, RuntimeError, OSError):
             # BMesh data became invalid during iteration (e.g., during loop cut)
@@ -880,18 +938,19 @@ def apply_world_scale_uvs(obj, scene):
     debug_log(f"[WorldScale] Done: applied={uv_applied_count} restored={uv_restored_count} | skipped: no_cache={skipped_no_cache} hotspot={skipped_hotspot} no_sel={skipped_no_selection} vert_mismatch={skipped_vert_mismatch} no_move={skipped_no_move} | modal={in_modal_operation} modal_just_ended={modal_just_ended}")
 
     # Refresh cache when modal operation just ended
-    # This ensures the baseline is updated with final geometry state
     if modal_just_ended:
         debug_log("[WorldScale] Refreshing full cache (modal just ended)")
         cache_face_data(bpy.context)
 
 
 def apply_uv_lock(obj, scene):
-    """UV lock ON: texture stays locked to geometry, UVs should not change.
+    """UV lock: texture stays locked to geometry on locked UV layers.
 
-    When UV lock is enabled, the texture moves/scales with the face like a sticker.
+    When a UV layer is locked, the texture moves/scales with the face like a sticker.
     We don't need to modify UVs - they naturally stay attached to vertices.
     Just update the cache to track the new vertex positions.
+
+    Only runs if there are locked UV layers.
     """
     me = obj.data
 
@@ -905,6 +964,11 @@ def apply_uv_lock(obj, scene):
         return
 
     if not bm.is_valid:
+        return
+
+    # Only process if there are locked layers
+    locked_layers = get_locked_uv_layers(bm, obj, me)
+    if not locked_layers:
         return
 
     # Ensure lookup tables are valid before accessing faces
@@ -1104,7 +1168,9 @@ def apply_texture_from_file_browser():
             bm.faces.ensure_lookup_table()
             selected_faces = list(bm.faces)
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, obj.data)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
@@ -1184,7 +1250,7 @@ def apply_texture_from_file_browser():
                 # Cache all hotspot faces after application
                 for face in all_hotspot_faces:
                     if face.is_valid:
-                        cache_single_face(face, uv_layer, ppm, obj.data)
+                        cache_single_face(face, bm, ppm, obj.data)
         elif props.auto_hotspot and not new_is_hotspottable and any_previous_was_hotspottable and any_connected_has_hotspot:
             # New texture is NOT hotspottable, but some selected faces previously had hotspot
             # AND some connected faces have hotspot textures - re-hotspot all to recalculate islands
@@ -1216,14 +1282,14 @@ def apply_texture_from_file_browser():
                 # Cache all hotspot faces
                 for face in all_hotspot_faces:
                     if face.is_valid:
-                        cache_single_face(face, uv_layer, ppm, obj.data)
+                        cache_single_face(face, bm, ppm, obj.data)
 
             # Apply regular UV projection to the selected faces (non-hotspot texture)
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, bm)
         else:
             # Either auto_hotspot is off, or it's a non-hotspot texture without hotspot neighbors
             # Regular UV projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, bm)
 
         if in_edit_mode:
             bmesh.update_edit_mesh(obj.data)
@@ -1246,7 +1312,7 @@ def apply_texture_from_file_browser():
         print(f"Anvil Level Design: Error applying texture from file browser: {e}", flush=True)
 
 
-def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info):
+def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm=None):
     """Apply regular UV projection to selected faces, preserving transform where possible.
 
     Args:
@@ -1257,6 +1323,7 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
         me: Mesh data
         face_old_info: Dict mapping face index to old material info (captured before
             material assignment). Each entry has 'mat', 'has_image', 'tex_dims'.
+        bm: BMesh instance (optional, for cache_single_face per-layer caching)
     """
     for target_face in selected_faces:
         # Get current transform to preserve it
@@ -1288,7 +1355,8 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
                 current_transform['offset_x'], current_transform['offset_y'],
                 mat, ppm, me
             )
-            cache_single_face(target_face, uv_layer, ppm, me)
+            if bm is not None:
+                cache_single_face(target_face, bm, ppm, me)
         else:
             # Blank face (no previous image) or transform can't be derived
             # - use clean defaults
@@ -1299,7 +1367,8 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
                 0.0, 0.0,  # offset
                 mat, ppm, me
             )
-            cache_single_face(target_face, uv_layer, ppm, me)
+            if bm is not None:
+                cache_single_face(target_face, bm, ppm, me)
 
 
 def _file_browser_watcher_timer():
@@ -1580,6 +1649,38 @@ def on_save_post(dummy):
         bpy.ops.wm.save_mainfile()
 
 
+def _migrate_legacy_uv_lock():
+    """Migrate old per-object anvil_uv_lock boolean to per-UV-map settings.
+
+    Old files have obj.anvil_uv_lock (BoolProperty). New files use
+    obj.anvil_uv_map_settings (CollectionProperty). If the old property
+    exists and is True, lock all UV maps on that object.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH':
+            continue
+
+        # Check for legacy property (it may still exist on objects from old files)
+        legacy_lock = obj.get("anvil_uv_lock", False)
+        if not legacy_lock:
+            continue
+
+        me = obj.data
+        if not me.uv_layers:
+            continue
+
+        # Sync and lock all UV maps
+        sync_uv_map_settings(obj)
+        for setting in obj.anvil_uv_map_settings:
+            setting.locked = True
+
+        # Clear the legacy property
+        if "anvil_uv_lock" in obj:
+            del obj["anvil_uv_lock"]
+
+        debug_log(f"[Migration] Migrated UV lock for '{obj.name}': locked all {len(me.uv_layers)} UV maps")
+
+
 @persistent
 def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
@@ -1608,6 +1709,8 @@ def on_load_post(dummy):
     bpy.app.timers.register(_subscribe_unit_settings, first_interval=0.1)
     # Clear the file loaded flag after 1 second (fallback if depsgraph doesn't fire)
     bpy.app.timers.register(_clear_file_loaded_flag, first_interval=1.0)
+    # Migrate legacy per-object UV lock to per-UV-map settings
+    _migrate_legacy_uv_lock()
 
 
 @persistent
@@ -1680,6 +1783,8 @@ def on_depsgraph_update(scene, depsgraph):
 
                     if is_fresh_start:
                         debug_log(f"[Depsgraph] Fresh edit session for '{obj.name}'")
+                        # Sync per-UV-map settings for this object
+                        sync_uv_map_settings(obj)
                         # Rebuild cache for the new object and reset selection tracking
                         # so check_selection_changed detects the current selection as new
                         cache_face_data(context)
@@ -1731,12 +1836,10 @@ def on_depsgraph_update(scene, depsgraph):
                         debug_log(f"[Depsgraph] Cache empty, rebuilding")
                         cache_face_data(context)
 
-                    if obj.anvil_uv_lock:
-                        debug_log(f"[Depsgraph] Applying UV lock")
-                        apply_uv_lock(obj, scene)
-                    else:
-                        debug_log(f"[Depsgraph] Applying world-scale UVs (cache size={len(face_data_cache)})")
-                        apply_world_scale_uvs(obj, scene)
+                    # Always run both: world-scale for unlocked layers, uv-lock for locked layers
+                    debug_log(f"[Depsgraph] Applying world-scale UVs (cache size={len(face_data_cache)})")
+                    apply_world_scale_uvs(obj, scene)
+                    apply_uv_lock(obj, scene)
 
                     if not is_fresh_start and props.auto_hotspot:
                         _apply_auto_hotspots()

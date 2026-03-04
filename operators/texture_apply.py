@@ -32,7 +32,7 @@ from .backface_select.raycast import (
 )
 
 
-def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix):
+def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None):
     """Copy UV settings from source face to target face with proper rotation/offset handling.
 
     Args:
@@ -42,6 +42,7 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
         ppm: Pixels per meter setting
         me: Mesh data (for bmesh.update_edit_mesh)
         obj_matrix: Object world matrix (needed for parallel plane reference calculation)
+        bm: BMesh instance (optional, for cache_single_face per-layer caching)
     """
     source_transform = derive_transform_from_uvs(source_face, uv_layer, ppm, me)
     if not source_transform:
@@ -189,7 +190,8 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
     apply_uv_to_face(target_face, uv_layer, scale_u, scale_v, target_rotation,
                      target_offset_x, target_offset_y, target_mat, ppm, me)
-    cache_single_face(target_face, uv_layer, ppm, me)
+    if bm is not None:
+        cache_single_face(target_face, bm, ppm, me)
 
     return True
 
@@ -279,7 +281,11 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
         target_face = bm.faces[face_index]
         source_face = bm.faces[self._source_face_index]
-        uv_layer = bm.loops.layers.uv.verify()
+
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
         # Track if face previously had hotspot material
         if face_has_hotspot_material(target_face, me):
@@ -307,7 +313,11 @@ class apply_image_to_face(ModalPaintBase, Operator):
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()
-        uv_layer = bm.loops.layers.uv.verify()
+
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
         new_is_hotspottable = is_texture_hotspottable(self._image.name)
 
@@ -332,7 +342,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
                 for face in all_hotspot_faces:
                     if face.is_valid:
-                        cache_single_face(face, uv_layer, self._ppm, me)
+                        cache_single_face(face, bm, self._ppm, me)
         elif (self._auto_hotspot and not new_is_hotspottable
               and self._faces_previously_hotspottable):
             # Check if any painted face has connected hotspot faces
@@ -363,7 +373,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
                     for face in all_hotspot_faces:
                         if face.is_valid:
-                            cache_single_face(face, uv_layer, self._ppm, me)
+                            cache_single_face(face, bm, self._ppm, me)
 
         update_ui_from_selection(context)
         update_active_image_from_face(context)
@@ -488,7 +498,10 @@ class pick_image_from_face(Operator):
 
         # Apply the picked texture to all selected faces on the edit object
         me = edit_obj.data
-        uv_layer = bm_edit.loops.layers.uv.verify()
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm_edit, me)
+        if uv_layer is None:
+            uv_layer = bm_edit.loops.layers.uv.verify()
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
@@ -558,7 +571,7 @@ class pick_image_from_face(Operator):
 
                 for face in all_hotspot_faces:
                     if face.is_valid:
-                        cache_single_face(face, uv_layer, ppm, me)
+                        cache_single_face(face, bm_edit, ppm, me)
         elif props.auto_hotspot and not new_is_hotspottable and any_previous_was_hotspottable and any_connected_has_hotspot:
             all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
@@ -583,13 +596,13 @@ class pick_image_from_face(Operator):
 
                 for face in all_hotspot_faces:
                     if face.is_valid:
-                        cache_single_face(face, uv_layer, ppm, me)
+                        cache_single_face(face, bm_edit, ppm, me)
 
             from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm_edit)
         else:
             from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info)
+            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm_edit)
 
         bmesh.update_edit_mesh(me)
 

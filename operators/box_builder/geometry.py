@@ -10,7 +10,7 @@ from mathutils import Vector
 
 from ..texture_apply import set_uv_from_other_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
-from ...utils import find_material_with_image, create_material_with_image, face_aligned_project, debug_log
+from ...utils import find_material_with_image, create_material_with_image, face_aligned_project, debug_log, get_render_active_uv_layer
 
 
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
@@ -72,7 +72,9 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
 
     # Find active selected face for material/UV source (before creating new geometry)
     source_face = None
-    uv_layer = bm.loops.layers.uv.active
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.active
     if bm.faces.active is not None and bm.faces.active.is_valid and bm.faces.active.select:
         source_face = bm.faces.active
 
@@ -252,7 +254,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
                 continue
             face.material_index = mat_idx
             face_aligned_project(face, uv_layer, mat, ppm)
-            cache_single_face(face, uv_layer, ppm, me)
+            cache_single_face(face, bm, ppm, me)
 
 
 def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
@@ -353,7 +355,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         bm_edit = bmesh.from_edit_mesh(me)
         bm_edit.faces.ensure_lookup_table()
 
-        uv_layer = bm_edit.loops.layers.uv.active
+        uv_layer = get_render_active_uv_layer(bm_edit, me)
         if uv_layer is None:
             uv_layer = bm_edit.loops.layers.uv.new("UVMap")
 
@@ -362,7 +364,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
                 continue
             face.material_index = mat_idx
             face_aligned_project(face, uv_layer, mat, ppm)
-            cache_single_face(face, uv_layer, ppm, me)
+            cache_single_face(face, bm_edit, ppm, me)
 
         bmesh.update_edit_mesh(me)
         bpy.ops.object.mode_set(mode='OBJECT')

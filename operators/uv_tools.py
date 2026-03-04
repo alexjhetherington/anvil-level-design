@@ -16,6 +16,7 @@ from ..utils import (
     get_texture_dimensions_from_material,
     get_selected_faces_or_report,
     get_image_from_material,
+    get_render_active_uv_layer,
     debug_log,
     face_has_hotspot_material,
 )
@@ -592,7 +593,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world_matrix, pixels_per_meter, size_weight):
+def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle=None, uv_layer=None):
     # Store original seams if we need to restore them later
     original_seams = set()
     if seam_mode == 'MAINTAIN_USER':
@@ -621,7 +622,13 @@ def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world
         return (0, skipped_no_hotspot, 0)
 
     # Get UV layer
-    uv_layer = bm.loops.layers.uv.verify()
+    if uv_layer is None:
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
     # Phase 1: Group quad faces by angle and mark seams
     # This marks seams where face normals differ by > SEAM_ANGLE,
@@ -847,7 +854,9 @@ class LEVELDESIGN_OT_face_aligned_project(Operator):
 
         bm = bmesh.from_edit_mesh(me)
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
         selected_faces = [f for f in bm.faces if f.select]
         if not selected_faces:
@@ -926,7 +935,9 @@ class LEVELDESIGN_OT_align_uv(Operator):
 
         bm = bmesh.from_edit_mesh(me)
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
         selected_faces = [f for f in bm.faces if f.select]
         if not selected_faces:
             if was_object_mode:
@@ -1008,7 +1019,9 @@ class LEVELDESIGN_OT_fit_to_face(Operator):
 
         bm = bmesh.from_edit_mesh(me)
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
         selected_faces = [f for f in bm.faces if f.select]
         if not selected_faces:
             if was_object_mode:
@@ -1082,7 +1095,9 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             return {'CANCELLED'}
 
         self.face_index = selected_faces[0].index
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
 
         # Save initial transform for ESC revert
         props = context.scene.level_design_props
@@ -1215,7 +1230,9 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         if not face.is_valid:
             return
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
         props = context.scene.level_design_props
 
         # Get closest edge to mouse
@@ -1300,7 +1317,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
                     set_updating_from_selection(False)
 
         # Update cache
-        cache_single_face(face, uv_layer, props.pixels_per_meter, me)
+        cache_single_face(face, bm, props.pixels_per_meter, me)
 
         bmesh.update_edit_mesh(me)
 
@@ -1318,7 +1335,9 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         if not face.is_valid:
             return
 
-        uv_layer = bm.loops.layers.uv.verify()
+        uv_layer = get_render_active_uv_layer(bm, me)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
         props = context.scene.level_design_props
 
         # Restore saved UVs directly
@@ -1340,7 +1359,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             set_updating_from_selection(False)
 
         # Update cache with reverted state
-        cache_single_face(face, uv_layer, props.pixels_per_meter, me)
+        cache_single_face(face, bm, props.pixels_per_meter, me)
 
         bmesh.update_edit_mesh(me)
 

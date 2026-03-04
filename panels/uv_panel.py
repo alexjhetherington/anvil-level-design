@@ -56,10 +56,34 @@ class LEVELDESIGN_PT_grid_panel(Panel):
             )
 
 
-class LEVELDESIGN_PT_uv_lock_panel(Panel):
-    """UV Lock Settings"""
+class LEVELDESIGN_OT_set_active_render_uv(Operator):
+    """Set the active render UV map"""
+    bl_idname = "leveldesign.set_active_render_uv"
+    bl_label = "Set Active Render UV"
+    bl_options = {'INTERNAL'}
 
-    bl_label = "UV Lock"
+    uv_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        obj = context.object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+
+        me = obj.data
+        for uv_map in me.uv_layers:
+            uv_map.active_render = (uv_map.name == self.uv_name)
+
+        # Sync settings now that we're in an operator context (writing allowed)
+        from ..utils import sync_uv_map_settings
+        sync_uv_map_settings(obj)
+
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_PT_uv_lock_panel(Panel):
+    """UV Maps - per-layer lock/unlock"""
+
+    bl_label = "UV Maps"
     bl_idname = "LEVELDESIGN_PT_uv_lock_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -78,24 +102,54 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
         if not in_edit_mode:
             layout.label(text="(Edit Mode required)", icon='INFO')
 
-        row = layout.row()
-        row.enabled = in_edit_mode and has_mesh
-        if has_mesh:
-            row.prop(
-                obj,
-                "anvil_uv_lock",
-                text="UV Lock",
-                toggle=True,
-                icon='LOCKED' if obj.anvil_uv_lock else 'UNLOCKED',
+        if not has_mesh:
+            row = layout.row()
+            row.enabled = False
+            row.label(text="No mesh object")
+            return
+
+        me = obj.data
+        if not me.uv_layers:
+            row = layout.row()
+            row.enabled = False
+            row.label(text="No UV maps")
+            return
+
+        if len(me.uv_layers) > 1:
+            layout.label(text="Multi-UV maps is experimental!", icon='ERROR')
+
+        settings = obj.anvil_uv_map_settings
+        # Build a lookup of existing settings (read-only in draw context)
+        settings_by_name = {s.name: s for s in settings}
+
+        for uv_map in me.uv_layers:
+            row = layout.row(align=True)
+            row.enabled = in_edit_mode
+
+            setting = settings_by_name.get(uv_map.name)
+
+            # Render active icon (click to set)
+            op = row.operator(
+                "leveldesign.set_active_render_uv",
+                text="",
+                icon='RESTRICT_RENDER_OFF' if uv_map.active_render else 'RESTRICT_RENDER_ON',
+                depress=uv_map.active_render,
             )
-        else:
-            row.prop(
-                context.scene.level_design_props,
-                "uv_lock_placeholder",
-                text="UV Lock",
-                toggle=True,
-                icon='UNLOCKED',
-            )
+            op.uv_name = uv_map.name
+
+            # UV map name
+            row.label(text=uv_map.name)
+
+            # Lock toggle
+            if setting is not None:
+                row.prop(
+                    setting,
+                    "locked",
+                    text="",
+                    icon='LOCKED' if setting.locked else 'UNLOCKED',
+                )
+            else:
+                row.label(text="", icon='UNLOCKED')
 
 
 class LEVELDESIGN_PT_uv_settings_panel(Panel):
@@ -551,6 +605,7 @@ class LEVELDESIGN_PT_debug_panel(Panel):
 
 classes = (
     LEVELDESIGN_PT_grid_panel,
+    LEVELDESIGN_OT_set_active_render_uv,
     LEVELDESIGN_PT_uv_lock_panel,
     LEVELDESIGN_PT_uv_settings_panel,
     LEVELDESIGN_PT_uv_shortcuts_panel,
