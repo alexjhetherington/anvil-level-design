@@ -8,7 +8,7 @@ Generator protocol:
 - If a test method is a generator (contains yield), the executor advances
   it one step per timer tick.
 - Regular (non-generator) methods run synchronously in a single step.
-- Yielded values control delay: yield 0.1 waits 100ms, bare yield uses 50ms.
+- Yielded values control delay: yield 0.1 waits 100ms, bare yield uses 10ms.
 """
 
 import sys
@@ -19,7 +19,7 @@ import inspect
 import bpy
 
 
-DEFAULT_TICK = 0.05  # 50ms between generator steps
+DEFAULT_TICK = 0.01  # 10ms between generator steps
 
 
 class AsyncTestResult:

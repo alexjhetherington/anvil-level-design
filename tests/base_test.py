@@ -172,11 +172,11 @@ class AnvilTestCase(unittest.TestCase):
             window.event_simulate(
                 type=event_type, value='PRESS', x=mx, y=my
             )
-        yield 0.05
+        yield
         window.event_simulate(
             type=event_type, value='RELEASE', x=mx, y=my
         )
-        yield 0.05
+        yield
 
     def _simulate_number(self, value):
         """Generator: type a numeric value (handles negative via MINUS key)."""
@@ -206,22 +206,20 @@ class AnvilTestCase(unittest.TestCase):
 
         # E to start extrude
         yield from self._simulate_key_tap('E')
-        yield 0.3
+        yield
 
         # MOUSEMOVE to initialize the modal's tracking state
         window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx, y=my)
-        yield 0.1
+        yield
 
         # Axis constraint
         yield from self._simulate_key_tap(axis.upper())
-        yield 0.1
 
         # Type the numeric value
         yield from self._simulate_number(value)
-        yield 0.1
 
         # Confirm with Enter
         yield from self._simulate_key_tap('RET')
 
         # Settle time for depsgraph handler to detect and process the extrude
-        yield 0.5
+        yield
