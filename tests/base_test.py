@@ -190,16 +190,16 @@ class AnvilTestCase(unittest.TestCase):
             elif ch in self._DIGIT_MAP:
                 yield from self._simulate_key_tap(self._DIGIT_MAP[ch])
 
-    def simulate_extrude(self, axis, value):
+    def simulate_extrude(self, value, axis=None):
         """Generator: simulate a full extrude via event_simulate.
 
-        Sends E (extrude) -> axis key -> numeric value -> Enter, yielding
+        Sends E (extrude) -> [axis key] -> numeric value -> Enter, yielding
         between each step so Blender's event loop processes the events.
         Then yields extra settle time for the depsgraph handler to fire.
 
         Args:
-            axis: 'X', 'Y', or 'Z'
             value: numeric distance (can be negative)
+            axis: 'X', 'Y', or 'Z', or None to extrude along the face normal
         """
         mx, my = self._get_3d_viewport_center()
         window = _get_window()
@@ -212,8 +212,9 @@ class AnvilTestCase(unittest.TestCase):
         window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx, y=my)
         yield
 
-        # Axis constraint
-        yield from self._simulate_key_tap(axis.upper())
+        # Axis constraint (skip if None — extrude along normal)
+        if axis is not None:
+            yield from self._simulate_key_tap(axis.upper())
 
         # Type the numeric value
         yield from self._simulate_number(value)

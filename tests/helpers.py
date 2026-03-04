@@ -42,12 +42,40 @@ def create_vertical_plane(name):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
 
-    _apply_material(obj)
+    _apply_material(obj, 1.0, 1.0)
 
     return obj
 
 
-def _apply_material(obj):
+def create_textured_cube(name, scale_u, scale_v):
+    """Create a 1x1x1 cube with all faces textured at the given UV scale.
+
+    The cube spans (0,0,0) to (1,1,1). Returns the object in object mode.
+    """
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+
+    # bmesh.ops.create_cube centers at origin; shift to (0,0,0)-(1,1,1)
+    for v in bm.verts:
+        v.co.x += 0.5
+        v.co.y += 0.5
+        v.co.z += 0.5
+
+    bm.to_mesh(mesh)
+    bm.free()
+
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    _apply_material(obj, scale_u, scale_v)
+
+    return obj
+
+
+def _apply_material(obj, scale_u=1.0, scale_v=1.0):
     """Load dev_orange_wall.png and apply it as a material with UVs to all faces."""
     image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
 
@@ -68,7 +96,7 @@ def _apply_material(obj):
 
     for face in bm.faces:
         face.material_index = mat_index
-        apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+        apply_uv_to_face(face, uv_layer, scale_u, scale_v, 0.0, 0.0, 0.0,
                          mat, ppm, obj.data)
 
     bmesh.update_edit_mesh(obj.data)

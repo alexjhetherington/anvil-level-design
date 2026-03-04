@@ -4,7 +4,55 @@ from mathutils import Vector
 
 from ..utils import derive_transform_from_uvs
 from .base_test import AnvilTestCase
-from .helpers import create_vertical_plane, _get_context_override
+from .helpers import create_vertical_plane, create_textured_cube, _get_context_override
+
+
+def _setup_cube_and_select_top_face(name, scale_u, scale_v):
+    """Create a textured cube, enter edit mode, select the top face.
+
+    Returns the object (in edit mode with top face selected).
+    """
+    obj = create_textured_cube(name, scale_u, scale_v)
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+
+    # Select only the top face (normal pointing +Z)
+    bm.select_mode = {'FACE'}
+    for f in bm.faces:
+        f.select_set(False)
+    for f in bm.faces:
+        if f.normal.z > 0.9:
+            f.select_set(True)
+            break
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(obj.data)
+
+    return obj
+
+
+def _read_all_face_transforms(obj):
+    """Read UV transforms from all faces.
+
+    Returns a list of transform dicts.
+    """
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+    bm.faces.ensure_lookup_table()
+
+    transforms = []
+    for face in bm.faces:
+        transforms.append(derive_transform_from_uvs(face, uv_layer, ppm, obj.data))
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    return transforms
 
 
 def _select_edge_by_vert_filter(bm, me, vert_filter):
@@ -133,6 +181,15 @@ class UVExtendKeyboardTest(_UVExtendBase):
         self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
 
 
+    def test_cube_extrude_preserves_scale(self):
+        obj = _setup_cube_and_select_top_face("kb_cube_extrude", 2.0, 2.0)
+        yield from self.simulate_extrude(value=1)
+        transforms = _read_all_face_transforms(obj)
+        for t in transforms:
+            self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
+            self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
+
+
 class UVExtendToolTest(_UVExtendBase):
     """Test UV projection during extrude using the menu/tool (non-modal workflow).
 
@@ -199,3 +256,11 @@ class UVExtendToolTest(_UVExtendBase):
         orig, new = _read_transforms(obj)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
+
+    def test_cube_extrude_preserves_scale(self):
+        obj = _setup_cube_and_select_top_face("tool_cube_extrude", 2.0, 2.0)
+        yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
+        transforms = _read_all_face_transforms(obj)
+        for t in transforms:
+            self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
+            self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
