@@ -76,11 +76,11 @@ def main():
         # Discover all test_*.py files in the tests directory
         suite = loader.discover(tests_dir, pattern="test_*.py", top_level_dir=repo_dir)
 
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
+    def _finish(result):
+        os._exit(0 if result.wasSuccessful() else 1)
 
-    # os._exit works from timer context to terminate Blender
-    os._exit(0 if result.wasSuccessful() else 1)
+    from anvil_level_design.tests.async_runner import run_suite_async
+    run_suite_async(suite, verbosity=2, on_complete=_finish)
 
 
 def _setup_workspace():
