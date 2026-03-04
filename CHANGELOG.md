@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.3.0
+- Fix extrude not UVing faces correctly
+
 ## 1.2.11
 - Fix duplicating objects resets UVs
 - When box is built in edit mode, box is selected
