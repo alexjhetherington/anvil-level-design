@@ -1,5 +1,6 @@
 import bmesh
 import bpy
+from mathutils import Vector
 
 from ..utils import derive_transform_from_uvs
 from .base_test import AnvilTestCase
@@ -29,47 +30,50 @@ def _select_edge_by_vert_filter(bm, me, vert_filter):
     raise RuntimeError("No matching edge found")
 
 
-class UVExtendTest(AnvilTestCase):
+def _setup_plane_and_select_edge(name, vert_filter):
+    """Create a textured plane, enter edit mode, and select the target edge.
 
-    def _setup_plane_and_select_edge(self, name, vert_filter):
-        """Create a textured plane, enter edit mode, and select the target edge.
+    Returns the object (in edit mode with edge selected).
+    """
+    obj = create_vertical_plane(name)
 
-        Returns the object (in edit mode with edge selected).
-        """
-        obj = create_vertical_plane(name)
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
 
-        ctx = _get_context_override()
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='EDIT')
-        bm = bmesh.from_edit_mesh(obj.data)
+    _select_edge_by_vert_filter(bm, obj.data, vert_filter)
+    return obj
 
-        _select_edge_by_vert_filter(bm, obj.data, vert_filter)
-        return obj
 
-    def _read_transforms(self, obj):
-        """Read UV transforms from both faces (original and new).
+def _read_transforms(obj):
+    """Read UV transforms from both faces (original and new).
 
-        Returns (original_transform, new_transform).
-        """
-        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+    Returns (original_transform, new_transform).
+    """
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
-        bm = bmesh.from_edit_mesh(obj.data)
-        uv_layer = bm.loops.layers.uv.verify()
-        bm.faces.ensure_lookup_table()
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+    bm.faces.ensure_lookup_table()
 
-        original_face = bm.faces[0]
-        new_face = bm.faces[1]
+    original_face = bm.faces[0]
+    new_face = bm.faces[1]
 
-        original_transform = derive_transform_from_uvs(
-            original_face, uv_layer, ppm, obj.data)
-        new_transform = derive_transform_from_uvs(
-            new_face, uv_layer, ppm, obj.data)
+    original_transform = derive_transform_from_uvs(
+        original_face, uv_layer, ppm, obj.data)
+    new_transform = derive_transform_from_uvs(
+        new_face, uv_layer, ppm, obj.data)
 
-        ctx = _get_context_override()
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='OBJECT')
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='OBJECT')
 
-        return original_transform, new_transform
+    return original_transform, new_transform
+
+
+class _UVExtendBase(AnvilTestCase):
+    """Shared assertion helpers for UV extend tests."""
 
     def _assert_transform(self, transform, scale_u, scale_v, rotation,
                           offset_x, offset_y):
@@ -79,42 +83,119 @@ class UVExtendTest(AnvilTestCase):
         self.assertAlmostEqual(transform['offset_x'], offset_x, places=3)
         self.assertAlmostEqual(transform['offset_y'], offset_y, places=3)
 
+
+class UVExtendKeyboardTest(_UVExtendBase):
+    """Test UV projection during extrude using the E key (modal workflow).
+
+    Simulates the real user workflow: press E, constrain to axis, type value,
+    press Enter. The extrude runs as a modal operator, so the depsgraph
+    handler detects it via window.modal_operators.
+    """
+
     def test_extend_up(self):
-        obj = self._setup_plane_and_select_edge(
-            "extend_up",
+        obj = _setup_plane_and_select_edge(
+            "kb_extend_up",
             vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
         )
         yield from self.simulate_extrude(axis='Z', value=1)
-        orig, new = self._read_transforms(obj)
+        orig, new = _read_transforms(obj)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 0.0, 0.0, 0.0)
 
     def test_extend_down(self):
-        obj = self._setup_plane_and_select_edge(
-            "extend_down",
+        obj = _setup_plane_and_select_edge(
+            "kb_extend_down",
             vert_filter=lambda v: abs(v.co.z) < 1e-5,
         )
         yield from self.simulate_extrude(axis='Z', value=-1)
-        orig, new = self._read_transforms(obj)
+        orig, new = _read_transforms(obj)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 180.0, 0.0, 0.0)
 
     def test_extend_left(self):
-        obj = self._setup_plane_and_select_edge(
-            "extend_left",
+        obj = _setup_plane_and_select_edge(
+            "kb_extend_left",
             vert_filter=lambda v: abs(v.co.x) < 1e-5,
         )
         yield from self.simulate_extrude(axis='X', value=-1)
-        orig, new = self._read_transforms(obj)
+        orig, new = _read_transforms(obj)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, 90.0, 0.0, 0.0)
 
     def test_extend_right(self):
-        obj = self._setup_plane_and_select_edge(
-            "extend_right",
+        obj = _setup_plane_and_select_edge(
+            "kb_extend_right",
             vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,
         )
         yield from self.simulate_extrude(axis='X', value=1)
-        orig, new = self._read_transforms(obj)
+        orig, new = _read_transforms(obj)
+        self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
+        self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
+
+
+class UVExtendToolTest(_UVExtendBase):
+    """Test UV projection during extrude using the menu/tool (non-modal workflow).
+
+    Replicates what happens when the user extrudes via:
+      - Mesh menu > Extrude > Extrude Region
+      - The Extrude Region toolbar tool
+      - A script calling bpy.ops.mesh.extrude_region_move(...)
+
+    These all complete instantly — the operator never appears in
+    window.modal_operators. The handler must still apply correct UVs.
+    """
+
+    def _extrude_non_modal(self, obj, direction):
+        """Run extrude_region_move as a non-modal operator call.
+
+        This is what happens when the user uses the menu or toolbar tool:
+        the operator runs to completion in a single call, with no modal state.
+        Then we yield to let the depsgraph handler fire.
+        """
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.extrude_region_move(
+                TRANSFORM_OT_translate={"value": direction}
+            )
+        # Yield to let Blender process depsgraph updates / handler callbacks
+        yield 0.5
+
+    def test_extend_up(self):
+        obj = _setup_plane_and_select_edge(
+            "tool_extend_up",
+            vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
+        )
+        yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
+        orig, new = _read_transforms(obj)
+        self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
+        self._assert_transform(new, 1.0, 1.0, 0.0, 0.0, 0.0)
+
+    def test_extend_down(self):
+        obj = _setup_plane_and_select_edge(
+            "tool_extend_down",
+            vert_filter=lambda v: abs(v.co.z) < 1e-5,
+        )
+        yield from self._extrude_non_modal(obj, Vector((0, 0, -1)))
+        orig, new = _read_transforms(obj)
+        self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
+        self._assert_transform(new, 1.0, 1.0, 180.0, 0.0, 0.0)
+
+    def test_extend_left(self):
+        obj = _setup_plane_and_select_edge(
+            "tool_extend_left",
+            vert_filter=lambda v: abs(v.co.x) < 1e-5,
+        )
+        yield from self._extrude_non_modal(obj, Vector((-1, 0, 0)))
+        orig, new = _read_transforms(obj)
+        self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
+        self._assert_transform(new, 1.0, 1.0, 90.0, 0.0, 0.0)
+
+    def test_extend_right(self):
+        obj = _setup_plane_and_select_edge(
+            "tool_extend_right",
+            vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,
+        )
+        yield from self._extrude_non_modal(obj, Vector((1, 0, 0)))
+        orig, new = _read_transforms(obj)
         self._assert_transform(orig, 1.0, 1.0, 0.0, 0.0, 0.0)
         self._assert_transform(new, 1.0, 1.0, -90.0, 0.0, 0.0)
