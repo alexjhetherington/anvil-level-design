@@ -129,13 +129,17 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
             setting = settings_by_name.get(uv_map.name)
 
             # Render active icon (click to set)
-            op = row.operator(
+            icon_sub = row.row(align=True)
+            icon_sub.scale_x = 1.2
+            op = icon_sub.operator(
                 "leveldesign.set_active_render_uv",
                 text="",
                 icon='RESTRICT_RENDER_OFF' if uv_map.active_render else 'RESTRICT_RENDER_ON',
                 depress=uv_map.active_render,
             )
             op.uv_name = uv_map.name
+
+            row.separator(factor=0.5)
 
             # UV map name
             row.label(text=uv_map.name)
@@ -145,11 +149,11 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
                 row.prop(
                     setting,
                     "locked",
-                    text="",
+                    text="Locked" if setting.locked else "Unlocked",
                     icon='LOCKED' if setting.locked else 'UNLOCKED',
                 )
             else:
-                row.label(text="", icon='UNLOCKED')
+                row.label(text="Unlocked", icon='UNLOCKED')
 
 
 class LEVELDESIGN_PT_uv_settings_panel(Panel):

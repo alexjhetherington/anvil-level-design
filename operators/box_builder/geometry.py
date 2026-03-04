@@ -338,6 +338,10 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
 
+    # Ensure a UV map exists (matching Blender's default Add Cube behaviour)
+    if not me.uv_layers:
+        me.uv_layers.new(name="UVMap")
+
     # Apply material and UVs via edit mode (apply_uv_to_face requires edit mesh)
     image = get_active_image()
     if image is None:
