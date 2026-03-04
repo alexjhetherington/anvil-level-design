@@ -49,6 +49,10 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
 
     scale_u = source_transform['scale_u']
     scale_v = source_transform['scale_v']
+
+    # Zero scale means source has collapsed/zero-area UVs — can't derive settings
+    if abs(scale_u) < 1e-8 or abs(scale_v) < 1e-8:
+        return False
     source_rotation = source_transform['rotation']
     source_offset_x = source_transform['offset_x']
     source_offset_y = source_transform['offset_y']
