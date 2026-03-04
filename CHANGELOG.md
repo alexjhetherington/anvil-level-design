@@ -4,6 +4,7 @@
 - Integration tests
 - Fix increasing size of 0 area face failing to apply UVs
 - Significant refactor of new face UVing (moved to a general rather than tool specific approach)
+- Cube cut initial UVs are more sensible
 
 ## 1.2.11
 - Fix duplicating objects resets UVs
