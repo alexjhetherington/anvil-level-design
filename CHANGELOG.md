@@ -1,7 +1,7 @@
 # Anvil Level Design Changelog
 
 ## 1.3.1
-- Change material matching strategy to name based
+- Change material matching strategy to name based (fixes crash related to material disambiguation)
 
 ## 1.3.0
 - Handle MULTI-UV MAPS

@@ -1,3 +1,5 @@
+import re
+
 import bpy
 import bmesh
 import math
@@ -694,9 +696,27 @@ def get_selected_image_path(context):
     return None
 
 
+_BLENDER_SUFFIX = re.compile(r'\.\d{3,}$')
+
+
 def find_material_with_image(image):
     """Return existing material that uses this image, or None"""
-    return bpy.data.materials.get(f"IMG_{image.name}")
+    expected_name = f"IMG_{image.name}"
+    mat = bpy.data.materials.get(expected_name)
+    if mat:
+        debug_log(f"[FindMaterial] image={image.name!r} -> lookup={expected_name!r} -> FOUND")
+        return mat
+    # Fallback: image may have a Blender .001/.002 suffix but the material
+    # was created from the original unsuffixed name
+    base_name = _BLENDER_SUFFIX.sub('', image.name)
+    if base_name != image.name:
+        fallback_name = f"IMG_{base_name}"
+        mat = bpy.data.materials.get(fallback_name)
+        if mat:
+            debug_log(f"[FindMaterial] image={image.name!r} -> fallback={fallback_name!r} -> FOUND")
+            return mat
+    debug_log(f"[FindMaterial] image={image.name!r} -> NOT FOUND")
+    return None
 
 
 def get_image_from_material(mat):
@@ -705,6 +725,7 @@ def get_image_from_material(mat):
         return None
     for node in mat.node_tree.nodes:
         if node.type == 'TEX_IMAGE' and node.image:
+            debug_log(f"[GetImage] mat={mat.name!r} -> image={node.image.name!r}")
             return node.image
     return None
 
@@ -756,6 +777,7 @@ def get_default_material_settings():
 
 def create_material_with_image(image):
     """Create a new material using the given image texture with scene default settings"""
+    debug_log(f"[CreateMaterial] creating IMG_{image.name} for image={image.name!r}")
     defaults = get_default_material_settings()
 
     mat = bpy.data.materials.new(name=f"IMG_{image.name}")
