@@ -9,7 +9,6 @@ bl_info = {
 }
 
 import bpy
-from bpy.props import FloatProperty
 
 from . import properties
 from . import handlers
@@ -17,78 +16,6 @@ from . import operators
 from . import panels
 from . import workspace
 from . import hotspot_mapping
-
-
-# Default movement keys
-DEFAULT_KEY_FORWARD = 'W'
-DEFAULT_KEY_BACKWARD = 'S'
-DEFAULT_KEY_LEFT = 'A'
-DEFAULT_KEY_RIGHT = 'D'
-DEFAULT_KEY_UP = 'E'
-DEFAULT_KEY_DOWN = 'Q'
-
-# Movement key bindings (keymap, keymap_item) tuples
-freelook_movement_keymaps = []
-
-# Direction names for display
-MOVEMENT_DIRECTIONS = [
-    ('forward', "Forward", DEFAULT_KEY_FORWARD),
-    ('backward', "Backward", DEFAULT_KEY_BACKWARD),
-    ('left', "Left", DEFAULT_KEY_LEFT),
-    ('right', "Right", DEFAULT_KEY_RIGHT),
-    ('up', "Up", DEFAULT_KEY_UP),
-    ('down', "Down", DEFAULT_KEY_DOWN),
-]
-
-
-def get_movement_key(direction):
-    """Get the configured key for a movement direction, or None if disabled."""
-    wm = bpy.context.window_manager
-    kc_user = wm.keyconfigs.user
-    if kc_user:
-        km = kc_user.keymaps.get("3D View")
-        if km:
-            for kmi in km.keymap_items:
-                if (kmi.idname == "leveldesign.freelook_movement_key" and
-                    hasattr(kmi.properties, 'direction') and
-                    kmi.properties.direction == direction):
-                    # Return None if the keymap item is disabled
-                    if not kmi.active:
-                        return None
-                    return kmi.type
-    # Return default if not found
-    for d, name, default in MOVEMENT_DIRECTIONS:
-        if d == direction:
-            return default
-    return None
-
-
-def get_movement_keys_map():
-    """Get a dict mapping key types to movement directions (only active bindings)."""
-    keys = {}
-    for direction, name, default in MOVEMENT_DIRECTIONS:
-        key_type = get_movement_key(direction)
-        if key_type is not None:
-            keys[key_type] = direction
-    return keys
-
-
-class LEVELDESIGN_OT_freelook_movement_key(bpy.types.Operator):
-    """Placeholder operator for freelook movement key bindings (handled by modal)"""
-    bl_idname = "leveldesign.freelook_movement_key"
-    bl_label = "Freelook Movement Key"
-    bl_options = {'INTERNAL'}
-
-    direction: bpy.props.StringProperty()
-
-    @classmethod
-    def poll(cls, context):
-        from .utils import is_level_design_workspace
-        return is_level_design_workspace()
-
-    def execute(self, context):
-        # This operator is never actually executed - it's just for keymap UI
-        return {'PASS_THROUGH'}
 
 
 class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
@@ -121,28 +48,8 @@ class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
 class LevelDesignPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    mouse_sensitivity: FloatProperty(
-        name="Mouse Sensitivity",
-        description="Mouse look sensitivity for freelook camera",
-        default=0.006,
-        min=0.001,
-        max=0.05,
-        precision=4,
-    )
-
-    move_speed: FloatProperty(
-        name="Move Speed",
-        description="Movement speed for freelook camera (adjust with scroll wheel)",
-        default=0.1,
-        min=0.001,
-        max=10.0,
-        precision=3,
-    )
-
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "mouse_sensitivity")
-        layout.prop(self, "move_speed")
 
         # Workspaces section
         layout.separator()
@@ -165,7 +72,6 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         CATEGORY_ORDER = ["Navigation", "Selection", "UV", "Tools", "Other"]
         CATEGORY_MAP = {
             "leveldesign.walk_navigation_hold": "Navigation",
-            "leveldesign.freelook_movement_key": "Navigation",
             "leveldesign.ortho_view": "Navigation",
             "leveldesign.ortho_pan": "Navigation",
             "leveldesign.context_menu": "Navigation",
@@ -195,6 +101,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             # Collect all addon keymap items with context
             # We iterate addon keymaps to find our items, then look up the user's version
             categorized_entries = {cat: [] for cat in CATEGORY_ORDER}
+            walk_nav_primary_kmi = None
+            walk_nav_all_user_kmis = []
             for km_addon in kc_addon.keymaps:
                 # Find the corresponding user keymap
                 km_user = kc_user.keymaps.get(km_addon.name) if kc_user else None
@@ -213,12 +121,6 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                         if (hasattr(kmi.properties, "view_type") and
                                             hasattr(kmi_addon.properties, "view_type") and
                                             kmi.properties.view_type == kmi_addon.properties.view_type):
-                                            kmi_user = kmi
-                                            break
-                                    elif kmi_addon.idname == "leveldesign.freelook_movement_key":
-                                        if (hasattr(kmi.properties, "direction") and
-                                            hasattr(kmi_addon.properties, "direction") and
-                                            kmi.properties.direction == kmi_addon.properties.direction):
                                             kmi_user = kmi
                                             break
                                     elif kmi_addon.idname == "leveldesign.select_linked":
@@ -253,11 +155,18 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                         # Use user keymap item if found, otherwise fall back to addon
                         kmi_display = kmi_user if kmi_user else kmi_addon
 
+                        # Deduplicate walk navigation — show one combined entry for all modes
+                        if kmi_addon.idname == "leveldesign.walk_navigation_hold":
+                            walk_nav_all_user_kmis.append(kmi_display)
+                            if walk_nav_primary_kmi is None:
+                                walk_nav_primary_kmi = kmi_display
+                                category = CATEGORY_MAP.get(kmi_addon.idname, "Other")
+                                categorized_entries[category].append((base_name, km_addon, kmi_display))
+                            continue
+
                         # Check for property-based differentiation
                         if kmi_addon.idname == "leveldesign.ortho_view" and hasattr(kmi_addon.properties, "view_type"):
                             display_name = f"{base_name} - {kmi_addon.properties.view_type.title()}"
-                        elif kmi_addon.idname == "leveldesign.freelook_movement_key" and hasattr(kmi_addon.properties, "direction"):
-                            display_name = f"Freelook {kmi_addon.properties.direction.title()}"
                         elif kmi_addon.idname == "leveldesign.select_linked":
                             mode = getattr(kmi_addon.properties, "normal_mode", "NONE")
                             if mode == 'EXPAND':
@@ -314,10 +223,22 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                     row.prop(kmi, "type", text="", full_event=True)
                     row.prop(kmi, "active", text="", emboss=False)
 
+            # Sync walk navigation keybinds across all modes
+            if walk_nav_primary_kmi:
+                for kmi in walk_nav_all_user_kmis:
+                    if kmi is walk_nav_primary_kmi:
+                        continue
+                    if kmi.map_type != walk_nav_primary_kmi.map_type:
+                        kmi.map_type = walk_nav_primary_kmi.map_type
+                    for attr in ('type', 'value', 'ctrl', 'shift', 'alt', 'oskey', 'active'):
+                        if getattr(kmi, attr) != getattr(walk_nav_primary_kmi, attr):
+                            setattr(kmi, attr, getattr(walk_nav_primary_kmi, attr))
+                from .operators import walk_navigation
+                walk_navigation.sync_confirm_key(walk_nav_primary_kmi.type)
+
 
 def register():
     print("Anvil Level Design: Debug logging is DISABLED (toggle in Anvil Settings > Debug)", flush=True)
-    bpy.utils.register_class(LEVELDESIGN_OT_freelook_movement_key)
     bpy.utils.register_class(LEVELDESIGN_OT_restore_default_keybindings)
     bpy.utils.register_class(LevelDesignPreferences)
     properties.register()
@@ -327,29 +248,8 @@ def register():
     workspace.register()
     hotspot_mapping.register()
 
-    # Register movement key keymaps
-    wm = bpy.context.window_manager
-    kc = wm.keyconfigs.addon
-    if kc:
-        km = kc.keymaps.new(name="3D View", space_type='VIEW_3D')
-        for direction, display_name, default_key in MOVEMENT_DIRECTIONS:
-            kmi = km.keymap_items.new(
-                "leveldesign.freelook_movement_key",
-                default_key, 'PRESS'
-            )
-            kmi.properties.direction = direction
-            freelook_movement_keymaps.append((km, kmi))
-
 
 def unregister():
-    # Remove movement key keymaps
-    for km, kmi in freelook_movement_keymaps:
-        try:
-            km.keymap_items.remove(kmi)
-        except ReferenceError:
-            pass
-    freelook_movement_keymaps.clear()
-
     hotspot_mapping.unregister()
     workspace.unregister()
     panels.unregister()
@@ -358,7 +258,6 @@ def unregister():
     properties.unregister()
     bpy.utils.unregister_class(LevelDesignPreferences)
     bpy.utils.unregister_class(LEVELDESIGN_OT_restore_default_keybindings)
-    bpy.utils.unregister_class(LEVELDESIGN_OT_freelook_movement_key)
 
 
 if __name__ == "__main__":

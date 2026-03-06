@@ -1,11 +1,13 @@
 # Anvil Level Design Changelog
 
 ## 1.3.0
+- Handle MULTI-UV MAPS
 - Integration tests
 - Fix increasing size of 0 area face failing to apply UVs
 - Significant refactor of new face UVing (moved to a general rather than tool specific approach)
 - Cube cut initial UVs are more sensible
 - Fix alt click not working on adjacent faces the first time after entering edit mode
+- Use Blender's walk navigation for WASD view
 
 ## 1.2.11
 - Fix duplicating objects resets UVs

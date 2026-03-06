@@ -181,7 +181,7 @@ Hold ctrl to lock the axis, allowing you to move the cursor off a given face whi
 
 Hotkeys are intended to be blender default.
 
-Holding down Right Mouse Button in a 3d view will enable game engine style WASD flying. This is a custom implemention, replacing Blender's walk mode due to its unsatisfying interaction with holding buttons.
+Holding down Right Mouse Button in a 3d view will enable game engine style WASD flying. This uses blender's in built walk navigation. Anvil manually modifies hotkeys due to blender limitations. 
 
 Middle mouse button orbits the camera in perspective grid views.
 
@@ -257,7 +257,7 @@ For a more convenient experience I recommend you consider adjusting the followin
 * Blender has built in UV correct: correct face attributes. It defaults to off. It doesn't work well when extruding faces orthoganally
 * Blender has built in UV correct: correct UV (vertex and edge slide). It defaults to on. It mostly works well but has a few annoyances (sometimes just doesn't work; base UV is affected by initial move when using the G hotkey). It also (guess) causes face data to move in memory, causing crashes when Anvil UV is working. UV correct is not exposed via Python, so we disable it by directly accessing blender memory. Brittle!
 * The way Anvil figures out which faces to auto UV is edge case city. Important cases include: only selected and adjacent faces are re-uved when modified; only selected and *new* faces (understood by face index) are uv-ed when the mesh topology changes. Using face-index to determine which faces are new is a bit brittle, but for now it seems to work well. It will break with other addons that create faces in complicated ways that re-order faces; there are ways to break free of face-index but it's not a priority right now. Only re-uving selected and adjacent faces when modified is a performance optimisation to avoid re-uving every face on mesh modification, and it also covers some other edge cases i.e. a user that enables UV lock to modify one face before disabling it likely does not want that face to be re-uved if they modify elsewhere in the mesh. It is therefore difficult to remove the 'selected' constraint. (just comparing raw vertex positions between updates would solve everything, but that's very intimidating!)
-
+* You are unable to set addon keymaps for modal internal hotkeys i.e. 'exit walk view.' For this reason, Anvil manually adjusts user keymaps when required.
 
 ## Undocumented
 

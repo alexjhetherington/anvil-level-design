@@ -1,31 +1,91 @@
 import bpy
 from bpy.types import Operator
-from mathutils import Vector, Euler
-import math
 
-from ..utils import is_level_design_workspace
+from ..utils import is_level_design_workspace, debug_log
 
 
-def get_addon_prefs(context):
-    """Get addon preferences."""
-    addon = context.preferences.addons.get(__package__.rsplit('.', 1)[0])
-    if addon:
-        return addon.preferences
-    return None
+# HACK: We manage CONFIRM keymap items in Blender's "View3D Walk Modal" keymap
+# (user keyconfig). During our walk wrapper modal, we enable them (and disable
+# conflicting items for the trigger key), then disable them on exit.
+# Two CONFIRM items are created: one plain and one with shift, so that releasing
+# the trigger key while holding shift (walk fast mode) also exits the modal.
+#
+# This addon avoids directly modifying user keyconfig keymaps wherever possible because
+# it risks leaving behind stale or duplicate entries if anything goes wrong (crashes,
+# partial unregister, etc.). We make an exception here because Blender's modal keymaps
+# (like "View3D Walk Modal") cannot be extended via addon keyconfigs — there is no way
+# to set defaults for modal keymaps through the addon keyconfig API. Directly touching
+# the user keyconfig is the only option.
+#
+# Why not add/remove at runtime? Calling km.keymap_items.remove() while Blender's
+# C-level modal event dispatch is still tearing down the walk operator causes a
+# use-after-free crash. Even deferring the remove to the next event loop tick
+# (bpy.app.timers with first_interval=0.0) is not enough — only a ~1s delay avoids
+# the crash, which causes other problems. Toggling .active is safe because no memory
+# is allocated or freed, just a flag flip on a stable pointer.
+#
+# Additionally, walk's modal exit shuffles the C-level keymap item array, silently
+# invalidating Python kmi references (no ReferenceError — the wrappers just point at
+# wrong data). Because of this, we NEVER cache kmi references across walk invocations.
+# All deferred restore logic uses property-based lookup (re-scanning the keymap) instead
+# of stored references.
+#
+# The item is kept disabled when not inside our modal so that:
+# 1. Manually activating walk navigation (View > Navigation > Walk) is not affected
+# 2. It serves as a visible marker in Blender's keymap editor showing which key
+#    the addon controls
+#
+# Our CONFIRM item is identified by value='RELEASE' — no default Walk Modal items use
+# RELEASE for CONFIRM (they all use PRESS or ANY), so this is a reliable marker.
+#
+# Lifecycle:
+# - Created lazily on first operator invoke (or found if it already exists)
+# - Stale duplicates from previous crashed sessions are cleaned up on each invoke
+# - .type updated to match the current trigger key at invoke time
+# - .active toggled True on enter, False on exit
+# - Removed at addon unregister (all CONFIRM RELEASE items, covering stale ones too)
+# - If the user changes the walk keybind in addon preferences, .type is synced
+#   via sync_confirm_key() called from the preferences draw
+
+_MOUSE_KEY_TYPES = frozenset({
+    'LEFTMOUSE', 'MIDDLEMOUSE', 'RIGHTMOUSE',
+    'BUTTON4MOUSE', 'BUTTON5MOUSE', 'BUTTON6MOUSE', 'BUTTON7MOUSE',
+    'PEN', 'ERASER', 'MOUSEMOVE', 'TRACKPADPAN', 'TRACKPADZOOM',
+    'MOUSEROTATE', 'MOUSESMARTZOOM',
+    'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'WHEELINMOUSE', 'WHEELOUTMOUSE',
+    'WHEELLEFTMOUSE', 'WHEELRIGHTMOUSE',
+})
 
 
-def get_movement_keys_map():
-    """Get movement key configuration from the main module."""
-    import importlib
-    main_module = importlib.import_module(__package__.rsplit('.', 1)[0])
-    return main_module.get_movement_keys_map()
+def _map_type_for_key(key_type):
+    """Return the correct map_type for a given key type."""
+    if key_type in _MOUSE_KEY_TYPES:
+        return 'MOUSE'
+    return 'KEYBOARD'
+
+
+def sync_confirm_key(key_type):
+    """Update all CONFIRM RELEASE items' key type to match the current keybind."""
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.user
+    if not kc:
+        return
+    km = kc.keymaps.get("View3D Walk Modal")
+    if not km:
+        return
+    new_map_type = _map_type_for_key(key_type)
+    for kmi in km.keymap_items:
+        if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE':
+            if kmi.type != key_type:
+                kmi.map_type = new_map_type
+                kmi.type = key_type
 
 
 class LEVELDESIGN_OT_walk_navigation_hold(Operator):
-    """First-person camera navigation while holding right mouse button."""
+    """First-person camera navigation using Blender's walk mode while holding the trigger key."""
     bl_idname = "leveldesign.walk_navigation_hold"
-    bl_label = "First Person Camera (Hold)"
-    bl_options = {'REGISTER', 'GRAB_CURSOR', 'BLOCKING'}
+    bl_label = "Walk Navigation (Hold)"
+    bl_options = {'REGISTER', 'INTERNAL'}
 
     @classmethod
     def poll(cls, context):
@@ -39,194 +99,168 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
         if rv3d is None:
             return {'CANCELLED'}
 
-        # Don't activate freecam in orthographic mode
+        # Don't activate in orthographic mode
         if not rv3d.is_perspective:
             return {'PASS_THROUGH'}
 
-        self.region_3d = rv3d
+        self._trigger_key = event.type
+        self._done = False
+        self._saved_states = {}
 
-        # Save original settings to restore on exit
-        self.original_view_distance = rv3d.view_distance
-        self.original_smooth_view = context.preferences.view.smooth_view
+        # Modify walk modal keybinds before invoking walk
+        self._modify_walk_keybinds()
 
-        # Disable smooth view during freelook
-        context.preferences.view.smooth_view = 0
+        # Invoke Blender's built-in walk navigation
+        result = bpy.ops.view3d.walk('INVOKE_DEFAULT')
+        if result != {'RUNNING_MODAL'}:
+            self._restore_walk_keybinds()
+            return {'CANCELLED'}
 
-        # Convert from orbit mode to freelook: move view_location to actual camera position
-        if rv3d.view_distance > 0:
-            rot_mat = rv3d.view_rotation.to_matrix()
-            cam_offset = rot_mat @ Vector((0, 0, rv3d.view_distance))
-            rv3d.view_location = rv3d.view_location + cam_offset
-            rv3d.view_distance = 0
-
-        # Extract current yaw/pitch from existing view rotation using forward vector
-        # (more robust than euler decomposition for arbitrary rotations)
-        rot_mat = rv3d.view_rotation.to_matrix()
-        forward = rot_mat @ Vector((0, 0, -1))  # Camera looks down -Z
-
-        # Yaw: horizontal angle from -Y axis (Blender's forward)
-        self.yaw = math.atan2(-forward.x, forward.y)
-
-        # Pitch: angle from horizontal plane
-        horizontal_dist = math.sqrt(forward.x ** 2 + forward.y ** 2)
-        self.pitch = math.atan2(forward.z, horizontal_dist)
-
-        # Track which keys are held
-        self.keys_held = set()
-
-        # Store region/window for cursor restoration on exit
-        self._region = context.region
-        self._window = context.window
-
-        # Hide cursor during freelook
-        context.window.cursor_set('NONE')
-
-        # Track mouse position for delta calculation (using region coords which work with GRAB_CURSOR)
-        self._last_mouse_region_x = event.mouse_region_x
-        self._last_mouse_region_y = event.mouse_region_y
-
-        # Add timer for smooth movement
-        self._timer = context.window_manager.event_timer_add(1/60, window=context.window)
-
+        # Register our modal handler AFTER walk's, so ours runs first
+        self._timer = context.window_manager.event_timer_add(0.1, window=context.window)
         context.window_manager.modal_handler_add(self)
-        context.area.tag_redraw()
 
         return {'RUNNING_MODAL'}
 
-    def _yaw_pitch_to_rotation(self, yaw, pitch):
-        """Convert yaw/pitch to view quaternion."""
-        # pitch=0 means looking at horizon, so we add pi/2 to get Blender's euler.x
-        euler = Euler((pitch + math.pi / 2, 0, yaw), 'XYZ')
-        return euler.to_quaternion()
-
     def modal(self, context, event):
-        rv3d = self.region_3d
+        if self._done:
+            print("[Walk] modal: _done=True, finishing")
+            self._schedule_deferred_restore()
+            context.window_manager.event_timer_remove(self._timer)
+            return {'FINISHED'}
 
-        # Exit on RMB release or Escape
-        if event.type == 'RIGHTMOUSE' and event.value == 'RELEASE':
-            return self._finish(context)
-
-        if event.type == 'ESC':
-            return self._finish(context)
-
-        # Mouse look - use mouse_region coords which accumulate correctly with GRAB_CURSOR
-        if event.type == 'MOUSEMOVE':
-            dx = event.mouse_region_x - self._last_mouse_region_x
-            dy = event.mouse_region_y - self._last_mouse_region_y
-            self._last_mouse_region_x = event.mouse_region_x
-            self._last_mouse_region_y = event.mouse_region_y
-
-            prefs = get_addon_prefs(context)
-            sensitivity = prefs.mouse_sensitivity if prefs else 0.006
-            self.yaw -= dx * sensitivity
-            self.pitch += dy * sensitivity
-
-            # Clamp pitch to prevent flipping (just under 90 degrees)
-            max_pitch = math.pi / 2 - 0.01
-            self.pitch = max(-max_pitch, min(max_pitch, self.pitch))
-
-            # Apply rotation
-            rv3d.view_rotation = self._yaw_pitch_to_rotation(self.yaw, self.pitch)
-
-            context.area.tag_redraw()
-            return {'RUNNING_MODAL'}
-
-        # Track key presses for movement
-        movement_keys_map = get_movement_keys_map()
-        movement_keys = set(movement_keys_map.keys()) | {'LEFT_SHIFT', 'RIGHT_SHIFT'}
-        if event.type in movement_keys:
-            if event.value == 'PRESS':
-                self.keys_held.add(event.type)
-            elif event.value == 'RELEASE':
-                self.keys_held.discard(event.type)
-            return {'RUNNING_MODAL'}
-
-        # Scroll to adjust speed
-        if event.type == 'WHEELUPMOUSE':
-            prefs = get_addon_prefs(context)
-            if prefs:
-                prefs.move_speed *= 1.2
-                self.report({'INFO'}, f"Speed: {prefs.move_speed:.3f}")
-            return {'RUNNING_MODAL'}
-        if event.type == 'WHEELDOWNMOUSE':
-            prefs = get_addon_prefs(context)
-            if prefs:
-                prefs.move_speed /= 1.2
-                self.report({'INFO'}, f"Speed: {prefs.move_speed:.3f}")
-            return {'RUNNING_MODAL'}
-
-        # Timer tick - apply movement
-        if event.type == 'TIMER':
-            self._apply_movement(context, rv3d)
-            context.area.tag_redraw()
-            return {'RUNNING_MODAL'}
+        if event.type == self._trigger_key and event.value == 'RELEASE':
+            print(f"[Walk] modal: trigger RELEASE ({self._trigger_key}), setting done")
+            self._done = True
+            return {'PASS_THROUGH'}
 
         return {'PASS_THROUGH'}
 
-    def _apply_movement(self, context, rv3d):
-        """Apply movement based on currently held keys."""
-        if not self.keys_held:
+    def cancel(self, context):
+        print("[Walk] cancel called")
+        self._schedule_deferred_restore()
+        if hasattr(self, '_timer'):
+            context.window_manager.event_timer_remove(self._timer)
+
+    def _modify_walk_keybinds(self):
+        """Disable conflicting keybinds and enable the CONFIRM item."""
+        wm = bpy.context.window_manager
+        kc = wm.keyconfigs.user
+        if not kc:
             return
 
-        prefs = get_addon_prefs(context)
-        speed = prefs.move_speed if prefs else 0.1
-        if 'LEFT_SHIFT' in self.keys_held or 'RIGHT_SHIFT' in self.keys_held:
-            speed *= 3
+        km = kc.keymaps.get("View3D Walk Modal")
+        if not km:
+            return
 
-        # Get view directions from rotation
-        rot_mat = rv3d.view_rotation.to_matrix()
-        forward = rot_mat @ Vector((0, 0, -1))  # Camera forward
-        right = rot_mat @ Vector((1, 0, 0))     # Camera right
-        world_up = Vector((0, 0, 1))            # World up for up/down
+        # Re-enable all items to fix any stale disabled state from previous
+        # crashed sessions (the old code disabled items and never restored them).
+        for kmi in km.keymap_items:
+            if not kmi.active:
+                print(f"[Walk] _modify: re-enabling stale disabled item: type={kmi.type} propvalue={kmi.propvalue}")
+                kmi.active = True
 
-        move_dir = Vector((0, 0, 0))
+        # Clean up all CONFIRM RELEASE items from previous sessions and recreate
+        # exactly the ones we need. Safe to remove here — walk hasn't started yet.
+        stale = [kmi for kmi in list(km.keymap_items)
+                 if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE']
+        if stale:
+            print(f"[Walk] _modify: removing {len(stale)} old CONFIRM RELEASE items")
+        for kmi in stale:
+            km.keymap_items.remove(kmi)
 
-        # Get configured movement keys
-        movement_keys_map = get_movement_keys_map()
+        # Create CONFIRM RELEASE items — one plain, one with shift (for fast mode)
+        map_type = _map_type_for_key(self._trigger_key)
+        confirm_kmis = []
+        for shift in (False, True):
+            kmi = km.keymap_items.new_modal(
+                'CONFIRM', self._trigger_key, 'RELEASE', shift=shift
+            )
+            confirm_kmis.append(kmi)
+        print(f"[Walk] _modify: created {len(confirm_kmis)} CONFIRM RELEASE items (plain + shift)")
 
-        # Check held keys against configured bindings
-        for key in self.keys_held:
-            direction = movement_keys_map.get(key)
-            if direction == 'forward':
-                move_dir += forward
-            elif direction == 'backward':
-                move_dir -= forward
-            elif direction == 'right':
-                move_dir += right
-            elif direction == 'left':
-                move_dir -= right
-            elif direction == 'up':
-                move_dir += world_up
-            elif direction == 'down':
-                move_dir -= world_up
+        # Log full keymap state before modification
+        print(f"[Walk] _modify START trigger={self._trigger_key}")
+        for kmi in km.keymap_items:
+            is_ours = " (OURS)" if kmi in confirm_kmis else ""
+            print(f"[Walk]   kmi: type={kmi.type} value={kmi.value} propvalue={kmi.propvalue} active={kmi.active} shift={kmi.shift}{is_ours}")
 
-        if move_dir.length > 0:
-            move_dir.normalize()
-            rv3d.view_location += move_dir * speed
+        # Save and disable items that use the same key as our trigger.
+        # Keyed by (propvalue, value, shift) for reference-free restore after walk exits.
+        self._saved_states = {}
+        for kmi in km.keymap_items:
+            if kmi in confirm_kmis:
+                continue
+            if kmi.type == self._trigger_key:
+                self._saved_states[(kmi.propvalue, kmi.value, kmi.shift)] = kmi.active
+                kmi.active = False
 
-    def _finish(self, context):
-        """Clean up and exit modal."""
-        rv3d = self.region_3d
+        for kmi in confirm_kmis:
+            kmi.active = True
 
-        # Restore view_distance: move view_location back to orbit center
-        if self.original_view_distance > 0:
-            rot_mat = rv3d.view_rotation.to_matrix()
-            cam_offset = rot_mat @ Vector((0, 0, self.original_view_distance))
-            rv3d.view_location = rv3d.view_location - cam_offset
-            rv3d.view_distance = self.original_view_distance
+        print(f"[Walk] _modify END saved_states={len(self._saved_states)} keys={list(self._saved_states.keys())}")
+        for kmi in km.keymap_items:
+            is_ours = " (OURS)" if kmi in confirm_kmis else ""
+            print(f"[Walk]   kmi: type={kmi.type} value={kmi.value} propvalue={kmi.propvalue} active={kmi.active} shift={kmi.shift}{is_ours}")
 
-        # Restore smooth view setting
-        context.preferences.view.smooth_view = self.original_smooth_view
+    def _schedule_deferred_restore(self):
+        """Defer keybind restoration to next tick. Uses property-based lookup
+        instead of cached references, since walk's exit corrupts Python kmi
+        wrappers. Only toggles .active — never adds or removes items."""
+        saved = dict(self._saved_states)
+        self._saved_states = {}
+        trigger_key = self._trigger_key
 
-        # Warp cursor to region center and restore visibility
-        center_x = self._region.x + self._region.width // 2
-        center_y = self._region.y + self._region.height // 2
-        self._window.cursor_warp(center_x, center_y)
-        context.window.cursor_set('DEFAULT')
+        def _deferred():
+            print(f"[Walk] _deferred START trigger={trigger_key} saved={list(saved.keys())}")
+            wm = bpy.context.window_manager
+            kc = wm.keyconfigs.user
+            if not kc:
+                print("[Walk] _deferred: no user keyconfig")
+                return None
+            km = kc.keymaps.get("View3D Walk Modal")
+            if not km:
+                print("[Walk] _deferred: no Walk Modal keymap")
+                return None
 
-        context.window_manager.event_timer_remove(self._timer)
-        context.area.tag_redraw()
-        return {'FINISHED'}
+            for kmi in km.keymap_items:
+                if kmi.type != trigger_key:
+                    continue
+                if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE':
+                    print(f"[Walk] _deferred: disabling CONFIRM RELEASE shift={kmi.shift} active={kmi.active} -> False")
+                    kmi.active = False
+                else:
+                    key = (kmi.propvalue, kmi.value, kmi.shift)
+                    if key in saved:
+                        print(f"[Walk] _deferred: restoring ({kmi.propvalue}, {kmi.value}, shift={kmi.shift}) active={kmi.active} -> {saved[key]}")
+                        kmi.active = saved[key]
+            print("[Walk] _deferred DONE")
+            return None
+
+        print("[Walk] _schedule_deferred_restore: registering timer")
+        bpy.app.timers.register(_deferred, first_interval=0.0)
+
+    def _restore_walk_keybinds(self):
+        """Synchronous restore for use during invoke (before walk starts).
+        Safe to use direct references here since walk hasn't run yet."""
+        wm = bpy.context.window_manager
+        kc = wm.keyconfigs.user
+        if not kc:
+            return
+        km = kc.keymaps.get("View3D Walk Modal")
+        if not km:
+            return
+
+        for kmi in km.keymap_items:
+            if kmi.type != self._trigger_key:
+                continue
+            if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE':
+                kmi.active = False
+            else:
+                key = (kmi.propvalue, kmi.value, kmi.shift)
+                if key in self._saved_states:
+                    kmi.active = self._saved_states[key]
+        self._saved_states = {}
 
 
 class LEVELDESIGN_OT_context_menu(Operator):
@@ -283,6 +317,24 @@ KEYMAPS_TO_REGISTER = [
 ]
 
 
+def _remove_walk_confirm_items():
+    """Remove all CONFIRM RELEASE items from Walk Modal (ours and any stale ones)."""
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.user
+    if not kc:
+        return
+
+    km = kc.keymaps.get("View3D Walk Modal")
+    if km:
+        to_remove = [kmi for kmi in list(km.keymap_items)
+                     if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE']
+        for kmi in to_remove:
+            try:
+                km.keymap_items.remove(kmi)
+            except (ReferenceError, RuntimeError):
+                pass
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -314,6 +366,8 @@ def register():
 
 
 def unregister():
+    _remove_walk_confirm_items()
+
     # Remove our keymaps
     for km, kmi in addon_keymaps:
         try:
