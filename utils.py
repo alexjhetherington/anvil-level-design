@@ -696,13 +696,7 @@ def get_selected_image_path(context):
 
 def find_material_with_image(image):
     """Return existing material that uses this image, or None"""
-    for mat in bpy.data.materials:
-        if not mat.use_nodes:
-            continue
-        for node in mat.node_tree.nodes:
-            if node.type == 'TEX_IMAGE' and node.image == image:
-                return mat
-    return None
+    return bpy.data.materials.get(f"IMG_{image.name}")
 
 
 def get_image_from_material(mat):

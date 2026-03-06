@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.3.1
+- Change material matching strategy to name based
+
 ## 1.3.0
 - Handle MULTI-UV MAPS
 - Integration tests
