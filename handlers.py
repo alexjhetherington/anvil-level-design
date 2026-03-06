@@ -740,8 +740,27 @@ def apply_world_scale_uvs(obj, scene):
     # Detect if modal operation just ended (before updating tracking)
     modal_just_ended = bool(_tracked_modal_operators) and not bool(current_modals)
 
+    # Paint modals (alt+click texture apply, paint select) modify UVs or
+    # selection without moving geometry. The cache-restore logic below is
+    # designed for transform modals (grab, rotate, scale, extrude, shear, etc.)
+    # where returning geometry to its original position should restore the
+    # original UVs. Paint modals intentionally change UVs on unmoved faces,
+    # so restoring from cache would revert those changes.
+    #
+    # A whitelist of transform modals (e.g. TRANSFORM_OT_translate,
+    # TRANSFORM_OT_rotate, TRANSFORM_OT_resize, MESH_OT_extrude_region_move,
+    # TRANSFORM_OT_shrink_fatten, TRANSFORM_OT_shear, etc.) might be more
+    # robust long-term, but we don't know the full scope of Blender's
+    # transform modals, so for now we blacklist our own paint modals.
+    _PAINT_MODALS = {
+        'LEVELDESIGN_OT_apply_image_to_face',
+        'LEVELDESIGN_OT_pick_image_from_face',
+        'LEVELDESIGN_OT_backface_paint_select',
+    }
+    is_paint_modal = bool(current_modals & _PAINT_MODALS)
+
     # Update tracking
-    in_modal_operation = bool(current_modals)
+    in_modal_operation = bool(current_modals) and not is_paint_modal
     _tracked_modal_operators = current_modals
 
     if current_modals:

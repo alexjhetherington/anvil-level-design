@@ -5,6 +5,7 @@
 - Fix increasing size of 0 area face failing to apply UVs
 - Significant refactor of new face UVing (moved to a general rather than tool specific approach)
 - Cube cut initial UVs are more sensible
+- Fix alt click not working on adjacent faces the first time after entering edit mode
 
 ## 1.2.11
 - Fix duplicating objects resets UVs
