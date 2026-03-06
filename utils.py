@@ -706,8 +706,12 @@ def find_material_with_image(image):
     if mat:
         debug_log(f"[FindMaterial] image={image.name!r} -> lookup={expected_name!r} -> FOUND")
         return mat
-    # Fallback: image may have a Blender .001/.002 suffix but the material
-    # was created from the original unsuffixed name
+    # HACK: Blender appends .001/.002/etc. to image datablock names when there
+    # are naming conflicts. This happens when: (1) the same filename exists in
+    # different directories, (2) file append/link brings in a same-named image,
+    # or (3) undo/redo recreates datablocks. The material was created under the
+    # original unsuffixed name (IMG_foo.png), but the image it references may
+    # now be named foo.png.001. Strip the suffix to find the existing material.
     base_name = _BLENDER_SUFFIX.sub('', image.name)
     if base_name != image.name:
         fallback_name = f"IMG_{base_name}"
@@ -725,7 +729,6 @@ def get_image_from_material(mat):
         return None
     for node in mat.node_tree.nodes:
         if node.type == 'TEX_IMAGE' and node.image:
-            debug_log(f"[GetImage] mat={mat.name!r} -> image={node.image.name!r}")
             return node.image
     return None
 
