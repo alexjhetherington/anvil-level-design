@@ -265,3 +265,4 @@ Ok, the fact it's here means it's documented. This section is for stuff that is 
 
 * UV Shortcuts can be keybound but currently don't have defaults
 * THere is a hidden select 0 area UVs operator that can be keybound
+* Multi-UV functionality is undocumented because I consider it experimental. Lets see how it works out
