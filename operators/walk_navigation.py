@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Operator
 
-from ..utils import is_level_design_workspace, debug_log
+from ..utils import is_level_design_workspace
 
 
 # HACK: We manage CONFIRM keymap items in Blender's "View3D Walk Modal" keymap
@@ -124,20 +124,17 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
 
     def modal(self, context, event):
         if self._done:
-            print("[Walk] modal: _done=True, finishing")
             self._schedule_deferred_restore()
             context.window_manager.event_timer_remove(self._timer)
             return {'FINISHED'}
 
         if event.type == self._trigger_key and event.value == 'RELEASE':
-            print(f"[Walk] modal: trigger RELEASE ({self._trigger_key}), setting done")
             self._done = True
             return {'PASS_THROUGH'}
 
         return {'PASS_THROUGH'}
 
     def cancel(self, context):
-        print("[Walk] cancel called")
         self._schedule_deferred_restore()
         if hasattr(self, '_timer'):
             context.window_manager.event_timer_remove(self._timer)
@@ -157,15 +154,12 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
         # crashed sessions (the old code disabled items and never restored them).
         for kmi in km.keymap_items:
             if not kmi.active:
-                print(f"[Walk] _modify: re-enabling stale disabled item: type={kmi.type} propvalue={kmi.propvalue}")
                 kmi.active = True
 
         # Clean up all CONFIRM RELEASE items from previous sessions and recreate
         # exactly the ones we need. Safe to remove here — walk hasn't started yet.
         stale = [kmi for kmi in list(km.keymap_items)
                  if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE']
-        if stale:
-            print(f"[Walk] _modify: removing {len(stale)} old CONFIRM RELEASE items")
         for kmi in stale:
             km.keymap_items.remove(kmi)
 
@@ -177,14 +171,6 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
                 'CONFIRM', self._trigger_key, 'RELEASE', shift=shift
             )
             confirm_kmis.append(kmi)
-        print(f"[Walk] _modify: created {len(confirm_kmis)} CONFIRM RELEASE items (plain + shift)")
-
-        # Log full keymap state before modification
-        print(f"[Walk] _modify START trigger={self._trigger_key}")
-        for kmi in km.keymap_items:
-            is_ours = " (OURS)" if kmi in confirm_kmis else ""
-            print(f"[Walk]   kmi: type={kmi.type} value={kmi.value} propvalue={kmi.propvalue} active={kmi.active} shift={kmi.shift}{is_ours}")
-
         # Save and disable items that use the same key as our trigger.
         # Keyed by (propvalue, value, shift) for reference-free restore after walk exits.
         self._saved_states = {}
@@ -198,11 +184,6 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
         for kmi in confirm_kmis:
             kmi.active = True
 
-        print(f"[Walk] _modify END saved_states={len(self._saved_states)} keys={list(self._saved_states.keys())}")
-        for kmi in km.keymap_items:
-            is_ours = " (OURS)" if kmi in confirm_kmis else ""
-            print(f"[Walk]   kmi: type={kmi.type} value={kmi.value} propvalue={kmi.propvalue} active={kmi.active} shift={kmi.shift}{is_ours}")
-
     def _schedule_deferred_restore(self):
         """Defer keybind restoration to next tick. Uses property-based lookup
         instead of cached references, since walk's exit corrupts Python kmi
@@ -212,32 +193,25 @@ class LEVELDESIGN_OT_walk_navigation_hold(Operator):
         trigger_key = self._trigger_key
 
         def _deferred():
-            print(f"[Walk] _deferred START trigger={trigger_key} saved={list(saved.keys())}")
             wm = bpy.context.window_manager
             kc = wm.keyconfigs.user
             if not kc:
-                print("[Walk] _deferred: no user keyconfig")
                 return None
             km = kc.keymaps.get("View3D Walk Modal")
             if not km:
-                print("[Walk] _deferred: no Walk Modal keymap")
                 return None
 
             for kmi in km.keymap_items:
                 if kmi.type != trigger_key:
                     continue
                 if kmi.propvalue == 'CONFIRM' and kmi.value == 'RELEASE':
-                    print(f"[Walk] _deferred: disabling CONFIRM RELEASE shift={kmi.shift} active={kmi.active} -> False")
                     kmi.active = False
                 else:
                     key = (kmi.propvalue, kmi.value, kmi.shift)
                     if key in saved:
-                        print(f"[Walk] _deferred: restoring ({kmi.propvalue}, {kmi.value}, shift={kmi.shift}) active={kmi.active} -> {saved[key]}")
                         kmi.active = saved[key]
-            print("[Walk] _deferred DONE")
             return None
 
-        print("[Walk] _schedule_deferred_restore: registering timer")
         bpy.app.timers.register(_deferred, first_interval=0.0)
 
     def _restore_walk_keybinds(self):
