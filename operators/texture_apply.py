@@ -4,7 +4,7 @@ import math
 from bpy.types import Operator
 from bpy_extras import view3d_utils
 
-from ..utils import is_level_design_workspace
+from ..utils import is_level_design_workspace, debug_log
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
@@ -188,6 +188,8 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
 
     # Apply to target face
     target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
+    debug_log(f"[ApplyImage] set_uv_from_other_face: face {target_face.index} <- source {source_face.index} | "
+              f"scale=({scale_u:.4f}, {scale_v:.4f}) rotation={target_rotation:.2f} offset=({target_offset_x:.4f}, {target_offset_y:.4f})")
     apply_uv_to_face(target_face, uv_layer, scale_u, scale_v, target_rotation,
                      target_offset_x, target_offset_y, target_mat, ppm, me)
     if bm is not None:
@@ -209,14 +211,17 @@ class apply_image_to_face(ModalPaintBase, Operator):
     def invoke(self, context, event):
         obj = context.object
         if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+            debug_log("[ApplyImage] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
             return {'PASS_THROUGH'}
 
         # Only work in face select mode
         if not context.tool_settings.mesh_select_mode[2]:
+            debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
             return {'PASS_THROUGH'}
 
         image = get_active_image()
         if not image:
+            debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
             return {'PASS_THROUGH'}
 
         # Require exactly 1 face selected
@@ -224,10 +229,12 @@ class apply_image_to_face(ModalPaintBase, Operator):
         bm_check.faces.ensure_lookup_table()
         selected_count = sum(1 for f in bm_check.faces if f.select)
         if selected_count != 1:
+            debug_log(f"[ApplyImage] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
             return {'PASS_THROUGH'}
 
         source_face = bm_check.faces.active
         if source_face is None or not source_face.select:
+            debug_log(f"[ApplyImage] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
             return {'PASS_THROUGH'}
 
         # Store state for paint session
@@ -252,6 +259,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
             obj.data.materials.append(mat)
         self._mat_index = obj.data.materials.find(mat.name)
 
+        debug_log(f"[ApplyImage] invoke OK: source_face={self._source_face_index}, image={image.name}, mat={mat.name}")
         return self._invoke_paint(context, event)
 
     def modal(self, context, event):
@@ -274,7 +282,10 @@ class apply_image_to_face(ModalPaintBase, Operator):
         )
 
         if face_index is None:
+            debug_log(f"[ApplyImage] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
             return
+
+        debug_log(f"[ApplyImage] raycast hit face {face_index} at distance {distance:.4f}, mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f})")
         if face_index in self._paint_visited:
             return
         self._paint_visited.add(face_index)

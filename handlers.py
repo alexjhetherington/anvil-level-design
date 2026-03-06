@@ -918,6 +918,9 @@ def apply_world_scale_uvs(obj, scene):
                     offset_x = normalize_offset(offset_x + move_x / (scale_u * tex_meters_u))
                     offset_y = normalize_offset(offset_y + move_y / (scale_v * tex_meters_v))
 
+                debug_log(f"[WorldScale] Face {face.index} layer '{uv_layer.name}': "
+                         f"scale=({scale_u:.4f}, {scale_v:.4f}) rotation={rotation:.2f} "
+                         f"offset=({offset_x:.4f}, {offset_y:.4f})")
                 apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
                                  mat, ppm, me)
 
