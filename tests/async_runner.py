@@ -182,6 +182,18 @@ def run_suite_async(suite, verbosity, on_complete):
             elif phase == "teardown":
                 _run_teardown(test)
                 state["index"] += 1
+                state["phase"] = "settle"
+                return DEFAULT_TICK
+
+            elif phase == "settle":
+                # Wait for Blender's icon preview background jobs to finish
+                # before starting the next test. These jobs hold pointers to
+                # material/image data blocks — if the next test's setup or
+                # the previous teardown's _purge_all freed those blocks while
+                # a preview job is still running, the job's endjob callback
+                # writes to freed memory (EXCEPTION_ACCESS_VIOLATION).
+                if bpy.app.is_job_running('RENDER_PREVIEW'):
+                    return 0.05  # Check again in 50ms
                 state["phase"] = "setup_class"
                 return DEFAULT_TICK
 

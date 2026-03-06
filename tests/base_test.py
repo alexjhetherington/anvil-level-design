@@ -1,6 +1,7 @@
 import os
 import unittest
 import bpy
+from mathutils import Quaternion, Vector
 
 from ..utils import LEVEL_DESIGN_WORKSPACE_NAME
 from ..workspace import create_level_design_workspace
@@ -26,6 +27,24 @@ def _redraw():
 
 def _purge_all():
     """Remove all user data from the blend file."""
+    from ..handlers import (
+        set_active_image, set_previous_image, face_data_cache,
+        on_depsgraph_update,
+    )
+
+    # Clear handler state that holds references to Blender data blocks
+    # before removing the data, preventing dangling pointer access.
+    set_active_image(None)
+    set_previous_image(None)
+    face_data_cache.clear()
+
+    # Temporarily remove the depsgraph handler during cleanup to prevent it
+    # from firing while objects/meshes are being deleted (which can cause
+    # access violations from accessing freed data).
+    handler_was_registered = on_depsgraph_update in bpy.app.handlers.depsgraph_update_post
+    if handler_was_registered:
+        bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
+
     # Switch to object mode if possible, so deletions don't fail
     window = _get_window()
     with bpy.context.temp_override(window=window):
@@ -37,6 +56,11 @@ def _purge_all():
     # Deselect and unlink all objects from every collection
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Force depsgraph to settle after object removal before removing data
+    # blocks. Without this, deferred depsgraph evaluation can access freed
+    # object/mesh data and cause access violations.
+    bpy.context.view_layer.update()
 
     # Purge orphan data blocks (meshes, materials, images, node groups, etc.)
     categories = [
@@ -70,6 +94,26 @@ def _purge_all():
     for s in list(bpy.data.scenes):
         if s != scene:
             bpy.data.scenes.remove(s)
+
+    # Force another depsgraph settle after all removals
+    bpy.context.view_layer.update()
+
+    # Reset state that tests may have changed: viewport orientation,
+    # mesh select mode, etc. Without this, tests that change these leak
+    # state into subsequent tests (e.g. face select mode from texture_apply
+    # breaks edge extrude in uv_extend).
+    bpy.context.tool_settings.mesh_select_mode = (True, False, False)
+    for area in window.screen.areas:
+        if area.type == 'VIEW_3D':
+            rv3d = area.spaces.active.region_3d
+            rv3d.view_rotation = Quaternion((0.8186, 0.4341, -0.1653, -0.3279))
+            rv3d.view_location = Vector((0.0, 0.0, 0.0))
+            rv3d.view_distance = 5.0
+            rv3d.view_perspective = 'PERSP'
+
+    # Re-register the depsgraph handler
+    if handler_was_registered:
+        bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
 
 
 def activate_level_design_workspace():
