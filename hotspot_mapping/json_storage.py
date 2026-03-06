@@ -33,8 +33,12 @@ def get_hotspots_filepath():
     return os.path.join(blend_dir, "hotspots.json")
 
 
+_file_not_found_cache = set()
+
+
 def invalidate_cache():
     """Clear scene property data, forcing next load to read from disk."""
+    _file_not_found_cache.clear()
     scene = bpy.context.scene
     if scene and hasattr(scene, 'hotspot_mapping_props'):
         scene.hotspot_mapping_props.hotspots_json = ""
@@ -68,8 +72,12 @@ def load_hotspots():
         debug_log("[Hotspots] Cannot load: blend file not saved")
         return _create_empty_data()
 
+    if filepath in _file_not_found_cache:
+        return _create_empty_data()
+
     if not os.path.exists(filepath):
         debug_log(f"[Hotspots] File not found: {filepath}")
+        _file_not_found_cache.add(filepath)
         return _create_empty_data()
 
     try:
@@ -112,6 +120,7 @@ def save_hotspots(data, sync_to_disk=True):
         return True  # Scene property was saved, file will sync later
 
     try:
+        _file_not_found_cache.discard(filepath)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         debug_log(f"[Hotspots] Saved to: {filepath}")

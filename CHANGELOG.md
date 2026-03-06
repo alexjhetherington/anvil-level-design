@@ -2,6 +2,7 @@
 
 ## 1.3.1
 - Change material matching strategy to name based (fixes crash related to material disambiguation)
+- Stop repeated checks for hotspot file if it doesn't exist
 
 ## 1.3.0
 - Handle MULTI-UV MAPS
