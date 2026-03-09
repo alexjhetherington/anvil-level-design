@@ -2,6 +2,7 @@ import bmesh
 import bpy
 from mathutils import Vector
 
+from ..utils import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override
 
@@ -66,3 +67,14 @@ class BevelTest(AnvilTestCase):
                 affect='EDGES',
             )
         yield 0.5
+
+        # 5. Verify all faces have scale (1, 1)
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv[0]
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        for face in bm.faces:
+            t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
+            self.assertAlmostEqual(t['scale_u'], 1.0, places=1,
+                                   msg=f"face {face.index} scale_u")
+            self.assertAlmostEqual(t['scale_v'], 1.0, places=1,
+                                   msg=f"face {face.index} scale_v")

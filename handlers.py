@@ -281,9 +281,12 @@ def _project_new_faces(context, bm):
 
     Uses a BFS approach to handle both new faces and existing faces displaced
     by topology operations (e.g. the original face pushed aside during extrude):
-    1. Seed from new faces (not in cache, not hotspot)
-    2. BFS expand through adjacency to cached faces with moved vertices
-    3. Project all affected faces using unchanged neighbors as UV source
+    1. Collect "displaced normals" from cached faces whose normals changed
+    2. Identify new faces, skipping those whose normals match a displaced normal
+       (these are extruded copies where Blender already set correct UVs)
+    3. Seed from new faces that border at least one cached face
+    4. BFS expand through adjacency to cached faces with moved vertices
+    5. Project all affected faces using unchanged neighbors as UV source
     """
     from .operators.texture_apply import set_uv_from_other_face
 
@@ -296,75 +299,85 @@ def _project_new_faces(context, bm):
     props = context.scene.level_design_props
     ppm = props.pixels_per_meter
 
-    # Identify new faces (not in cache) and displaced cached faces (vertices moved).
-    # Displaced faces have stale cache entries (e.g. Blender reassigned the face index
-    # to different geometry during extrude) and should not anchor new face seeding.
-    new_faces = set()
-    displaced_cached = set()
+    # Collect "displaced entries": cached faces whose normals have changed.
+    # Each entry stores the old normal and center so we can identify new faces
+    # that are extruded copies (same normal, different plane) vs bevel remnants
+    # (same normal, same plane / coplanar).
+    displaced_entries = []
     for f in bm.faces:
         if not f.is_valid:
             continue
-        if f.index not in face_data_cache:
-            if not face_has_hotspot_material(f, me):
+        cached = face_data_cache.get(f.index)
+        if not cached:
+            continue
+        cached_normal = cached.get('normal')
+        if cached_normal and (f.normal - cached_normal).length > 0.01:
+            displaced_entries.append({
+                'normal': cached_normal,
+                'center': cached.get('center'),
+            })
+
+    # Identify new faces, skipping extruded copies.
+    # A new face is an extruded copy if its normal matches a displaced normal
+    # AND it is NOT coplanar with the cached face (i.e. it's on a different,
+    # parallel plane — offset by the extrude distance).
+    # Coplanar faces (same normal, same plane) are bevel remnants and should
+    # be included for projection.
+    new_faces = set()
+    for f in bm.faces:
+        if f.is_valid and f.index not in face_data_cache and not face_has_hotspot_material(f, me):
+            skip = False
+            for entry in displaced_entries:
+                dn = entry['normal']
+                if (f.normal - dn).length < 0.01:
+                    # Normal matches — check coplanarity.
+                    # If the face center lies on the cached face's plane,
+                    # it's coplanar (bevel remnant). Otherwise it's an
+                    # extruded copy on a parallel plane.
+                    dc = entry['center']
+                    if dc is not None:
+                        dist = abs(dn.dot(f.calc_center_median() - dc))
+                        if dist > 0.001:
+                            skip = True
+                            break
+            if not skip:
                 new_faces.add(f)
-        else:
-            cached = face_data_cache[f.index]
-            cached_verts = cached['verts']
-            current_verts = [v.co for v in f.verts]
-            if len(current_verts) != len(cached_verts):
-                displaced_cached.add(f)
-            else:
-                for cv, cached_v in zip(current_verts, cached_verts):
-                    if (cv - cached_v).length > 0.0001:
-                        displaced_cached.add(f)
-                        break
 
     if not new_faces:
         return
 
-    # Seed: new faces that border at least one unchanged cached face.
-    # Interior new faces (surrounded entirely by other new faces or displaced
-    # faces) are left alone — Blender handles their UVs (e.g. extruded copies).
-    affected = set()
-    queue = []
+    # Seed: new faces that border at least one cached face.
+    seeds = set()
     for f in new_faces:
         for edge in f.edges:
-            has_unchanged_neighbor = False
             for neighbor in edge.link_faces:
-                if (neighbor not in new_faces
-                        and neighbor not in displaced_cached
-                        and neighbor.is_valid
-                        and neighbor.index in face_data_cache):
-                    has_unchanged_neighbor = True
+                if neighbor not in new_faces and neighbor.is_valid and neighbor.index in face_data_cache:
+                    seeds.add(f)
                     break
-            if has_unchanged_neighbor:
-                affected.add(f)
-                queue.append(f)
+            if f in seeds:
                 break
 
-    # Also seed displaced cached faces that border unchanged cached faces.
-    for f in displaced_cached:
-        for edge in f.edges:
-            has_unchanged_neighbor = False
-            for neighbor in edge.link_faces:
-                if (neighbor not in new_faces
-                        and neighbor not in displaced_cached
-                        and neighbor.is_valid
-                        and neighbor.index in face_data_cache):
-                    has_unchanged_neighbor = True
-                    break
-            if has_unchanged_neighbor:
-                affected.add(f)
-                queue.append(f)
-                break
-
-    if not queue:
+    if not seeds:
         return
 
+    # Flood-fill from seeds through adjacent new faces so that interior
+    # new faces (e.g. bevel segments not directly bordering cached faces)
+    # are also included for projection.
+    affected = set(seeds)
+    flood_queue = list(seeds)
+    while flood_queue:
+        current = flood_queue.pop(0)
+        for edge in current.edges:
+            for neighbor in edge.link_faces:
+                if neighbor in new_faces and neighbor not in affected:
+                    affected.add(neighbor)
+                    flood_queue.append(neighbor)
+
+    queue = list(affected)
+
     # BFS expand: from seed faces, find adjacent cached faces with moved vertices.
-    # Also mark all new faces and displaced faces as visited so they aren't
-    # traversed or used as sources.
-    visited = set(affected) | new_faces | displaced_cached
+    # Also mark all new faces as visited so they aren't traversed or used as sources.
+    visited = set(affected) | new_faces
     while queue:
         current = queue.pop(0)
         for edge in current.edges:
@@ -398,13 +411,11 @@ def _project_new_faces(context, bm):
                     queue.append(neighbor)
 
     # Project all affected faces using unchanged neighbors as source.
-    # Exclude new faces AND displaced cached faces from being sources — their
-    # UV data is unreliable (new faces have no prior data, displaced faces have
-    # stale cache entries from geometry that no longer matches).
+    # Only exclude new faces from being sources.
     # Skip zero-area faces — they can't be projected meaningfully (e.g. during
     # modal extrude, new faces start collapsed). They'll be handled later when
     # the modal moves them and they gain area (see _was_zero_area check in main loop).
-    excluded = new_faces | displaced_cached
+    excluded = new_faces
     projected_count = 0
     for face in affected:
         if face.calc_area() < 1e-8:
