@@ -32,19 +32,27 @@ from .backface_select.raycast import (
 )
 
 
-def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None):
+def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None,
+                            source_uv_layer=None, source_me=None, source_to_target=None):
     """Copy UV settings from source face to target face with proper rotation/offset handling.
 
     Args:
         source_face: BMesh face to copy UV settings from
         target_face: BMesh face to apply UV settings to
-        uv_layer: BMesh UV layer
+        uv_layer: BMesh UV layer (target face's layer)
         ppm: Pixels per meter setting
-        me: Mesh data (for bmesh.update_edit_mesh)
-        obj_matrix: Object world matrix (needed for parallel plane reference calculation)
+        me: Mesh data for target face
+        obj_matrix: Target object world matrix (for parallel plane reference calculation)
         bm: BMesh instance (optional, for cache_single_face per-layer caching)
+        source_uv_layer: UV layer for source face (cross-object only; defaults to uv_layer)
+        source_me: Mesh data for source face (cross-object only; defaults to me)
+        source_to_target: 4x4 matrix from source object space to target object space
     """
-    source_transform = derive_transform_from_uvs(source_face, uv_layer, ppm, me)
+    # ---- Cross-object: resolve source data references ----
+    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
+    src_me = source_me if source_me is not None else me
+
+    source_transform = derive_transform_from_uvs(source_face, src_uv, ppm, src_me)
     if not source_transform:
         return False
 
@@ -59,15 +67,28 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     source_offset_y = source_transform['offset_y']
 
     source_normal = source_face.normal.normalized()
-    target_normal = target_face.normal.normalized()
-
     source_axes = get_face_local_axes(source_face)
+
+    target_normal = target_face.normal.normalized()
     target_axes = get_face_local_axes(target_face)
     if not source_axes or not target_axes:
         return False
 
     source_u, source_v = source_axes
     target_u, target_v = target_axes
+
+    # Pre-read source vertex for offset calculation (no-shared-verts path)
+    source_loop_0 = list(source_face.loops)[0]
+    source_vert_co = source_loop_0.vert.co.copy()
+    source_vert_uv = source_loop_0[src_uv].uv.copy()
+
+    # ---- Cross-object: transform source geometry to target's local space ----
+    if source_to_target is not None:
+        rot = source_to_target.to_3x3()
+        source_normal = (rot @ source_normal).normalized()
+        source_u = (rot @ source_u).normalized()
+        source_v = (rot @ source_v).normalized()
+        source_vert_co = source_to_target @ source_vert_co
 
     # Compute reference axis for rotation calculation
     # For intersecting planes: use the intersection line
@@ -157,9 +178,8 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
             target_offset_y = normalize_offset(source_offset_y)
     else:
         # No shared vertices - project a source vertex onto target plane
-        source_loop = list(source_face.loops)[0]
-        source_vert_co = source_loop.vert.co
-        source_vert_uv = source_loop[uv_layer].uv.copy()
+        # (source_vert_co and source_vert_uv were pre-read above;
+        #  for cross-object, source_vert_co is already in target space)
 
         # Project source vertex onto target plane
         target_plane_point = list(target_face.loops)[0].vert.co
@@ -255,9 +275,31 @@ class apply_image_to_face(ModalPaintBase, Operator):
         mat = find_material_with_image(image)
         if mat is None:
             mat = create_material_with_image(image)
+        self._mat = mat
         if mat.name not in obj.data.materials:
             obj.data.materials.append(mat)
         self._mat_index = obj.data.materials.find(mat.name)
+
+        # ---- Cross-object: pre-build BVH trees for other visible meshes ----
+        self._other_objects_info = []
+        self._other_bmeshes = {}
+        self._paint_visited_other = set()
+        for other_obj in context.view_layer.objects:
+            if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
+                continue
+            other_me = other_obj.data
+            if other_me is None or len(other_me.polygons) == 0:
+                continue
+            bvh = BVHTree.FromPolygons(
+                [v.co for v in other_me.vertices],
+                [p.vertices for p in other_me.polygons]
+            )
+            self._other_objects_info.append({
+                'obj': other_obj,
+                'bvh': bvh,
+                'polygons': other_me.polygons,
+                'materials': other_me.materials,
+            })
 
         debug_log(f"[ApplyImage] invoke OK: source_face={self._source_face_index}, image={image.name}, mat={mat.name}")
         return self._invoke_paint(context, event)
@@ -267,6 +309,9 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
     def paint_begin(self, context, event):
         return True
+
+    def paint_cancel(self, context):
+        self._discard_other_bmeshes()
 
     def paint_sample(self, context, mouse_2d, region, rv3d):
         obj = self._paint_obj
@@ -281,6 +326,15 @@ class apply_image_to_face(ModalPaintBase, Operator):
             bm, me.materials, max_iterations=64
         )
 
+        # ---- Cross-object: check other objects for a closer hit ----
+        hit_other_obj, hit_other_face_index = self._raycast_other_objects(
+            mouse_2d, region, rv3d, face_index, distance
+        )
+        if hit_other_obj is not None:
+            self._apply_to_other_object(hit_other_obj, hit_other_face_index, bm, me)
+            return
+
+        # ---- Apply to active object ----
         if face_index is None:
             debug_log(f"[ApplyImage] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
             return
@@ -313,7 +367,108 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
         self._painted_face_indices.add(face_index)
 
+    # ---- Cross-object helper methods ----
+
+    def _raycast_other_objects(self, mouse_2d, region, rv3d, active_face_index, active_distance):
+        """Raycast other visible mesh objects. Returns (obj, face_index) if a closer hit found."""
+        if not self._other_objects_info:
+            return None, None
+
+        best_distance = active_distance if active_face_index is not None else float('inf')
+        best_obj = None
+        best_face_index = None
+
+        coord = (mouse_2d.x, mouse_2d.y)
+        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
+        for info in self._other_objects_info:
+            other_obj = info['obj']
+            matrix_inv = other_obj.matrix_world.inverted()
+            origin_other = matrix_inv @ ray_origin
+            dir_other = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+            loc, norm, fidx, dist = raycast_bvh_skip_backfaces_polys(
+                info['bvh'], origin_other, dir_other,
+                info['polygons'], info['materials'], max_iterations=64
+            )
+
+            if fidx is not None and dist < best_distance:
+                best_distance = dist
+                best_obj = other_obj
+                best_face_index = fidx
+
+        return best_obj, best_face_index
+
+    def _apply_to_other_object(self, other_obj, face_index, source_bm, source_me):
+        """Apply texture from source face to a face on another object."""
+        visit_key = (id(other_obj), face_index)
+        if visit_key in self._paint_visited_other:
+            return
+        self._paint_visited_other.add(visit_key)
+
+        other_me = other_obj.data
+        obj_id = id(other_obj)
+
+        # Get or create bmesh for this object
+        if obj_id not in self._other_bmeshes:
+            other_bm = bmesh.new()
+            other_bm.from_mesh(other_me)
+            self._other_bmeshes[obj_id] = {
+                'bm': other_bm,
+                'obj': other_obj,
+            }
+        other_data = self._other_bmeshes[obj_id]
+        other_bm = other_data['bm']
+        other_bm.faces.ensure_lookup_table()
+
+        # Ensure material exists on target object
+        if self._mat.name not in other_me.materials:
+            other_me.materials.append(self._mat)
+        other_mat_index = other_me.materials.find(self._mat.name)
+
+        target_face = other_bm.faces[face_index]
+        source_face = source_bm.faces[self._source_face_index]
+
+        target_face.material_index = other_mat_index
+
+        # Get UV layers for source and target
+        from ..utils import get_render_active_uv_layer
+        source_uv = get_render_active_uv_layer(source_bm, source_me)
+        if source_uv is None:
+            source_uv = source_bm.loops.layers.uv.verify()
+        target_uv = other_bm.loops.layers.uv.verify()
+
+        source_to_target = other_obj.matrix_world.inverted() @ self._paint_obj.matrix_world
+
+        set_uv_from_other_face(
+            source_face, target_face, target_uv,
+            self._ppm, other_me, other_obj.matrix_world,
+            source_uv_layer=source_uv, source_me=source_me,
+            source_to_target=source_to_target,
+        )
+
+        debug_log(f"[ApplyImage] cross-object hit: {other_obj.name} face {face_index}")
+
+    def _flush_other_bmeshes(self):
+        """Write back and free all cross-object bmeshes."""
+        for data in self._other_bmeshes.values():
+            data['bm'].to_mesh(data['obj'].data)
+            data['bm'].free()
+        self._other_bmeshes.clear()
+
+    def _discard_other_bmeshes(self):
+        """Free all cross-object bmeshes without writing back."""
+        for data in self._other_bmeshes.values():
+            data['bm'].free()
+        self._other_bmeshes.clear()
+
+    # ---- End cross-object helper methods ----
+
     def paint_finish(self, context):
+        # Flush cross-object changes
+        self._flush_other_bmeshes()
+
         if not self._painted_face_indices:
             return
 

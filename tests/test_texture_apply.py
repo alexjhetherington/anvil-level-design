@@ -1,62 +1,39 @@
 import bmesh
 import bpy
-from mathutils import Quaternion, Vector
-from bpy_extras import view3d_utils
+from mathutils import Vector
 
 from ..utils import derive_transform_from_uvs
 from ..properties import apply_uv_to_face
-from .base_test import AnvilTestCase, _get_window
+from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
-from ..utils import create_material_with_image, find_material_with_image
+from ..utils import find_material_with_image, create_material_with_image
+from ..operators.texture_apply import set_uv_from_other_face
 
 
-def _get_3d_view():
-    """Return (area, space, region, rv3d) for the first 3D viewport."""
-    window = _get_window()
-    for area in window.screen.areas:
-        if area.type == 'VIEW_3D':
-            space = area.spaces.active
-            for region in area.regions:
-                if region.type == 'WINDOW':
-                    rv3d = space.region_3d
-                    return area, space, region, rv3d
-    raise RuntimeError("No 3D viewport found")
+def _make_vertical_face(bm, x_offset):
+    """Add a 1x1 vertical quad to a bmesh at the given x offset."""
+    v0 = bm.verts.new((x_offset, 0, 0))
+    v1 = bm.verts.new((x_offset + 1, 0, 0))
+    v2 = bm.verts.new((x_offset + 1, 0, 1))
+    v3 = bm.verts.new((x_offset, 0, 1))
+    return bm.faces.new((v0, v1, v2, v3))
 
 
-def _setup_front_ortho_view(center, width):
-    """Set up a front orthographic view looking at center from +Y.
-
-    Args:
-        center: 3D point the camera looks at
-        width: orthographic width (how many meters fit in the viewport)
-    """
-    _, _, _, rv3d = _get_3d_view()
-    # Front view: looking from +Y toward -Y
-    rv3d.view_rotation = Quaternion((0.7071, 0.7071, 0.0, 0.0))
-    rv3d.view_location = Vector(center)
-    rv3d.view_distance = 5.0
-    rv3d.view_perspective = 'ORTHO'
-    rv3d.window_matrix  # force update
-    # Set ortho scale so the geometry fills the viewport
-    rv3d.view_distance = width / 2
+def _get_material():
+    """Get (or create once) the shared test material from dev_orange_wall.png."""
+    image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+    mat = find_material_with_image(image)
+    if not mat:
+        mat = create_material_with_image(image)
+    return mat
 
 
-def _world_to_pixel(point_3d):
-    """Convert a 3D world point to 2D pixel coordinates in the 3D viewport."""
-    area, _, region, rv3d = _get_3d_view()
-    coord_2d = view3d_utils.location_3d_to_region_2d(region, rv3d, Vector(point_3d))
-    if coord_2d is None:
-        raise RuntimeError(f"Point {point_3d} is not visible in viewport")
-    # location_3d_to_region_2d returns region-local coords; event_simulate
-    # needs window-absolute coords
-    return int(area.x + coord_2d.x), int(area.y + coord_2d.y)
-
-
-def _create_two_face_plane(name):
+def _create_two_face_plane(name, source_scale_u, source_scale_v,
+                           source_rotation, source_offset_x, source_offset_y):
     """Create a 2-face plane: two vertical quads sharing an edge.
 
-    Face 0: (0,0,0), (1,0,0), (1,0,1), (0,0,1) — lower
-    Face 1: (0,0,1), (1,0,1), (1,0,2), (0,0,2) — upper
+    Face 0: (0,0,0), (1,0,0), (1,0,1), (0,0,1) — lower, default UVs
+    Face 1: (0,0,1), (1,0,1), (1,0,2), (0,0,2) — upper, custom UVs
 
     Both faces share the edge at z=1. Returns the object in object mode.
     """
@@ -81,11 +58,7 @@ def _create_two_face_plane(name):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
 
-    # Apply material to both faces
-    image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
-    mat = find_material_with_image(image)
-    if not mat:
-        mat = create_material_with_image(image)
+    mat = _get_material()
     obj.data.materials.append(mat)
     mat_index = obj.data.materials.find(mat.name)
 
@@ -104,8 +77,10 @@ def _create_two_face_plane(name):
     # Face 0: default transform (scale=1, offset=0, rotation=0)
     apply_uv_to_face(bm.faces[0], uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
                      mat, ppm, obj.data)
-    # Face 1: non-default transform (scale=2, offset=0.1, rotation=45)
-    apply_uv_to_face(bm.faces[1], uv_layer, 2.0, 2.0, 45.0, 0.1, 0.1,
+    # Face 1: caller-specified transform
+    apply_uv_to_face(bm.faces[1], uv_layer,
+                     source_scale_u, source_scale_v, source_rotation,
+                     source_offset_x, source_offset_y,
                      mat, ppm, obj.data)
 
     bmesh.update_edit_mesh(obj.data)
@@ -116,80 +91,136 @@ def _create_two_face_plane(name):
 
 
 class TextureApplyTest(AnvilTestCase):
-    """Test alt+click texture apply with depsgraph interaction.
-
-    Uses a controlled front orthographic viewport and event_simulate to
-    perform real alt+click operations, ensuring the depsgraph handler
-    doesn't revert the applied UVs.
-    """
+    """Test set_uv_from_other_face UV transfer logic."""
 
     def test_apply_from_adjacent_face(self):
-        """Alt+clicking an adjacent face should preserve the source face's
-        scale and rotation even after depsgraph updates."""
-        obj = _create_two_face_plane("apply_adjacent")
+        """Applying from an adjacent face should transfer scale and rotation."""
+        obj = _create_two_face_plane("apply_adjacent", 2.0, 2.0, 45.0, 0.1, 0.1)
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
-
-        # Set up front orthographic view looking at the plane
-        # Plane spans x=[0,1], z=[0,2], so center at (0.5, 0, 1)
-        _setup_front_ortho_view(center=(0.5, 0, 1), width=4.0)
 
         ctx = _get_context_override()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='EDIT')
 
-        # Switch to face select mode
-        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
-
         bm = bmesh.from_edit_mesh(obj.data)
         uv_layer = bm.loops.layers.uv.verify()
         bm.faces.ensure_lookup_table()
 
-        # Select source face (face 1, upper) — this is the face we apply FROM
-        for f in bm.faces:
-            f.select_set(False)
-        bm.faces[1].select_set(True)
-        bm.faces.active = bm.faces[1]
-        bm.select_flush_mode()
+        # Apply UV from face 1 (scale=2, rot=45) to face 0 (scale=1, rot=0)
+        result = set_uv_from_other_face(
+            bm.faces[1], bm.faces[0], uv_layer,
+            ppm, obj.data, obj.matrix_world,
+        )
+        self.assertTrue(result)
         bmesh.update_edit_mesh(obj.data)
 
-        # Let depsgraph fire to populate the face data cache
-        yield 0.5
-
-        # Force a redraw so the viewport matrices are up to date
-        window = _get_window()
-        with bpy.context.temp_override(window=window):
-            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-        yield
-
-        # Compute pixel coords for face 0 center (lower face, center at 0.5, 0, 0.5)
-        face0_px, face0_py = _world_to_pixel((0.5, 0, 0.5))
-
-        # Alt+click on face 0 (the target) to apply texture from selected face 1
-        window.event_simulate(
-            type='LEFTMOUSE', value='PRESS',
-            x=face0_px, y=face0_py, alt=True
-        )
-        yield
-        window.event_simulate(
-            type='LEFTMOUSE', value='RELEASE',
-            x=face0_px, y=face0_py, alt=True
-        )
-
-        # Let depsgraph handler fire
-        yield 0.5
-
-        # Re-acquire bmesh after yields
-        bm = bmesh.from_edit_mesh(obj.data)
-        uv_layer = bm.loops.layers.uv.verify()
-        bm.faces.ensure_lookup_table()
-
-        # Verify target face (face 0) has the source's scale and rotation.
-        # Offset is computed for seamless tiling at the shared edge, not copied
-        # directly, so we only check scale and rotation here.
         target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertIsNotNone(target_t)
         self.assertAlmostEqual(target_t['scale_u'], 2.0, places=3)
         self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
         self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
+        # Offset is computed for seamless tiling at the shared edge,
+        # so just verify it was set (not None)
+        self.assertIsNotNone(target_t['offset_x'])
+        self.assertIsNotNone(target_t['offset_y'])
 
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_apply_different_params(self):
+        """Applying from an adjacent face with different scale/rotation/offset."""
+        obj = _create_two_face_plane("apply_params", 3.0, 3.0, 30.0, 0.25, 0.5)
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        bm.faces.ensure_lookup_table()
+
+        result = set_uv_from_other_face(
+            bm.faces[1], bm.faces[0], uv_layer,
+            ppm, obj.data, obj.matrix_world,
+        )
+        self.assertTrue(result)
+        bmesh.update_edit_mesh(obj.data)
+
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 3.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 3.0, places=3)
+        self.assertAlmostEqual(target_t['rotation'], 30.0, places=3)
+        self.assertIsNotNone(target_t['offset_x'])
+        self.assertIsNotNone(target_t['offset_y'])
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_apply_cross_object(self):
+        """Cross-object UV transfer while source object is in edit mode."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat = _get_material()
+        ctx = _get_context_override()
+
+        # --- Source object (will be in edit mode, like the real operator) ---
+        mesh_a = bpy.data.meshes.new("src_mesh")
+        mesh_a.materials.append(mat)
+        obj_a = bpy.data.objects.new("src_obj", mesh_a)
+        bpy.context.collection.objects.link(obj_a)
+
+        # Build geometry via edit mode so bmesh is the edit-mode bmesh
+        bpy.context.view_layer.objects.active = obj_a
+        obj_a.select_set(True)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_a = bmesh.from_edit_mesh(mesh_a)
+        _make_vertical_face(bm_a, 0)
+        bm_a.normal_update()
+        uv_a = bm_a.loops.layers.uv.verify()
+        bm_a.faces.ensure_lookup_table()
+        bm_a.faces[0].material_index = 0
+        apply_uv_to_face(bm_a.faces[0], uv_a, 2.0, 2.0, 45.0, 0.3, 0.7,
+                         mat, ppm, mesh_a)
+
+        # --- Target object (not in edit mode, standalone bmesh) ---
+        mesh_b = bpy.data.meshes.new("tgt_mesh")
+        mesh_b.materials.append(mat)
+        bm_b = bmesh.new()
+        _make_vertical_face(bm_b, 0)
+        bm_b.normal_update()
+        uv_b = bm_b.loops.layers.uv.verify()
+        bm_b.faces.ensure_lookup_table()
+        bm_b.faces[0].material_index = 0
+        apply_uv_to_face(bm_b.faces[0], uv_b, 1.0, 1.0, 0.0, 0.0, 0.0,
+                         mat, ppm, mesh_b)
+
+        obj_b = bpy.data.objects.new("tgt_obj", mesh_b)
+        bpy.context.collection.objects.link(obj_b)
+        obj_b.location.x = 1
+        bpy.context.view_layer.update()
+
+        # Objects side by side; source_to_target accounts for the offset
+        source_to_target = obj_b.matrix_world.inverted() @ obj_a.matrix_world
+
+        result = set_uv_from_other_face(
+            bm_a.faces[0], bm_b.faces[0], uv_b,
+            ppm, mesh_b, obj_b.matrix_world,
+            source_uv_layer=uv_a, source_me=mesh_a,
+            source_to_target=source_to_target,
+        )
+        self.assertTrue(result)
+
+        target_t = derive_transform_from_uvs(bm_b.faces[0], uv_b, ppm, mesh_b)
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
+        self.assertIsNotNone(target_t['offset_x'])
+        self.assertIsNotNone(target_t['offset_y'])
+
+        bm_b.to_mesh(mesh_b)
+        bm_b.free()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')

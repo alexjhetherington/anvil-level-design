@@ -125,7 +125,7 @@ def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, o
         loop[uv_layer].uv.x = u + offset_x
         loop[uv_layer].uv.y = v + offset_y
 
-    if bpy.context.mode == 'EDIT_MESH':
+    if me.is_editmode:
         bmesh.update_edit_mesh(me)
 
 
