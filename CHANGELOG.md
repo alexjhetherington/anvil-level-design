@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 ## 1.3.2
+- Finishing a cube cut switches to edge select and leaves boundary edges selected
 - Vertex loop select works through culled backfaces
 - Front face near edge selection improved
 

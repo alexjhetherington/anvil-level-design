@@ -128,6 +128,29 @@ class CubeCutTest(AnvilTestCase):
                 t2['offset_y'], off2_y, places=2,
                 msg=f"Face {key} L2 offset_y={t2['offset_y']}")
 
+        # Verify edge select mode after cube cut
+        self.assertEqual(
+            list(bpy.context.tool_settings.mesh_select_mode),
+            [False, True, False],
+            "Cube cut should finish in edge select mode"
+        )
+
+        # Verify only cut boundary edges are selected
+        selected_edges = [e for e in bm.edges if e.select]
+        # Through-hole cut creates 2 rectangular openings (front and back),
+        # each with 4 boundary edges = 8 total
+        self.assertEqual(len(selected_edges), 8,
+                         f"Should have 8 boundary edges selected (4 per opening), got {len(selected_edges)}")
+
+        # All selected edges should have exactly 1 linked face (they're on the open boundary)
+        for e in selected_edges:
+            self.assertEqual(len(e.link_faces), 1,
+                             f"Boundary edge should have exactly 1 linked face, got {len(e.link_faces)}")
+
+        # No faces should be selected
+        selected_faces = [f for f in bm.faces if f.select]
+        self.assertEqual(len(selected_faces), 0, "No faces should be selected after cube cut")
+
         bmesh.update_edit_mesh(obj.data)
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')

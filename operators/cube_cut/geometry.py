@@ -125,6 +125,10 @@ class CuboidPlanes:
             self.depth_min + EPSILON < z < self.depth_max - EPSILON
         )
 
+    def point_on_surface(self, point):
+        """Test if a point is on the cuboid surface (on boundary, not strictly inside)."""
+        return self.point_inside(point) and not self.point_strictly_inside(point)
+
     def to_local(self, point):
         """Convert point to local cuboid coordinates (x, y, z)."""
         offset = point - self.origin
@@ -591,7 +595,32 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     # Recalculate normals for newly created faces
     bm.normal_update()
 
+    # === STEP 8: Select cut boundary edges ===
+    # Switch to edge select mode and select only edges on the cut boundary
+    # (edges with exactly 1 linked face where both vertices lie on the cuboid surface)
+    bm.select_mode = {'EDGE'}
+    for v in bm.verts:
+        v.select = False
+    for e in bm.edges:
+        e.select = False
+    for f in bm.faces:
+        f.select = False
+
+    boundary_count = 0
+    for e in bm.edges:
+        if not e.is_valid:
+            continue
+        if len(e.link_faces) == 1 and cuboid.point_on_surface(e.verts[0].co) and cuboid.point_on_surface(e.verts[1].co):
+            e.select = True
+            boundary_count += 1
+
+    bm.select_flush_mode()
+    debug_log(f"[CubeCut] Selected {boundary_count} cut boundary edges")
+
     bmesh.update_edit_mesh(me)
+
+    # Set Blender's mesh select mode to edge
+    context.tool_settings.mesh_select_mode = (False, True, False)
 
     # Cache faces so the depsgraph handler doesn't overwrite our UVs
     cache_face_data(context)
