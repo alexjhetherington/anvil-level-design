@@ -2,6 +2,7 @@ import bmesh
 import bpy
 from mathutils import Vector
 
+from ..properties import apply_uv_to_face
 from ..utils import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, create_textured_cube, add_uv_layer, _get_context_override
@@ -202,11 +203,33 @@ class UVExtendKeyboardTest(_UVExtendBase):
 
     def test_cube_extrude_preserves_scale(self):
         obj = _setup_cube_and_select_top_face("kb_cube_extrude", 2.0, 2.0)
+
+        # Re-UV the selected top face to scale 3.0 on layer 0
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer_0 = bm.loops.layers.uv[0]
+        mat = obj.data.materials[0]
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        for f in bm.faces:
+            if f.normal.z > 0.9:
+                apply_uv_to_face(f, uv_layer_0, 3.0, 3.0, 0.0, 0.0, 0.0,
+                                 mat, ppm, obj.data)
+                break
+        bmesh.update_edit_mesh(obj.data)
+
         yield from self.simulate_extrude(value=1)
+
         transforms = _read_all_face_transforms(obj, 0)
-        for t in transforms:
-            self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
-            self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
+        scale_3 = [t for t in transforms
+                   if abs(t['scale_u'] - 3.0) < 0.001
+                   and abs(t['scale_v'] - 3.0) < 0.001]
+        scale_2 = [t for t in transforms
+                   if abs(t['scale_u'] - 2.0) < 0.001
+                   and abs(t['scale_v'] - 2.0) < 0.001]
+        self.assertEqual(len(scale_3), 1,
+                         "Expected exactly one face at scale 3.0")
+        self.assertEqual(len(scale_2), len(transforms) - 1,
+                         "Expected all other faces at scale 2.0")
+
         transforms2 = _read_all_face_transforms(obj, 1)
         for t in transforms2:
             self.assertAlmostEqual(t['scale_u'], 0.5, places=3)
@@ -294,11 +317,33 @@ class UVExtendToolTest(_UVExtendBase):
 
     def test_cube_extrude_preserves_scale(self):
         obj = _setup_cube_and_select_top_face("tool_cube_extrude", 2.0, 2.0)
+
+        # Re-UV the selected top face to scale 3.0 on layer 0
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer_0 = bm.loops.layers.uv[0]
+        mat = obj.data.materials[0]
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        for f in bm.faces:
+            if f.normal.z > 0.9:
+                apply_uv_to_face(f, uv_layer_0, 3.0, 3.0, 0.0, 0.0, 0.0,
+                                 mat, ppm, obj.data)
+                break
+        bmesh.update_edit_mesh(obj.data)
+
         yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
+
         transforms = _read_all_face_transforms(obj, 0)
-        for t in transforms:
-            self.assertAlmostEqual(t['scale_u'], 2.0, places=3)
-            self.assertAlmostEqual(t['scale_v'], 2.0, places=3)
+        scale_3 = [t for t in transforms
+                   if abs(t['scale_u'] - 3.0) < 0.001
+                   and abs(t['scale_v'] - 3.0) < 0.001]
+        scale_2 = [t for t in transforms
+                   if abs(t['scale_u'] - 2.0) < 0.001
+                   and abs(t['scale_v'] - 2.0) < 0.001]
+        self.assertEqual(len(scale_3), 1,
+                         "Expected exactly one face at scale 3.0")
+        self.assertEqual(len(scale_2), len(transforms) - 1,
+                         "Expected all other faces at scale 2.0")
+
         transforms2 = _read_all_face_transforms(obj, 1)
         for t in transforms2:
             self.assertAlmostEqual(t['scale_u'], 0.5, places=3)
