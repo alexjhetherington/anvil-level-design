@@ -2,6 +2,7 @@
 
 ## 1.3.2
 - Vertex loop select works through culled backfaces
+- Front face near edge selection improved
 
 ## 1.3.1
 - Change material matching strategy to name based (fixes crash related to material disambiguation)

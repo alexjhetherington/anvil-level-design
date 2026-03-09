@@ -125,14 +125,17 @@ def _is_culled_backface(face, ray_direction_local, materials):
             and has_backface_culling_enabled(face.material_index, materials))
 
 
-def _collect_fan_culled_faces(bvh, bm, materials, region, rv3d, obj_matrix,
-                               mouse_2d, max_iterations):
-    """Cast fan rays around the cursor to find nearby culled backfaces.
+def _collect_fan_faces(bvh, bm, materials, region, rv3d, obj_matrix,
+                       mouse_2d, max_iterations):
+    """Cast fan rays around the cursor to find nearby faces.
 
-    Returns a set of face indices for culled backfaces hit by the fan rays
-    (but not by the center ray — those are handled by the main loop).
+    Returns (culled_faces, front_faces) — two sets of face indices hit by
+    fan rays. Culled backfaces are walked through; the first front face on
+    each ray is also collected so edges/verts near the cursor but off the
+    face can still be picked.
     """
     culled_faces = set()
+    front_faces = set()
     epsilon = 0.0001
     matrix_inv = obj_matrix.inverted()
     rot_inv = matrix_inv.to_3x3()
@@ -149,7 +152,7 @@ def _collect_fan_culled_faces(bvh, bm, materials, region, rv3d, obj_matrix,
         origin_local = matrix_inv @ fan_origin
         dir_local = (rot_inv @ fan_view).normalized()
 
-        # Walk through hits on this fan ray, collecting culled faces
+        # Walk through hits on this fan ray
         origin = origin_local.copy()
         for _ in range(max_iterations):
             location, normal, face_index, distance = bvh.ray_cast(origin, dir_local)
@@ -161,24 +164,25 @@ def _collect_fan_culled_faces(bvh, bm, materials, region, rv3d, obj_matrix,
                 culled_faces.add(face_index)
                 origin = origin + dir_local * (distance + epsilon)
                 continue
-            # Hit a front face, stop this fan ray
+            # Front face — collect it, then stop this fan ray
+            front_faces.add(face_index)
             break
 
-    return culled_faces
+    return culled_faces, front_faces
 
 
 def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
                             bm, materials, region, rv3d, obj_matrix, mouse_2d,
                             is_edge_mode, max_iterations):
-    """Raycast that skips culled backfaces but catches nearby edges/verts on them.
+    """Raycast that skips culled backfaces but catches nearby edges/verts.
 
     First casts the center ray, checking culled faces along the way. Then casts
-    fan rays around the cursor to find culled faces the center ray missed (e.g.
-    when the cursor is just past the edge of a culled face). The best element
-    across all discovered culled faces is selected if within screen threshold.
+    fan rays around the cursor to find faces the center ray missed (e.g. when
+    the cursor is just past the edge of a face). The best element across all
+    discovered faces is selected if within screen threshold.
 
     Returns (face, location, element) where element is the nearby BMEdge/BMVert
-    found on a culled face, or None if the final hit was a front face.
+    found on a nearby face, or None if the final hit was a front face.
     """
     origin = ray_origin_local.copy()
     epsilon = 0.0001
@@ -223,15 +227,17 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
         front_location = location
         break
 
-    # Phase 2: fan rays — find culled faces the center ray missed
-    fan_culled = _collect_fan_culled_faces(
+    # Phase 2: fan rays — find faces the center ray missed
+    fan_culled, fan_front = _collect_fan_faces(
         bvh, bm, materials, region, rv3d, obj_matrix,
         mouse_2d, max_iterations=8
     )
-    # Only check faces not already seen by the center ray
-    new_culled = fan_culled - center_culled_faces
+    # Combine new culled and front faces not already handled by center ray
+    new_faces = (fan_culled - center_culled_faces) | fan_front
+    if front_face is not None:
+        new_faces.discard(front_face.index)
 
-    for face_index in new_culled:
+    for face_index in new_faces:
         face = bm.faces[face_index]
         elem, screen_dist = _check_culled_face_element(
             face, is_edge_mode, region, rv3d, obj_matrix, mouse_2d
@@ -241,7 +247,7 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
             best_culled_elem = elem
             best_culled_face = face
 
-    # Decide: use culled element if within threshold, otherwise front face
+    # Decide: use nearby element if within threshold, otherwise front face
     if best_culled_elem is not None and best_culled_dist <= _PICK_THRESHOLD_PX:
         return best_culled_face, None, best_culled_elem
 
