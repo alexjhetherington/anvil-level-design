@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.3.3
+- Fix incorrect UV on extruded face when using the extrusion tool
+
 ## 1.3.2
 - Alt left click works across objects
 - Finishing a cube cut switches to edge select and leaves boundary edges selected

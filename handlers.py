@@ -296,25 +296,61 @@ def _project_new_faces(context, bm):
     props = context.scene.level_design_props
     ppm = props.pixels_per_meter
 
-    # Seed: new faces that border at least one cached face (changed or unchanged).
-    # Interior new faces (surrounded entirely by other new faces) are left alone —
-    # we haven't found a case where interior faces need our projection (Blender handles
-    # extruded copies, subdivide interiors, etc.), but there may be one we haven't considered.
+    # Identify new faces (not in cache) and displaced cached faces (vertices moved).
+    # Displaced faces have stale cache entries (e.g. Blender reassigned the face index
+    # to different geometry during extrude) and should not anchor new face seeding.
     new_faces = set()
+    displaced_cached = set()
     for f in bm.faces:
-        if f.is_valid and f.index not in face_data_cache and not face_has_hotspot_material(f, me):
-            new_faces.add(f)
+        if not f.is_valid:
+            continue
+        if f.index not in face_data_cache:
+            if not face_has_hotspot_material(f, me):
+                new_faces.add(f)
+        else:
+            cached = face_data_cache[f.index]
+            cached_verts = cached['verts']
+            current_verts = [v.co for v in f.verts]
+            if len(current_verts) != len(cached_verts):
+                displaced_cached.add(f)
+            else:
+                for cv, cached_v in zip(current_verts, cached_verts):
+                    if (cv - cached_v).length > 0.0001:
+                        displaced_cached.add(f)
+                        break
 
     if not new_faces:
         return
 
+    # Seed: new faces that border at least one unchanged cached face.
+    # Interior new faces (surrounded entirely by other new faces or displaced
+    # faces) are left alone — Blender handles their UVs (e.g. extruded copies).
     affected = set()
     queue = []
     for f in new_faces:
         for edge in f.edges:
             has_unchanged_neighbor = False
             for neighbor in edge.link_faces:
-                if neighbor not in new_faces and neighbor.is_valid and neighbor.index in face_data_cache:
+                if (neighbor not in new_faces
+                        and neighbor not in displaced_cached
+                        and neighbor.is_valid
+                        and neighbor.index in face_data_cache):
+                    has_unchanged_neighbor = True
+                    break
+            if has_unchanged_neighbor:
+                affected.add(f)
+                queue.append(f)
+                break
+
+    # Also seed displaced cached faces that border unchanged cached faces.
+    for f in displaced_cached:
+        for edge in f.edges:
+            has_unchanged_neighbor = False
+            for neighbor in edge.link_faces:
+                if (neighbor not in new_faces
+                        and neighbor not in displaced_cached
+                        and neighbor.is_valid
+                        and neighbor.index in face_data_cache):
                     has_unchanged_neighbor = True
                     break
             if has_unchanged_neighbor:
@@ -326,8 +362,9 @@ def _project_new_faces(context, bm):
         return
 
     # BFS expand: from seed faces, find adjacent cached faces with moved vertices.
-    # Also mark all new faces as visited so they aren't traversed or used as sources.
-    visited = set(affected) | new_faces
+    # Also mark all new faces and displaced faces as visited so they aren't
+    # traversed or used as sources.
+    visited = set(affected) | new_faces | displaced_cached
     while queue:
         current = queue.pop(0)
         for edge in current.edges:
@@ -361,12 +398,13 @@ def _project_new_faces(context, bm):
                     queue.append(neighbor)
 
     # Project all affected faces using unchanged neighbors as source.
-    # Only exclude new faces from being sources — BFS-expanded cached faces
-    # still have valid UV transforms (just moved vertices) and can serve as sources.
+    # Exclude new faces AND displaced cached faces from being sources — their
+    # UV data is unreliable (new faces have no prior data, displaced faces have
+    # stale cache entries from geometry that no longer matches).
     # Skip zero-area faces — they can't be projected meaningfully (e.g. during
     # modal extrude, new faces start collapsed). They'll be handled later when
     # the modal moves them and they gain area (see _was_zero_area check in main loop).
-    excluded = new_faces
+    excluded = new_faces | displaced_cached
     projected_count = 0
     for face in affected:
         if face.calc_area() < 1e-8:
