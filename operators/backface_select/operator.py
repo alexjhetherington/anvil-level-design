@@ -435,15 +435,13 @@ class LEVELDESIGN_OT_backface_select(Operator):
 
         # Alt+click: loop select
         if self.loop:
-            if is_vert_mode:
-                # No loop select in vertex mode — pass through to Blender default
-                return {'PASS_THROUGH'}
-
             # Determine the target edge for loop select
             if culled_element is not None:
                 if is_edge_mode:
                     loop_edge = culled_element
                 else:
+                    # For face/vert mode, culled_element isn't an edge —
+                    # find the nearest edge on the face instead
                     loop_edge, _ = _screen_nearest_edge_on_face(
                         face, region, rv3d, obj.matrix_world, mouse_2d
                     )

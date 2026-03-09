@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.3.2
+- Vertex loop select works through culled backfaces
+
 ## 1.3.1
 - Change material matching strategy to name based (fixes crash related to material disambiguation)
 - Stop repeated checks for hotspot file if it doesn't exist
