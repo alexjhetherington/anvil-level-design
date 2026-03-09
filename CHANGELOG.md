@@ -3,7 +3,6 @@
 ## 1.3.2
 - Alt left click works across objects
 - Finishing a cube cut switches to edge select and leaves boundary edges selected
-- Alt click apply texture works across objects
 - Vertex loop select works through culled backfaces
 - Front face near edge selection improved
 
