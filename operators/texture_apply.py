@@ -32,63 +32,37 @@ from .backface_select.raycast import (
 )
 
 
-def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None,
-                            source_uv_layer=None, source_me=None, source_to_target=None):
-    """Copy UV settings from source face to target face with proper rotation/offset handling.
+def set_uv_from_source_params(target_face, uv_layer, ppm, me, obj_matrix,
+                              scale_u, scale_v, source_rotation,
+                              source_normal, source_u, source_v,
+                              ref_point_co, ref_point_uv,
+                              bm=None):
+    """Apply UV to target_face using explicit source transform parameters.
+
+    Instead of reading from a live source BMFace, this accepts the source's
+    derived transform, axes, and a reference point (position + UV) to compute
+    the correct rotation and offset for the target face.
 
     Args:
-        source_face: BMesh face to copy UV settings from
-        target_face: BMesh face to apply UV settings to
-        uv_layer: BMesh UV layer (target face's layer)
+        target_face: BMesh face to apply UVs to
+        uv_layer: BMesh UV layer
         ppm: Pixels per meter setting
         me: Mesh data for target face
-        obj_matrix: Target object world matrix (for parallel plane reference calculation)
+        obj_matrix: Target object world matrix (for parallel plane reference)
+        scale_u, scale_v: Source texture scale factors
+        source_rotation: Source rotation in degrees
+        source_normal: Source face normal (Vector, already in target space)
+        source_u, source_v: Source face local axes (Vectors, already in target space)
+        ref_point_co: 3D position of a reference point (already in target space)
+        ref_point_uv: UV coordinates of that reference point (Vector2D)
         bm: BMesh instance (optional, for cache_single_face per-layer caching)
-        source_uv_layer: UV layer for source face (cross-object only; defaults to uv_layer)
-        source_me: Mesh data for source face (cross-object only; defaults to me)
-        source_to_target: 4x4 matrix from source object space to target object space
     """
-    # ---- Cross-object: resolve source data references ----
-    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
-    src_me = source_me if source_me is not None else me
-
-    source_transform = derive_transform_from_uvs(source_face, src_uv, ppm, src_me)
-    if not source_transform:
-        return False
-
-    scale_u = source_transform['scale_u']
-    scale_v = source_transform['scale_v']
-
-    # Zero scale means source has collapsed/zero-area UVs — can't derive settings
-    if abs(scale_u) < 1e-8 or abs(scale_v) < 1e-8:
-        return False
-    source_rotation = source_transform['rotation']
-    source_offset_x = source_transform['offset_x']
-    source_offset_y = source_transform['offset_y']
-
-    source_normal = source_face.normal.normalized()
-    source_axes = get_face_local_axes(source_face)
-
     target_normal = target_face.normal.normalized()
     target_axes = get_face_local_axes(target_face)
-    if not source_axes or not target_axes:
+    if not target_axes:
         return False
 
-    source_u, source_v = source_axes
     target_u, target_v = target_axes
-
-    # Pre-read source vertex for offset calculation (no-shared-verts path)
-    source_loop_0 = list(source_face.loops)[0]
-    source_vert_co = source_loop_0.vert.co.copy()
-    source_vert_uv = source_loop_0[src_uv].uv.copy()
-
-    # ---- Cross-object: transform source geometry to target's local space ----
-    if source_to_target is not None:
-        rot = source_to_target.to_3x3()
-        source_normal = (rot @ source_normal).normalized()
-        source_u = (rot @ source_u).normalized()
-        source_v = (rot @ source_v).normalized()
-        source_vert_co = source_to_target @ source_vert_co
 
     # Compute reference axis for rotation calculation
     # For intersecting planes: use the intersection line
@@ -120,7 +94,6 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     texture_angle_from_ref = angle_ref_to_source_u - math.radians(source_rotation)
 
     # For anti-parallel faces (opposite normals), mirror the rotation
-    # This makes the texture "decline" on the back face if it "inclines" on the front
     if source_normal.dot(target_normal) < -0.9999:
         texture_angle_from_ref = -texture_angle_from_ref + math.radians(180)
 
@@ -133,82 +106,33 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     if source_handedness * target_handedness < 0:
         target_rotation += 180
 
-    # Handle offset based on shared vertices
-    source_verts = set(source_face.verts)
-    target_verts = set(target_face.verts)
-    shared_verts = source_verts & target_verts
+    # Compute offset: project the reference point onto the target face and
+    # figure out what offset is needed to match its known UV.
+    target_plane_point = list(target_face.loops)[0].vert.co
+    dist_to_plane = (ref_point_co - target_plane_point).dot(target_normal)
+    projected_point = ref_point_co - dist_to_plane * target_normal
 
-    if len(shared_verts) >= 1:
-        # Use any shared vertex as reference point
-        shared_vert = list(shared_verts)[0]
+    target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
+    tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(target_mat, ppm)
 
-        # Find UV of shared vert in source
-        source_shared_uv = None
-        for loop in source_face.loops:
-            if loop.vert == shared_vert:
-                source_shared_uv = loop[uv_layer].uv.copy()
-                break
+    rot_rad = math.radians(target_rotation)
+    cos_r = math.cos(rot_rad)
+    sin_r = math.sin(rot_rad)
+    proj_x = target_u * cos_r - target_v * sin_r
+    proj_y = target_u * sin_r + target_v * cos_r
 
-        if source_shared_uv:
-            # Compute what UV the shared vert would have on target with offset=0
-            target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
-            tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(target_mat, ppm)
+    delta = projected_point - target_plane_point
+    x = delta.dot(proj_x)
+    y = delta.dot(proj_y)
 
-            # Rotate projection axes in face space
-            rot_rad = math.radians(target_rotation)
-            cos_r = math.cos(rot_rad)
-            sin_r = math.sin(rot_rad)
-            proj_x = target_u * cos_r - target_v * sin_r
-            proj_y = target_u * sin_r + target_v * cos_r
+    u = x / (scale_u * tex_meters_u)
+    v = y / (scale_v * tex_meters_v)
 
-            # Project shared vertex onto rotated axes
-            first_vert_target = list(target_face.loops)[0].vert.co
-            delta = shared_vert.co - first_vert_target
-            x = delta.dot(proj_x)
-            y = delta.dot(proj_y)
-
-            # Apply scale
-            u = x / (scale_u * tex_meters_u)
-            v = y / (scale_v * tex_meters_v)
-
-            target_offset_x = normalize_offset(source_shared_uv.x - u)
-            target_offset_y = normalize_offset(source_shared_uv.y - v)
-        else:
-            target_offset_x = normalize_offset(source_offset_x)
-            target_offset_y = normalize_offset(source_offset_y)
-    else:
-        # No shared vertices - project a source vertex onto target plane
-        # (source_vert_co and source_vert_uv were pre-read above;
-        #  for cross-object, source_vert_co is already in target space)
-
-        # Project source vertex onto target plane
-        target_plane_point = list(target_face.loops)[0].vert.co
-        dist_to_plane = (source_vert_co - target_plane_point).dot(target_normal)
-        projected_point = source_vert_co - dist_to_plane * target_normal
-
-        # Compute what UV the projected point would have on target with offset=0
-        target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
-        tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(target_mat, ppm)
-
-        rot_rad = math.radians(target_rotation)
-        cos_r = math.cos(rot_rad)
-        sin_r = math.sin(rot_rad)
-        proj_x = target_u * cos_r - target_v * sin_r
-        proj_y = target_u * sin_r + target_v * cos_r
-
-        delta = projected_point - target_plane_point
-        x = delta.dot(proj_x)
-        y = delta.dot(proj_y)
-
-        u = x / (scale_u * tex_meters_u)
-        v = y / (scale_v * tex_meters_v)
-
-        target_offset_x = normalize_offset(source_vert_uv.x - u)
-        target_offset_y = normalize_offset(source_vert_uv.y - v)
+    target_offset_x = normalize_offset(ref_point_uv.x - u)
+    target_offset_y = normalize_offset(ref_point_uv.y - v)
 
     # Apply to target face
-    target_mat = me.materials[target_face.material_index] if target_face.material_index < len(me.materials) else None
-    debug_log(f"[ApplyImage] set_uv_from_other_face: face {target_face.index} <- source {source_face.index} | "
+    debug_log(f"[ApplyImage] set_uv_from_source_params: face {target_face.index} | "
               f"scale=({scale_u:.4f}, {scale_v:.4f}) rotation={target_rotation:.2f} offset=({target_offset_x:.4f}, {target_offset_y:.4f})")
     apply_uv_to_face(target_face, uv_layer, scale_u, scale_v, target_rotation,
                      target_offset_x, target_offset_y, target_mat, ppm, me)
@@ -216,6 +140,87 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
         cache_single_face(target_face, bm, ppm, me)
 
     return True
+
+
+def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None,
+                            source_uv_layer=None, source_me=None, source_to_target=None):
+    """Copy UV settings from source face to target face with proper rotation/offset handling.
+
+    Extracts transform parameters from the source face and delegates to
+    set_uv_from_source_params().
+
+    Args:
+        source_face: BMesh face to copy UV settings from
+        target_face: BMesh face to apply UV settings to
+        uv_layer: BMesh UV layer (target face's layer)
+        ppm: Pixels per meter setting
+        me: Mesh data for target face
+        obj_matrix: Target object world matrix (for parallel plane reference calculation)
+        bm: BMesh instance (optional, for cache_single_face per-layer caching)
+        source_uv_layer: UV layer for source face (cross-object only; defaults to uv_layer)
+        source_me: Mesh data for source face (cross-object only; defaults to me)
+        source_to_target: 4x4 matrix from source object space to target object space
+    """
+    # ---- Cross-object: resolve source data references ----
+    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
+    src_me = source_me if source_me is not None else me
+
+    source_transform = derive_transform_from_uvs(source_face, src_uv, ppm, src_me)
+    if not source_transform:
+        return False
+
+    scale_u = source_transform['scale_u']
+    scale_v = source_transform['scale_v']
+
+    # Zero scale means source has collapsed/zero-area UVs — can't derive settings
+    if abs(scale_u) < 1e-8 or abs(scale_v) < 1e-8:
+        return False
+    source_rotation = source_transform['rotation']
+
+    source_normal = source_face.normal.normalized()
+    source_axes = get_face_local_axes(source_face)
+    if not source_axes:
+        return False
+    source_u, source_v = source_axes
+
+    # Choose the best reference point for offset calculation:
+    # prefer a shared vertex (exact match), fall back to projecting source's first vert
+    source_verts = set(source_face.verts)
+    target_verts = set(target_face.verts)
+    shared_verts = source_verts & target_verts
+
+    if len(shared_verts) >= 1:
+        shared_vert = list(shared_verts)[0]
+        ref_point_co = shared_vert.co.copy()
+        # Find UV of shared vert in source
+        ref_point_uv = None
+        for loop in source_face.loops:
+            if loop.vert == shared_vert:
+                ref_point_uv = loop[src_uv].uv.copy()
+                break
+        if ref_point_uv is None:
+            ref_point_uv = list(source_face.loops)[0][src_uv].uv.copy()
+            ref_point_co = list(source_face.loops)[0].vert.co.copy()
+    else:
+        source_loop_0 = list(source_face.loops)[0]
+        ref_point_co = source_loop_0.vert.co.copy()
+        ref_point_uv = source_loop_0[src_uv].uv.copy()
+
+    # ---- Cross-object: transform source geometry to target's local space ----
+    if source_to_target is not None:
+        rot = source_to_target.to_3x3()
+        source_normal = (rot @ source_normal).normalized()
+        source_u = (rot @ source_u).normalized()
+        source_v = (rot @ source_v).normalized()
+        ref_point_co = source_to_target @ ref_point_co
+
+    return set_uv_from_source_params(
+        target_face, uv_layer, ppm, me, obj_matrix,
+        scale_u, scale_v, source_rotation,
+        source_normal, source_u, source_v,
+        ref_point_co, ref_point_uv,
+        bm=bm,
+    )
 
 
 class apply_image_to_face(ModalPaintBase, Operator):

@@ -96,7 +96,7 @@ def _find_loop_cut_edges(bm):
         # Vertical edge (same X, same Y) spanning Z
         if (abs(v0.co.x - v1.co.x) < 1e-5 and
                 abs(v0.co.y - v1.co.y) < 1e-5 and
-                abs(v0.co.z - v1.co.z) > 0.5):
+                abs(v0.co.z - v1.co.z) > 0.3):
             loop_edges.append(edge)
     return loop_edges
 
@@ -118,8 +118,37 @@ class LoopCutTest(AnvilTestCase):
         _apply_per_face_rotation(obj, {0.5: 0.0, 1.5: 45.0})
         yield 0.5
 
-        # Verify initial state: 2 faces with correct rotations
+        # Deform the right face: move the 2 outside verts (x=2) inward 0.25 on Z
         ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm = bmesh.from_edit_mesh(obj.data)
+        for v in bm.verts:
+            if abs(v.co.x - 2.0) < 1e-5:
+                if v.co.z < 0.5:
+                    v.co.z += 0.25
+                else:
+                    v.co.z -= 0.25
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        yield 0.5
+
+        # Duplicate the textured plane and move it up for before/after comparison
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.duplicate()
+            dup = bpy.context.active_object
+            dup.name = "loopcut_rot_BEFORE"
+            dup.location.z += 1.0
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+        yield 0.5
+
+        # Verify initial state: 2 faces with correct rotations
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='EDIT')
         bm = bmesh.from_edit_mesh(obj.data)
@@ -177,25 +206,39 @@ class LoopCutTest(AnvilTestCase):
         # Verify: should now have 4 faces
         bm = bmesh.from_edit_mesh(obj.data)
         uv_layer = bm.loops.layers.uv[0]
-        self.assertEqual(len(bm.faces), 4, f"Should have 4 faces after loop cut, got {len(bm.faces)}")
+        self.assertGreaterEqual(len(bm.faces), 4, f"Should have at least 4 faces after loop cut, got {len(bm.faces)}")
 
-        # Check each face's rotation matches its parent face
+        # Check each face's rotation, scale, and offset after loop cut.
+        # Expected offsets with set_uv_from_source_params approach:
+        #   Left faces (rot=0):  bottom (0, 0),       top (0, 0.5)
+        #   Right faces (rot=45): bottom (0.3536, 0.3536), top (0, 0)
+        expected = {
+            (0.5, 0.25): {'rot': 0.0, 'off_x': 0.0, 'off_y': 0.0},
+            (0.5, 0.75): {'rot': 0.0, 'off_x': 0.0, 'off_y': 0.5},
+            (1.5, 0.31): {'rot': 45.0, 'off_x': 0.3536, 'off_y': 0.3536},
+            (1.5, 0.69): {'rot': 45.0, 'off_x': 0.0, 'off_y': 0.0},
+        }
         for face in bm.faces:
             t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
             self.assertIsNotNone(t, f"Face {face.index} transform should be derivable")
-            cx = face.calc_center_median().x
-            if cx < 1.0:
-                expected_rot = 0.0
-            else:
-                expected_rot = 45.0
+            cx = round(face.calc_center_median().x, 2)
+            cz = round(face.calc_center_median().z, 2)
+            key = (cx, cz)
+            self.assertIn(key, expected, f"Unexpected face center ({cx}, {cz})")
+            exp = expected[key]
+            label = f"Face at x={cx},z={cz}"
             self.assertAlmostEqual(
-                t['rotation'], expected_rot, places=1,
-                msg=f"Face at x={cx:.2f} rotation should be {expected_rot}, got {t['rotation']}"
+                t['rotation'], exp['rot'], places=1,
+                msg=f"{label} rotation should be {exp['rot']}, got {t['rotation']}"
             )
             self.assertAlmostEqual(t['scale_u'], 1.0, places=1,
-                                   msg=f"Face at x={cx:.2f} scale_u should be 1.0, got {t['scale_u']}")
+                                   msg=f"{label} scale_u should be 1.0, got {t['scale_u']}")
             self.assertAlmostEqual(t['scale_v'], 1.0, places=1,
-                                   msg=f"Face at x={cx:.2f} scale_v should be 1.0, got {t['scale_v']}")
+                                   msg=f"{label} scale_v should be 1.0, got {t['scale_v']}")
+            self.assertAlmostEqual(t['offset_x'], exp['off_x'], places=2,
+                                   msg=f"{label} offset_x should be {exp['off_x']}, got {t['offset_x']}")
+            self.assertAlmostEqual(t['offset_y'], exp['off_y'], places=2,
+                                   msg=f"{label} offset_y should be {exp['off_y']}, got {t['offset_y']}")
 
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')

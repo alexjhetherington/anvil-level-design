@@ -308,7 +308,7 @@ def _project_new_faces(context, bm):
     4. BFS expand through adjacency to cached faces with moved vertices
     5. Project all affected faces using unchanged neighbors as UV source
     """
-    from .operators.texture_apply import set_uv_from_other_face
+    from .operators.texture_apply import set_uv_from_other_face, set_uv_from_source_params
 
     obj = context.object
     me = obj.data
@@ -446,23 +446,44 @@ def _project_new_faces(context, bm):
         if face.calc_area() < 1e-8:
             continue
         cached = face_data_cache[face.index]
+        cached_normal = cached['normal']
+        cached_verts = cached['verts']
+
+        # Reconstruct source face local axes from cached vertex positions
+        source_local_x = get_local_x_from_verts_3d(cached_verts)
+        if not source_local_x:
+            continue
+        source_local_y = cached_normal.cross(source_local_x).normalized()
+
         for uv_layer in unlocked_layers:
             layer_data = get_cached_layer_data(face.index, uv_layer.name)
             if layer_data:
                 scale_u = layer_data.get('scale_u', 1.0)
                 scale_v = layer_data.get('scale_v', 1.0)
                 rotation = layer_data.get('rotation', 0.0)
-                offset_x = layer_data.get('offset_x', 0.0)
-                offset_y = layer_data.get('offset_y', 0.0)
+                cached_uvs = layer_data.get('uvs')
             else:
                 scale_u = cached.get('scale_u', 1.0)
                 scale_v = cached.get('scale_v', 1.0)
                 rotation = cached.get('rotation', 0.0)
-                offset_x = cached.get('offset_x', 0.0)
-                offset_y = cached.get('offset_y', 0.0)
-            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-            apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
-                             mat, ppm, me)
+                cached_uvs = None
+
+            if abs(scale_u) < 1e-8 or abs(scale_v) < 1e-8:
+                continue
+
+            # Use cached first vertex position and its UV as reference point
+            ref_point_co = cached_verts[0]
+            if cached_uvs and len(cached_uvs) > 0:
+                ref_point_uv = cached_uvs[0]
+            else:
+                continue
+
+            set_uv_from_source_params(
+                face, uv_layer, ppm, me, obj.matrix_world,
+                scale_u, scale_v, rotation,
+                cached_normal, source_local_x, source_local_y,
+                ref_point_co, ref_point_uv,
+            )
     affected -= coplanar_modified
 
     # Step 2: Project remaining affected faces (new faces and existing faces that are no longer coplanar) using
