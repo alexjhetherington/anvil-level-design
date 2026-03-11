@@ -9,6 +9,7 @@ import bpy
 from . import geometry
 from ..modal_draw.base_operator import ModalDrawBase, MIN_RECTANGLE_SIZE
 from ...utils import is_level_design_workspace
+from ..weld import set_weld_from_edge_selection
 
 
 class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
@@ -70,10 +71,16 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
                         local_x, local_y, local_z):
-        return geometry.execute_cube_cut(
+        result = geometry.execute_cube_cut(
             context, first_vertex, second_vertex, depth,
             local_x, local_y, local_z
         )
+        success, message = result
+
+        if success:
+            set_weld_from_edge_selection(context, abs(depth))
+
+        return result
 
     def _get_tool_name(self):
         return "Cube Cut"

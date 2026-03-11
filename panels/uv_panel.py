@@ -22,11 +22,11 @@ from ..handlers import (
 )
 
 
-class LEVELDESIGN_PT_grid_panel(Panel):
-    """Grid Settings Panel"""
+class LEVELDESIGN_PT_status_panel(Panel):
+    """Status Panel"""
 
-    bl_label = "Grid"
-    bl_idname = "LEVELDESIGN_PT_grid_panel"
+    bl_label = "Status"
+    bl_idname = "LEVELDESIGN_PT_status_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
@@ -54,6 +54,15 @@ class LEVELDESIGN_PT_grid_panel(Panel):
             box.label(
                 text=f"Grid Size: {anvil_scale}  [ / ]", icon='GRID'
             )
+
+        from ..operators.weld import get_weld_display_name
+        weld_mode = props.weld_mode
+        weld_name = get_weld_display_name(weld_mode)
+        box = layout.box()
+        if weld_mode != 'NONE':
+            box.label(text=f"Next Weld: {weld_name}  [ W ]", icon='AUTOMERGE_ON')
+        else:
+            box.label(text="Next Weld: None", icon='AUTOMERGE_ON')
 
 
 class LEVELDESIGN_OT_set_active_render_uv(Operator):
@@ -631,7 +640,7 @@ class LEVELDESIGN_PT_debug_panel(Panel):
 
 
 classes = (
-    LEVELDESIGN_PT_grid_panel,
+    LEVELDESIGN_PT_status_panel,
     LEVELDESIGN_OT_set_active_render_uv,
     LEVELDESIGN_OT_toggle_uv_lock,
     LEVELDESIGN_PT_uv_lock_panel,

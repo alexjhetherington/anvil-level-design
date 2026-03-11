@@ -92,6 +92,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.line_mode_activate": "Tools",
             "leveldesign.box_builder": "Tools",
             "leveldesign.cube_cut": "Tools",
+            "leveldesign.context_weld": "Tools",
         }
 
         wm = context.window_manager

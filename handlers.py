@@ -1718,6 +1718,9 @@ def on_undo_post(scene):
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
+    # Reset weld flag so undo-restored weld state is trusted
+    from .operators.weld import reset_weld_edge_tracking
+    reset_weld_edge_tracking()
     # Use a short timer to ensure the depsgraph update triggered by undo
     # has completed before we clear the flag
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
@@ -1755,6 +1758,9 @@ def on_redo_post(scene):
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
+    # Reset weld flag so redo-restored weld state is trusted
+    from .operators.weld import reset_weld_edge_tracking
+    reset_weld_edge_tracking()
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
     # Refresh UI panels immediately
     try:
@@ -1978,6 +1984,12 @@ def on_depsgraph_update(scene, depsgraph):
                         # Only update active image if allowed
                         if allow_active_image_update:
                             update_active_image_from_face(context)
+
+                    # Check if edge selection changed (for weld invalidation)
+                    if props.weld_mode != 'NONE':
+                        from .operators.weld import check_weld_selection_changed, clear_weld_state
+                        if check_weld_selection_changed(bm):
+                            clear_weld_state(context)
 
                     # Store data before any transform if cache is empty
                     if not face_data_cache and context.mode == 'EDIT_MESH':

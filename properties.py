@@ -559,6 +559,24 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         max=100000.0,
     )
 
+    # === Context Weld State ===
+    weld_mode: EnumProperty(
+        name="Weld Mode",
+        description="Next weld action to perform",
+        items=[
+            ('NONE', "None", "No weld action pending"),
+            ('BRIDGE', "Bridge Edge Loops", "Bridge two edge loops"),
+            ('CORRIDOR', "Corridor", "Create face and extrude corridor"),
+        ],
+        default='NONE',
+    )
+
+    weld_depth: FloatProperty(
+        name="Weld Depth",
+        description="Depth for corridor extrusion",
+        default=0.0,
+    )
+
 
 def register():
     bpy.utils.register_class(AnvilUVMapSettings)

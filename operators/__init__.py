@@ -12,6 +12,7 @@ from . import box_builder
 from . import backface_select
 from . import select_linked
 from . import uv_select_invalid
+from . import weld
 
 
 def register():
@@ -29,9 +30,11 @@ def register():
     backface_select.register()
     select_linked.register()
     uv_select_invalid.register()
+    weld.register()
 
 
 def unregister():
+    weld.unregister()
     uv_select_invalid.unregister()
     select_linked.unregister()
     backface_select.unregister()
