@@ -156,6 +156,106 @@ class CubeCutTest(AnvilTestCase):
             bpy.ops.object.mode_set(mode='OBJECT')
         obj.data.update()
 
+    def test_through_hole_bridge(self):
+        """Cut a through-hole then bridge the two openings, verify bridged face UVs."""
+        obj = create_textured_cube("cc_bridge", 1.0, 1.0, face_aligned=True)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        # Select all faces so cube cut processes them
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select = True
+        bmesh.update_edit_mesh(obj.data)
+
+        # Cut a hole through the cube along the Y axis.
+        # The cube spans (0,0,0) to (1,1,1).
+        # The cut rectangle is at x=[0.25,0.75], z=[0.25,0.75],
+        # extending from y=-0.5 to y=1.5 (fully through the cube).
+        with bpy.context.temp_override(**ctx):
+            success, msg = execute_cube_cut(
+                bpy.context,
+                Vector((0.25, -0.5, 0.25)),
+                Vector((0.75, -0.5, 0.75)),
+                2.0,
+                Vector((1, 0, 0)),
+                Vector((0, 0, 1)),
+                Vector((0, 1, 0)),
+            )
+
+        self.assertTrue(success, msg)
+
+        # Cube cut leaves 8 boundary edges selected (4 per opening).
+        # Bridge edge loops connects the two openings.
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.bridge_edge_loops()
+
+        # Let depsgraph handler fire to apply UVs to the bridged faces
+        yield 0.5
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv[0]
+        bm.faces.ensure_lookup_table()
+
+        # 12 original faces from cube cut + 4 bridged tunnel faces = 16
+        self.assertEqual(len(bm.faces), 16,
+                         f"Should have 16 faces after bridge, got {len(bm.faces)}")
+
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+        # The 4 bridged faces form a tunnel through the cube along Y.
+        # bridge_edge_loops can produce either winding depending on internal
+        # edge ordering, so each face has two acceptable UV projections.
+        # Key: (nx, ny, nz, cx, cy, cz)
+        # Values: list of (scale_u, scale_v, rotation, offset_x, offset_y)
+        bridged_expected = {
+            (1, 0, 0, 0.25, 0.5, 0.5):   [
+                (1.0, 1.0, 90.0, 0.25, 0.25),
+                (1.0, 1.0, -90.0, 0.25, 0.75),
+            ],
+            (-1, 0, 0, 0.75, 0.5, 0.5):  [
+                (1.0, 1.0, -90.0, 0.75, 0.75),
+                (1.0, 1.0, 90.0, 0.75, 0.25),
+            ],
+            (0, 0, 1, 0.5, 0.5, 0.25):   [
+                (1.0, 1.0, 180.0, 0.75, 0.25),
+                (1.0, 1.0, 0.0, 0.25, 0.25),
+            ],
+            (0, 0, -1, 0.5, 0.5, 0.75):  [
+                (1.0, 1.0, 0.0, 0.25, 0.75),
+                (1.0, 1.0, 180.0, 0.75, 0.75),
+            ],
+        }
+
+        found_bridged = 0
+        for face in bm.faces:
+            key = _face_key(face)
+            if key in bridged_expected:
+                found_bridged += 1
+                t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
+                alternatives = bridged_expected[key]
+                matched = False
+                for exp_su, exp_sv, exp_rot, exp_ox, exp_oy in alternatives:
+                    if (abs(t['scale_u'] - exp_su) < 0.01 and
+                            abs(t['scale_v'] - exp_sv) < 0.01 and
+                            abs(t['rotation'] - exp_rot) < 0.01 and
+                            abs(t['offset_x'] - exp_ox) < 0.01 and
+                            abs(t['offset_y'] - exp_oy) < 0.01):
+                        matched = True
+                        break
+                self.assertTrue(
+                    matched,
+                    f"Bridged face {key}: got su={t['scale_u']:.2f} "
+                    f"sv={t['scale_v']:.2f} rot={t['rotation']:.2f} "
+                    f"ox={t['offset_x']:.2f} oy={t['offset_y']:.2f}, "
+                    f"expected one of {alternatives}")
+
+        self.assertEqual(found_bridged, 4,
+                         f"Should find 4 bridged faces, found {found_bridged}")
+
     def test_edge_aligned_hole(self):
         """Cut a hole where the top of the cut aligns with the top of the cube."""
         obj = create_textured_cube("cc_cube_edge", 1.0, 1.0, face_aligned=True)

@@ -70,6 +70,14 @@ def _purge_all():
     # object/mesh data and cause access violations.
     bpy.context.view_layer.update()
 
+    # Flush any background icon preview jobs that hold pointers to material/
+    # image data blocks. If we delete those blocks while a preview job is
+    # still running, its endjob callback writes to freed memory
+    # (icon_preview_endjob crash). The DRAW_WIN_SWAP processes pending
+    # wm_jobs, letting them finish before we remove the data they reference.
+    with bpy.context.temp_override(window=window):
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+
     # Purge orphan data blocks (meshes, materials, images, node groups, etc.)
     categories = [
         bpy.data.meshes,
@@ -119,16 +127,16 @@ def _purge_all():
             rv3d.view_distance = 5.0
             rv3d.view_perspective = 'PERSP'
 
+    # Force a synchronous redraw BEFORE re-registering the depsgraph handler.
+    # This makes the outliner (and other editors) rebuild their internal caches
+    # from the now-empty scene while the depsgraph handler is still detached,
+    # preventing it from firing during the redraw and accessing freed data.
+    with bpy.context.temp_override(window=window):
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+
     # Re-register the depsgraph handler
     if handler_was_registered:
         bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
-
-    # Force a synchronous redraw so the outliner (and other editors) rebuild
-    # their internal caches from the now-empty scene. Without this, the
-    # outliner can crash by accessing freed object/collection pointers when
-    # Blender's main loop does its next wm_draw_update.
-    with bpy.context.temp_override(window=window):
-        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
 
 
 def activate_level_design_workspace():
