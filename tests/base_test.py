@@ -38,6 +38,14 @@ def _purge_all():
     set_previous_image(None)
     face_data_cache.clear()
 
+    # Reset weld module state to prevent stale BMesh references from being
+    # accessed in the depsgraph handler after objects are deleted.
+    from ..operators.weld import reset_weld_edge_tracking
+    reset_weld_edge_tracking()
+    props = bpy.context.scene.level_design_props
+    props.weld_mode = 'NONE'
+    props.weld_depth = 0.0
+
     # Temporarily remove the depsgraph handler during cleanup to prevent it
     # from firing while objects/meshes are being deleted (which can cause
     # access violations from accessing freed data).
@@ -114,6 +122,13 @@ def _purge_all():
     # Re-register the depsgraph handler
     if handler_was_registered:
         bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
+
+    # Force a synchronous redraw so the outliner (and other editors) rebuild
+    # their internal caches from the now-empty scene. Without this, the
+    # outliner can crash by accessing freed object/collection pointers when
+    # Blender's main loop does its next wm_draw_update.
+    with bpy.context.temp_override(window=window):
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
 
 
 def activate_level_design_workspace():
