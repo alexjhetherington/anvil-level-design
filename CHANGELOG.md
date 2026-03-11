@@ -2,7 +2,8 @@
 
 ## 1.3.3
 - Fix incorrect UV on extruded face when using the extrusion tool
-- Improve UV for bevels
+- Fix incorrect UV on some loop cuts
+- Improve UV results for bevels
 
 ## 1.3.2
 - Alt left click works across objects
