@@ -155,3 +155,60 @@ class CubeCutTest(AnvilTestCase):
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
         obj.data.update()
+
+    def test_edge_aligned_hole(self):
+        """Cut a hole where the top of the cut aligns with the top of the cube."""
+        obj = create_textured_cube("cc_cube_edge", 1.0, 1.0, face_aligned=True)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        add_uv_layer_face_aligned(obj, "UVMap.001", 0.5)
+
+        # Select all faces so cube cut processes them
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select = True
+        bmesh.update_edit_mesh(obj.data)
+
+        # Cut a hole through the cube along the Y axis.
+        # The cube spans (0,0,0) to (1,1,1).
+        # The cut rectangle is at x=[0.25,0.75], z=[0.5,1.0],
+        # extending from y=-0.5 to y=1.5 (fully through the cube).
+        # The top of the cut aligns with the top of the cube.
+        with bpy.context.temp_override(**ctx):
+            success, msg = execute_cube_cut(
+                bpy.context,
+                Vector((0.25, -0.5, 0.5)),
+                Vector((0.75, -0.5, 1.0)),
+                2.0,
+                Vector((1, 0, 0)),
+                Vector((0, 0, 1)),
+                Vector((0, 1, 0)),
+            )
+
+        self.assertTrue(success, msg)
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+
+        self.assertEqual(len(bm.faces), 11,
+                         "Edge-aligned cut should produce 11 faces (no degenerate strip)")
+
+        # Verify edge select mode after cube cut
+        self.assertEqual(
+            list(bpy.context.tool_settings.mesh_select_mode),
+            [False, True, False],
+            "Cube cut should finish in edge select mode"
+        )
+
+        # No faces should be selected
+        selected_faces = [f for f in bm.faces if f.select]
+        self.assertEqual(len(selected_faces), 0, "No faces should be selected after cube cut")
+
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()
