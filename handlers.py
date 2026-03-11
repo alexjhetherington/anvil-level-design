@@ -246,14 +246,20 @@ def _get_best_neighbor_face(face, excluded_faces):
 
     Priority 1: Prefer neighbors facing a similar direction (positive normal dot product).
     Priority 2: Among those, prefer sideways (wall-like) faces over floor/ceiling.
+    Priority 3: Among coplanar neighbors with the same sideways score, prefer
+                 the one whose cached center is closest to the target face
+                 (i.e. the face this one was most likely split from).
 
     Falls back to negative-dot-product neighbors (with sideways scoring) if
     no similar-facing neighbor exists.
     """
     best_similar = None
     best_similar_score = -1
+    best_similar_dist = float('inf')
     best_fallback = None
     best_fallback_score = -1
+
+    face_center = face.calc_center_median()
 
     for edge in face.edges:
         for linked_face in edge.link_faces:
@@ -265,8 +271,22 @@ def _get_best_neighbor_face(face, excluded_faces):
             sideways_score = 1.0 - abs(linked_face.normal.z)
 
             if face.normal.dot(linked_face.normal) > 0:
-                if sideways_score > best_similar_score:
+                # For coplanar faces tying on sideways_score, prefer the one
+                # whose cached center is closest (most likely the parent face)
+                is_coplanar = (face.normal - linked_face.normal).length < 0.01
+                if is_coplanar:
+                    cached = face_data_cache.get(linked_face.index)
+                    if cached and cached.get('center'):
+                        dist = (cached['center'] - face_center).length
+                    else:
+                        dist = (linked_face.calc_center_median() - face_center).length
+                else:
+                    dist = float('inf')
+
+                if (sideways_score > best_similar_score or
+                        (sideways_score == best_similar_score and dist < best_similar_dist)):
                     best_similar_score = sideways_score
+                    best_similar_dist = dist
                     best_similar = linked_face
             else:
                 if sideways_score > best_fallback_score:
@@ -410,13 +430,49 @@ def _project_new_faces(context, bm):
                     affected.add(neighbor)
                     queue.append(neighbor)
 
-    # Project all affected faces using unchanged neighbors as source.
-    # Only exclude new faces from being sources.
+    # Step 1: Re-project cached faces that are still coplanar with their
+    # cached state (e.g. subdivide/loop-cut shrinks a face but keeps it on
+    # the same plane).
+    coplanar_modified = set()
+    for face in affected:
+        if face.index not in face_data_cache or face in new_faces:
+            continue
+        cached = face_data_cache[face.index]
+        cached_normal = cached.get('normal')
+        if cached_normal and (face.normal - cached_normal).length < 0.01:
+            coplanar_modified.add(face)
+
+    for face in coplanar_modified:
+        if face.calc_area() < 1e-8:
+            continue
+        cached = face_data_cache[face.index]
+        for uv_layer in unlocked_layers:
+            layer_data = get_cached_layer_data(face.index, uv_layer.name)
+            if layer_data:
+                scale_u = layer_data.get('scale_u', 1.0)
+                scale_v = layer_data.get('scale_v', 1.0)
+                rotation = layer_data.get('rotation', 0.0)
+                offset_x = layer_data.get('offset_x', 0.0)
+                offset_y = layer_data.get('offset_y', 0.0)
+            else:
+                scale_u = cached.get('scale_u', 1.0)
+                scale_v = cached.get('scale_v', 1.0)
+                rotation = cached.get('rotation', 0.0)
+                offset_x = cached.get('offset_x', 0.0)
+                offset_y = cached.get('offset_y', 0.0)
+            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+            apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation, offset_x, offset_y,
+                             mat, ppm, me)
+    affected -= coplanar_modified
+
+    # Step 2: Project remaining affected faces (new faces and existing faces that are no longer coplanar) using
+    # neighbors as UV source. Coplanar cached faces fixed above are now
+    # valid sources. Only exclude new faces from being sources.
     # Skip zero-area faces — they can't be projected meaningfully (e.g. during
     # modal extrude, new faces start collapsed). They'll be handled later when
     # the modal moves them and they gain area (see _was_zero_area check in main loop).
-    excluded = new_faces
-    projected_count = 0
+    excluded = new_faces - coplanar_modified
+    projected_count = len(coplanar_modified)
     for face in affected:
         if face.calc_area() < 1e-8:
             continue

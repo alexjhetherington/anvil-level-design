@@ -179,14 +179,6 @@ class LoopCutTest(AnvilTestCase):
         uv_layer = bm.loops.layers.uv[0]
         self.assertEqual(len(bm.faces), 4, f"Should have 4 faces after loop cut, got {len(bm.faces)}")
 
-        # Print all face transforms for debugging
-        for face in bm.faces:
-            t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
-            cx = face.calc_center_median().x
-            print(f"  Face {face.index}: center_x={cx:.2f} rotation={t['rotation']:.1f} "
-                  f"scale=({t['scale_u']:.2f}, {t['scale_v']:.2f}) "
-                  f"offset=({t['offset_x']:.3f}, {t['offset_y']:.3f})")
-
         # Check each face's rotation matches its parent face
         for face in bm.faces:
             t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
