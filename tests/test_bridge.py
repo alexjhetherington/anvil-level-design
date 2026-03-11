@@ -11,28 +11,28 @@ class BridgeEdgeLoopsTest(AnvilTestCase):
 
     def test_bridge_two_planes(self):
         # Create two vertical planes 1 unit apart facing away from each other.
-        # create_vertical_plane gives +Y normal. Flip plane A to face -Y.
-        # Result: A at Y=0 facing -Y (outward), B at Y=1 facing +Y (outward).
+        # A at Y=0 facing -Y (outward), B at Y=1 facing +Y (outward).
         plane_a = create_vertical_plane("bridge_a")
         plane_b = create_vertical_plane("bridge_b")
 
         ctx = _get_context_override()
+
+        # Move origin to geometry center, rotate 180° around Z so it faces -Y
+        import math
+        plane_a.select_set(True)
+        plane_b.select_set(False)
+        bpy.context.view_layer.objects.active = plane_a
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        plane_a.rotation_euler.z = math.pi
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.transform_apply(rotation=True)
 
         # Move plane B to Y=1
         plane_b.location.y = 1.0
         with bpy.context.temp_override(**ctx):
             bpy.context.view_layer.objects.active = plane_b
             bpy.ops.object.transform_apply(location=True)
-
-        # Flip plane A's normal so it faces -Y (away from plane B)
-        plane_a.select_set(True)
-        plane_b.select_set(False)
-        bpy.context.view_layer.objects.active = plane_a
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='EDIT')
-            bpy.ops.mesh.select_all(action='SELECT')
-            bpy.ops.mesh.flip_normals()
-            bpy.ops.object.mode_set(mode='OBJECT')
 
         # Join both planes into one object
         plane_a.select_set(True)
