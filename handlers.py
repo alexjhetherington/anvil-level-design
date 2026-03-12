@@ -38,7 +38,7 @@ from .utils import (
     get_texture_dimensions_from_material, get_face_local_axes, normalize_offset,
     get_local_x_from_verts_3d, debug_log, face_has_hotspot_material,
     any_connected_face_has_hotspot, get_all_hotspot_faces,
-    is_level_design_workspace,
+    is_level_design_workspace, face_aligned_project,
     get_render_active_uv_layer, get_unlocked_uv_layers, get_locked_uv_layers,
     get_all_uv_layers, sync_uv_map_settings,
 )
@@ -1507,14 +1507,8 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
                 cache_single_face(target_face, bm, ppm, me)
         else:
             # Blank face (no previous image) or transform can't be derived
-            # - use clean defaults
-            apply_uv_to_face(
-                target_face, uv_layer,
-                1.0, 1.0,  # scale
-                0.0,       # rotation
-                0.0, 0.0,  # offset
-                mat, ppm, me
-            )
+            # - use face-aligned world-axis projection
+            face_aligned_project(target_face, uv_layer, mat, ppm)
             if bm is not None:
                 cache_single_face(target_face, bm, ppm, me)
 

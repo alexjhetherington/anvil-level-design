@@ -154,10 +154,22 @@ class BoxBuilderTest(AnvilTestCase):
 
         self.assertEqual(len(bm.faces), 6, "Box should have 6 faces")
 
-        # Blank faces get per-face local projection with clean defaults
-        # from _apply_regular_uv_projection: scale=1.0, rotation=0.0, offset=0.0
+        # Blank faces now use face-aligned world-axis projection, producing
+        # the same rotation/offset pattern as test_previous_texture.
+        # Key: (nx, ny, nz, cx, cy, cz)
+        expected = {
+            (0, -1, 0, 0.5, 0.0, 0.5):  (90.0, 0.0, 0.0),   # front
+            (0, 1, 0, 0.5, 1.0, 0.5):   (0.0, 0.0, 0.0),     # back
+            (-1, 0, 0, 0.0, 0.5, 0.5):  (0.0, 0.0, 0.0),     # left
+            (1, 0, 0, 1.0, 0.5, 0.5):   (90.0, 0.0, 0.0),    # right
+            (0, 0, -1, 0.5, 0.5, 0.0):  (0.0, 0.0, 0.0),     # bottom
+            (0, 0, 1, 0.5, 0.5, 1.0):   (90.0, 0.0, 0.0),    # top
+        }
+
         for face in bm.faces:
             key = _face_key(face)
+            self.assertIn(key, expected, f"Unexpected face key {key}")
+            rot, off_x, off_y = expected[key]
             t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
             self.assertAlmostEqual(
                 t['scale_u'], 1.0, places=3,
@@ -166,13 +178,13 @@ class BoxBuilderTest(AnvilTestCase):
                 t['scale_v'], 1.0, places=3,
                 msg=f"Face {key} scale_v={t['scale_v']}")
             self.assertAlmostEqual(
-                t['rotation'], 0.0, places=3,
+                t['rotation'], rot, places=3,
                 msg=f"Face {key} rotation={t['rotation']}")
             self.assertAlmostEqual(
-                t['offset_x'], 0.0, places=3,
+                t['offset_x'], off_x, places=3,
                 msg=f"Face {key} offset_x={t['offset_x']}")
             self.assertAlmostEqual(
-                t['offset_y'], 0.0, places=3,
+                t['offset_y'], off_y, places=3,
                 msg=f"Face {key} offset_y={t['offset_y']}")
 
     def test_active_face_texture(self):
