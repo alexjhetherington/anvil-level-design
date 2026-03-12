@@ -101,6 +101,44 @@ def compute_normal_from_verts(verts):
     return normal.normalized()
 
 
+def are_verts_coplanar(verts, tolerance=0.001):
+    """Check if all vertices lie on a single plane.
+
+    Finds a plane normal from the first three non-collinear points
+    and verifies all remaining points lie on that plane.
+
+    Args:
+        verts: Iterable of BMVerts or objects with .co attribute
+        tolerance: Maximum distance from the plane to be considered coplanar
+
+    Returns:
+        True if all vertices are coplanar (or fewer than 3 vertices).
+    """
+    positions = [v.co if hasattr(v, 'co') else v for v in verts]
+    if len(positions) <= 2:
+        return True
+
+    p0 = positions[0]
+    normal = None
+    for i in range(1, len(positions)):
+        for j in range(i + 1, len(positions)):
+            n = (positions[i] - p0).cross(positions[j] - p0)
+            if n.length > tolerance:
+                normal = n.normalized()
+                break
+        if normal:
+            break
+
+    if not normal:
+        return True  # All points are collinear
+
+    for p in positions:
+        if abs((p - p0).dot(normal)) > tolerance:
+            return False
+
+    return True
+
+
 def get_local_x_from_verts_2d(verts):
     """Get the first non-zero edge direction from a list of 2D vertices.
 

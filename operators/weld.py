@@ -10,7 +10,7 @@ Performs contextual weld actions based on the state left by previous operations
 import bpy
 import bmesh
 
-from ..utils import is_level_design_workspace, debug_log
+from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar
 
 
 # Track selected edge indices when weld was set, to detect selection changes
@@ -82,9 +82,15 @@ def set_weld_from_edge_selection(context, depth):
         props.weld_depth = 0.0
         debug_log(f"[Weld] Set weld mode: BRIDGE (2 edge groups)")
     elif groups == 1:
-        props.weld_mode = 'CORRIDOR'
-        props.weld_depth = depth
-        debug_log(f"[Weld] Set weld mode: CORRIDOR (1 edge group, depth={depth})")
+        selected_verts = list({v for e in bm.edges if e.select for v in e.verts})
+        if abs(depth) > 0 and are_verts_coplanar(selected_verts):
+            props.weld_mode = 'CORRIDOR'
+            props.weld_depth = depth
+            debug_log(f"[Weld] Set weld mode: CORRIDOR (1 edge group, depth={depth})")
+        else:
+            props.weld_mode = 'NONE'
+            props.weld_depth = 0.0
+            debug_log(f"[Weld] No weld: 1 edge group (depth={depth}, coplanar={are_verts_coplanar(selected_verts)})")
     else:
         props.weld_mode = 'NONE'
         props.weld_depth = 0.0
