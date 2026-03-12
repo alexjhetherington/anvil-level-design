@@ -95,8 +95,6 @@ def mark_multi_face_set_offset():
 
 # Track undo operations to skip depsgraph handling during undo
 _undo_in_progress = False
-# Track when cache was invalidated by undo/redo (not an actual topology change)
-_cache_invalidated_by_undo = False
 
 
 def _any_hotspot_geometry_changed(bm, me):
@@ -1703,12 +1701,21 @@ def on_undo_post(scene):
     Clears the undo flag via timer to ensure depsgraph update has completed.
     Invalidates face caches since geometry state has changed.
     """
-    global last_face_count, last_vertex_count, _cache_invalidated_by_undo, _last_selected_face_indices, _last_active_face_index
-    # Invalidate face caches - geometry state has changed
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
+    # Rebuild face cache from the undo-restored mesh state so that a
+    # subsequent operation (e.g. bridge) in the same depsgraph cycle can
+    # correctly identify which faces are genuinely new vs undo-restored.
     face_data_cache.clear()
-    last_face_count = 0
-    last_vertex_count = 0
-    _cache_invalidated_by_undo = True
+    try:
+        context = bpy.context
+        if context.mode == 'EDIT_MESH':
+            cache_face_data(context)
+        else:
+            last_face_count = 0
+            last_vertex_count = 0
+    except Exception:
+        last_face_count = 0
+        last_vertex_count = 0
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
@@ -1743,12 +1750,21 @@ def on_redo_post(scene):
     Clears the undo flag via timer to ensure depsgraph update has completed.
     Invalidates face caches since geometry state has changed.
     """
-    global last_face_count, last_vertex_count, _cache_invalidated_by_undo, _last_selected_face_indices, _last_active_face_index
-    # Invalidate face caches - geometry state has changed
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
+    # Rebuild face cache from the redo-restored mesh state so that a
+    # subsequent operation in the same depsgraph cycle can correctly
+    # identify which faces are genuinely new vs redo-restored.
     face_data_cache.clear()
-    last_face_count = 0
-    last_vertex_count = 0
-    _cache_invalidated_by_undo = True
+    try:
+        context = bpy.context
+        if context.mode == 'EDIT_MESH':
+            cache_face_data(context)
+        else:
+            last_face_count = 0
+            last_vertex_count = 0
+    except Exception:
+        last_face_count = 0
+        last_vertex_count = 0
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
@@ -1947,13 +1963,10 @@ def on_depsgraph_update(scene, depsgraph):
                     # Check if topology changed (subdivision, extrusion, etc.)
                     if current_face_count != last_face_count or current_vertex_count != last_vertex_count:
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")
-                        global _cache_invalidated_by_undo
-                        is_undo_recovery = _cache_invalidated_by_undo
-                        _cache_invalidated_by_undo = False
 
                         # Project new faces when faces were added
-                        # (not after undo/redo cache invalidation or object switch)
-                        if not is_fresh_start and not is_undo_recovery and current_face_count > last_face_count:
+                        # (not after object switch)
+                        if not is_fresh_start and current_face_count > last_face_count:
                             _project_new_faces(context, bm)
                         cache_face_data(context)
                         debug_log(f"[Depsgraph] Cache rebuilt ({len(face_data_cache)} faces)")
@@ -1965,7 +1978,7 @@ def on_depsgraph_update(scene, depsgraph):
                         # Apply auto-hotspotting if enabled (after cache is updated)
                         # Force because cache_face_data already cached the new faces,
                         # so the geometry-changed check would incorrectly skip them
-                        if not is_fresh_start and not is_undo_recovery and props.auto_hotspot:
+                        if not is_fresh_start and props.auto_hotspot:
                             _force_auto_hotspot = True
                             _apply_auto_hotspots()
                         return
