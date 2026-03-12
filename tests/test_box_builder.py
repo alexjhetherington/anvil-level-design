@@ -1,9 +1,12 @@
+from unittest.mock import patch
+
 import bmesh
 import bpy
 from mathutils import Vector
 
-from ..utils import derive_transform_from_uvs
-from ..handlers import set_active_image
+from ..utils import derive_transform_from_uvs, get_image_from_material
+from .. import handlers as handlers_module
+from ..handlers import set_active_image, apply_texture_from_file_browser
 from ..operators.box_builder.geometry import execute_box_builder
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override, TEXTURE_PATH
@@ -89,6 +92,87 @@ class BoxBuilderTest(AnvilTestCase):
                 msg=f"Face {key} offset_x={t['offset_x']}")
             self.assertAlmostEqual(
                 t['offset_y'], off_y, places=3,
+                msg=f"Face {key} offset_y={t['offset_y']}")
+
+    def test_file_browser_texture_apply(self):
+        """Applying a texture via file browser route to a blank box."""
+        # Create an empty mesh object and enter edit mode
+        mesh = bpy.data.meshes.new("bb_fb_apply")
+        obj = bpy.data.objects.new("bb_fb_apply", mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+        # Build a 1x1x1 box with NO active image — box builder skips
+        # material/UV assignment when there is no image available
+        success, msg = execute_box_builder(
+            Vector((0, 0, 0)),
+            Vector((1, 0, 1)),
+            1.0,
+            Vector((1, 0, 0)),
+            Vector((0, 0, 1)),
+            Vector((0, 1, 0)),
+            obj, ppm, False,
+        )
+        self.assertTrue(success, msg)
+
+        # Verify box was created with no material
+        self.assertEqual(len(obj.data.materials), 0,
+                         "Box should have no materials before texture apply")
+
+        # Switch to object mode — file browser apply works on all faces
+        # of the selected object when in object mode
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Apply texture via the file browser route, mocking the file
+        # browser selection to return our test texture path
+        with patch.object(handlers_module, 'get_selected_image_path',
+                          return_value=TEXTURE_PATH):
+            apply_texture_from_file_browser()
+
+        # Verify material was applied
+        self.assertEqual(len(obj.data.materials), 1,
+                         "Box should have 1 material after texture apply")
+        mat = obj.data.materials[0]
+        image = get_image_from_material(mat)
+        self.assertIsNotNone(image, "Material should have an image texture")
+
+        # Re-enter edit mode to inspect UVs
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        bm.faces.ensure_lookup_table()
+
+        self.assertEqual(len(bm.faces), 6, "Box should have 6 faces")
+
+        # Blank faces get per-face local projection with clean defaults
+        # from _apply_regular_uv_projection: scale=1.0, rotation=0.0, offset=0.0
+        for face in bm.faces:
+            key = _face_key(face)
+            t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
+            self.assertAlmostEqual(
+                t['scale_u'], 1.0, places=3,
+                msg=f"Face {key} scale_u={t['scale_u']}")
+            self.assertAlmostEqual(
+                t['scale_v'], 1.0, places=3,
+                msg=f"Face {key} scale_v={t['scale_v']}")
+            self.assertAlmostEqual(
+                t['rotation'], 0.0, places=3,
+                msg=f"Face {key} rotation={t['rotation']}")
+            self.assertAlmostEqual(
+                t['offset_x'], 0.0, places=3,
+                msg=f"Face {key} offset_x={t['offset_x']}")
+            self.assertAlmostEqual(
+                t['offset_y'], 0.0, places=3,
                 msg=f"Face {key} offset_y={t['offset_y']}")
 
     def test_active_face_texture(self):
