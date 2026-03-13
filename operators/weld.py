@@ -252,19 +252,27 @@ class MESH_OT_context_weld(bpy.types.Operator):
         bm.select_mode = {'FACE'}
         context.tool_settings.mesh_select_mode = (False, False, True)
 
-        # Extrude along normal
-        result = bmesh.ops.extrude_face_region(bm, geom=selected_faces)
+        # Recompute normals so the filled face has a valid normal before we
+        # capture it — contextual_create doesn't guarantee up-to-date normals.
+        bm.normal_update()
+        # The filled face's normal points outward (same as the surrounding
+        # plane). Negate it so the corridor extrudes inward through the wall.
+        face_normal = -selected_faces[0].normal.copy()
+
+        # Include the face's edges in geom so extrude_face_region properly
+        # consumes the original face instead of leaving it behind.
+        extrude_geom = list(selected_faces)
+        for f in selected_faces:
+            extrude_geom.extend(f.edges)
+        result = bmesh.ops.extrude_face_region(bm, geom=extrude_geom)
 
         # Get the new geometry and move it
         extruded_verts = [g for g in result['geom'] if isinstance(g, bmesh.types.BMVert)]
+        extruded_faces = [g for g in result['geom'] if isinstance(g, bmesh.types.BMFace)]
 
         if not extruded_verts:
             self.report({'ERROR'}, "Extrude failed")
             return {'CANCELLED'}
-
-        # Use the face normal to determine extrude direction
-        # The normal should point inward (into the void), so we extrude along it
-        face_normal = selected_faces[0].normal.copy()
 
         # Deselect old, select new
         for f in bm.faces:
@@ -275,7 +283,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
             v.select = False
 
         # Select extruded geometry
-        extruded_faces = [g for g in result['geom'] if isinstance(g, bmesh.types.BMFace)]
         for f in extruded_faces:
             f.select = True
 

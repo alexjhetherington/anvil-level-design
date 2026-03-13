@@ -64,15 +64,13 @@ class CorridorWeldVerticalTest(AnvilTestCase):
     def test_corridor_on_vertical_plane(self):
         """Cube cut a hole in a textured vertical plane, then corridor weld.
 
-        The vertical plane faces -Y. A horizontal cube cut creates a rectangular
-        hole. Corridor weld fills the hole and extrudes along the filled face's
-        normal (+Y). Since the cube cut direction is also +Y, the corridor
-        geometry is correct.
+        The vertical plane faces -Y (winding order gives -Y normal).
+        A horizontal cube cut creates a rectangular hole. Corridor weld
+        fills the hole and extrudes inward (+Y, negated face normal).
 
-        Geometry after corridor:
+        Geometry after corridor (9 faces, 12 verts):
         - 4 frame faces (from cube cut) on the original plane at y=0
-        - 1 inner face at y=0 closing the hole (normal +Y, faces into corridor)
-        - 1 back face at y=0.5 (normal -Y, end of corridor)
+        - 1 back face at y=0.5 (end of corridor)
         - 4 side faces connecting y=0 to y=0.5
         """
         obj = create_vertical_plane("corridor_vert")
@@ -125,7 +123,7 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         bm.verts.ensure_lookup_table()
 
         self.assertEqual(len(bm.verts), 12)
-        self.assertEqual(len(bm.faces), 10)
+        self.assertEqual(len(bm.faces), 9)
 
         # Verify all vertex positions
         expected_verts = sorted([
@@ -135,7 +133,7 @@ class CorridorWeldVerticalTest(AnvilTestCase):
             # Hole corners (from cube cut) at y=0
             (0.25, 0.0, 0.25), (0.75, 0.0, 0.25),
             (0.75, 0.0, 0.75), (0.25, 0.0, 0.75),
-            # Extruded corridor verts at y=0.5 (face normal +Y * depth 0.5)
+            # Extruded corridor verts at y=+0.5 (negated -Y normal * depth 0.5)
             (0.25, 0.5, 0.25), (0.75, 0.5, 0.25),
             (0.75, 0.5, 0.75), (0.25, 0.5, 0.75),
         ])
@@ -157,18 +155,11 @@ class CorridorWeldVerticalTest(AnvilTestCase):
             (0, -1, 0, 0.12, 0.0, 0.5): sorted([
                 (0.0, 0.0, 0.0), (0.0, 0.0, 1.0),
                 (0.25, 0.0, 0.25), (0.25, 0.0, 0.75)]),
-            # Inner face (closing the hole at y=0, normal +Y)
-            (0, 1, 0, 0.5, 0.0, 0.5): sorted([
-                (0.25, 0.0, 0.25), (0.25, 0.0, 0.75),
-                (0.75, 0.0, 0.25), (0.75, 0.0, 0.75)]),
-            # Back face (end of corridor at y=0.5, normal -Y)
+            # Back face (end of corridor at y=0.5)
             (0, -1, 0, 0.5, 0.5, 0.5): sorted([
                 (0.25, 0.5, 0.25), (0.25, 0.5, 0.75),
                 (0.75, 0.5, 0.25), (0.75, 0.5, 0.75)]),
             # Side faces (connecting y=0 to y=0.5)
-            (-1, 0, 0, 0.75, 0.25, 0.5): sorted([
-                (0.75, 0.0, 0.25), (0.75, 0.0, 0.75),
-                (0.75, 0.5, 0.25), (0.75, 0.5, 0.75)]),
             (0, 0, 1, 0.5, 0.25, 0.25): sorted([
                 (0.25, 0.0, 0.25), (0.25, 0.5, 0.25),
                 (0.75, 0.0, 0.25), (0.75, 0.5, 0.25)]),
@@ -178,6 +169,9 @@ class CorridorWeldVerticalTest(AnvilTestCase):
             (1, 0, 0, 0.25, 0.25, 0.5): sorted([
                 (0.25, 0.0, 0.25), (0.25, 0.0, 0.75),
                 (0.25, 0.5, 0.25), (0.25, 0.5, 0.75)]),
+            (-1, 0, 0, 0.75, 0.25, 0.5): sorted([
+                (0.75, 0.0, 0.25), (0.75, 0.0, 0.75),
+                (0.75, 0.5, 0.25), (0.75, 0.5, 0.75)]),
         }
 
         for face in bm.faces:
@@ -191,24 +185,19 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
         uv_layer = bm.loops.layers.uv[0]
 
-        # Expected UV transforms per face.
-        # Key: face_key → (rotation, offset_x, offset_y)
-        # All faces have scale_u=1.0, scale_v=1.0.
         expected_uvs = {
             # Frame faces
             (0, -1, 0, 0.5, 0.0, 0.88):  (0.0, 0.25, 0.75),
             (0, -1, 0, 0.88, 0.0, 0.5):  (-90.0, 0.75, 0.75),
             (0, -1, 0, 0.5, 0.0, 0.12):  (180.0, 0.75, 0.25),
             (0, -1, 0, 0.12, 0.0, 0.5):  (90.0, 0.25, 0.25),
-            # Inner face
-            (0, 1, 0, 0.5, 0.0, 0.5):    (180.0, 0.25, 0.75),
             # Back face
             (0, -1, 0, 0.5, 0.5, 0.5):   (0.0, 0.0, 0.0),
             # Side faces
-            (-1, 0, 0, 0.75, 0.25, 0.5): (90.0, 0.75, 0.25),
             (0, 0, 1, 0.5, 0.25, 0.25):  (0.0, 0.25, 0.25),
             (0, 0, -1, 0.5, 0.25, 0.75): (180.0, 0.75, 0.75),
             (1, 0, 0, 0.25, 0.25, 0.5):  (-90.0, 0.25, 0.75),
+            (-1, 0, 0, 0.75, 0.25, 0.5): (90.0, 0.75, 0.25),
         }
 
         for face in bm.faces:
@@ -239,11 +228,9 @@ class CorridorWeldSlopedTest(AnvilTestCase):
     """Test corridor weld after cube cut on a sloped plane.
 
     Demonstrates the current behavior where the corridor extrudes along
-    the face normal (perpendicular to the slope) rather than along the
-    cube cut direction (horizontal). This causes:
-    - The corridor to extend diagonally instead of horizontally
-    - The back face to be sloped (parallel to the front face) instead of
-      vertical (perpendicular to the cube cut direction)
+    the negated face normal (into the wall). For the sloped plane, this
+    still produces a diagonal corridor — the direction bug is that it
+    should follow the cube cut direction instead of the face normal.
     """
 
     def test_corridor_on_sloped_plane(self):
@@ -254,11 +241,11 @@ class CorridorWeldSlopedTest(AnvilTestCase):
 
         A horizontal cube cut (local_z along +Y) creates a hole where
         the cuboid intersects the slope. Corridor weld fills the hole
-        and extrudes along the face normal.
+        and extrudes along the negated face normal (into the wall).
 
-        Current behavior (bug): extrusion follows face normal (0, 0.707, -0.707),
-        producing a corridor that goes diagonally. The back face is parallel to
-        the sloped front face.
+        Current behavior (bug): extrusion follows negated face normal
+        ~(0, 0.707, -0.707), producing a diagonal corridor. The back
+        face is parallel to the sloped front face.
 
         Expected behavior: extrusion should follow the cube cut direction (+Y),
         producing a horizontal corridor. The back face should be vertical.
@@ -314,16 +301,14 @@ class CorridorWeldSlopedTest(AnvilTestCase):
         bm.verts.ensure_lookup_table()
 
         self.assertEqual(len(bm.verts), 12)
-        self.assertEqual(len(bm.faces), 10)
+        self.assertEqual(len(bm.faces), 9)
 
-        # d = 1/sqrt(2) ≈ 0.7071: the face normal component magnitude.
-        # Extrusion displacement = face_normal * depth
-        #   = (0, 0.7071, -0.7071) * 1.0
-        # So extruded verts are offset by (0, +0.7071, -0.7071) from hole corners.
+        # Extrusion goes along negated face normal ~(0, 0.707, -0.707) * depth 1.0
+        # Hole corners offset by (0, +0.7071, -0.7071):
+        #   (0.25, 0.25, 0.25) → (0.25, 0.9571, -0.4571)
+        #   (0.25, 0.75, 0.75) → (0.25, 1.4571, 0.0429)
         #
-        # BUG: these extruded positions are wrong. Correct behavior would
-        # extrude along +Y (cube cut direction), giving back-face verts at
-        # constant z values (not sloped).
+        # BUG: correct behavior would extrude along +Y (cube cut direction).
         expected_verts = sorted([
             # Original plane corners
             (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
@@ -331,14 +316,10 @@ class CorridorWeldSlopedTest(AnvilTestCase):
             # Hole corners on slope (where cuboid intersects plane z=y)
             (0.25, 0.25, 0.25), (0.75, 0.25, 0.25),
             (0.75, 0.75, 0.75), (0.25, 0.75, 0.75),
-            # Extruded verts (current buggy behavior: along face normal)
-            # (0.25, 0.25+0.7071, 0.25-0.7071):
+            # Extruded verts (along negated face normal, diagonal — bug)
             (0.25, 0.9571, -0.4571),
-            # (0.75, 0.25+0.7071, 0.25-0.7071):
             (0.75, 0.9571, -0.4571),
-            # (0.75, 0.75+0.7071, 0.75-0.7071):
             (0.75, 1.4571, 0.0429),
-            # (0.25, 0.75+0.7071, 0.75-0.7071):
             (0.25, 1.4571, 0.0429),
         ])
         actual_verts = sorted([_vert_key(v) for v in bm.verts])
@@ -346,7 +327,7 @@ class CorridorWeldSlopedTest(AnvilTestCase):
 
         # Verify each face's vertices
         expected_face_verts = {
-            # Frame faces (original sloped plane, normal ≈ (0, -0.71, 0.71))
+            # Frame faces (original sloped plane, normal ~(0, -0.71, 0.71))
             (0, -1, 1, 0.5, 0.88, 0.88): sorted([
                 (0.0, 1.0, 1.0), (0.25, 0.75, 0.75),
                 (0.75, 0.75, 0.75), (1.0, 1.0, 1.0)]),
@@ -359,21 +340,11 @@ class CorridorWeldSlopedTest(AnvilTestCase):
             (0, -1, 1, 0.12, 0.5, 0.5): sorted([
                 (0.0, 0.0, 0.0), (0.0, 1.0, 1.0),
                 (0.25, 0.25, 0.25), (0.25, 0.75, 0.75)]),
-            # Inner face (closing hole on slope, normal ≈ (0, 0.71, -0.71))
-            (0, 1, -1, 0.5, 0.5, 0.5): sorted([
-                (0.25, 0.25, 0.25), (0.25, 0.75, 0.75),
-                (0.75, 0.25, 0.25), (0.75, 0.75, 0.75)]),
-            # Back face (end of corridor, normal ≈ (0, -0.71, 0.71))
-            # BUG: this face is sloped (parallel to the front face).
-            # Correct behavior: back face should be vertical with all
-            # verts at a constant y, and z matching the hole z values.
+            # Back face (end of corridor, normal ~(0, -0.71, 0.71))
             (0, -1, 1, 0.5, 1.21, -0.21): sorted([
                 (0.25, 0.9571, -0.4571), (0.25, 1.4571, 0.0429),
                 (0.75, 0.9571, -0.4571), (0.75, 1.4571, 0.0429)]),
             # Side faces
-            (-1, 0, 0, 0.75, 0.85, 0.15): sorted([
-                (0.75, 0.25, 0.25), (0.75, 0.75, 0.75),
-                (0.75, 0.9571, -0.4571), (0.75, 1.4571, 0.0429)]),
             (0, 1, 1, 0.5, 0.6, -0.1): sorted([
                 (0.25, 0.25, 0.25), (0.25, 0.9571, -0.4571),
                 (0.75, 0.25, 0.25), (0.75, 0.9571, -0.4571)]),
@@ -383,6 +354,9 @@ class CorridorWeldSlopedTest(AnvilTestCase):
             (1, 0, 0, 0.25, 0.85, 0.15): sorted([
                 (0.25, 0.25, 0.25), (0.25, 0.75, 0.75),
                 (0.25, 0.9571, -0.4571), (0.25, 1.4571, 0.0429)]),
+            (-1, 0, 0, 0.75, 0.85, 0.15): sorted([
+                (0.75, 0.25, 0.25), (0.75, 0.75, 0.75),
+                (0.75, 0.9571, -0.4571), (0.75, 1.4571, 0.0429)]),
         }
 
         for face in bm.faces:
@@ -396,24 +370,19 @@ class CorridorWeldSlopedTest(AnvilTestCase):
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
         uv_layer = bm.loops.layers.uv[0]
 
-        # Expected UV transforms per face.
-        # Key: face_key → (rotation, offset_x, offset_y)
-        # All faces have scale_u=1.0, scale_v=1.0.
         expected_uvs = {
             # Frame faces
             (0, -1, 1, 0.5, 0.88, 0.88):  (0.0, 0.25, 0.06),
             (0, -1, 1, 0.88, 0.5, 0.5):   (-90.0, 0.75, 0.06),
             (0, -1, 1, 0.5, 0.12, 0.12):  (180.0, 0.75, 0.35),
             (0, -1, 1, 0.12, 0.5, 0.5):   (90.0, 0.25, 0.35),
-            # Inner face
-            (0, 1, -1, 0.5, 0.5, 0.5):    (180.0, 0.25, 0.06),
             # Back face
             (0, -1, 1, 0.5, 1.21, -0.21): (0.0, 0.0, 0.0),
             # Side faces
-            (-1, 0, 0, 0.75, 0.85, 0.15): (90.0, 0.75, 0.35),
             (0, 1, 1, 0.5, 0.6, -0.1):    (0.0, 0.25, 0.35),
             (0, -1, -1, 0.5, 1.1, 0.4):   (180.0, 0.75, 0.06),
             (1, 0, 0, 0.25, 0.85, 0.15):  (-90.0, 0.25, 0.06),
+            (-1, 0, 0, 0.75, 0.85, 0.15): (90.0, 0.75, 0.35),
         }
 
         for face in bm.faces:
