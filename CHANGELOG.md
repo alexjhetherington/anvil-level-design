@@ -4,6 +4,7 @@
 - Cube cut now cuts faces that are coplanar with the cube if they point outward
 - Even more sensible texturing on currently blank textured faces
 - Fix a class of bugs relating to invalid cache on undo / redo
+- Texture application from file browser handles undo properly
 
 ## 1.3.3
 - Fix incorrect UV on extruded face when using the extrusion tool

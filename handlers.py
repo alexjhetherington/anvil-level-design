@@ -1454,6 +1454,10 @@ def apply_texture_from_file_browser():
         _active_image_just_set = True
         redraw_ui_panels(context)
 
+        # Push an undo step so Ctrl+Z undoes the texture application
+        # (timer callbacks run outside the operator/undo system)
+        bpy.ops.ed.undo_push(message="Apply Texture from File Browser")
+
     except Exception as e:
         print(f"Anvil Level Design: Error applying texture from file browser: {e}", flush=True)
 
