@@ -2,7 +2,7 @@ import bpy
 import bmesh
 import math
 import time
-from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty, EnumProperty, CollectionProperty
+from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty, EnumProperty, CollectionProperty
 
 
 # Flag to prevent recursive updates
@@ -575,6 +575,13 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         name="Weld Depth",
         description="Depth for corridor extrusion",
         default=0.0,
+    )
+
+    weld_direction: FloatVectorProperty(
+        name="Weld Direction",
+        description="Extrusion direction for corridor (from cube cut)",
+        size=3,
+        default=(0.0, 0.0, 0.0),
     )
 
 

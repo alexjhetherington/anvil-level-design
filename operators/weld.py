@@ -15,13 +15,15 @@ matching the current edge selection against stored entries.
 
 import bpy
 import bmesh
+from mathutils import Vector
 
 from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer
 from ..handlers import cache_single_face, face_data_cache
 from .texture_apply import set_uv_from_other_face
 
 
-# Stack of weld entries: each is (depth, frozenset_of_edge_indices).
+# Stack of weld entries: each is (depth, frozenset_of_edge_indices, direction).
+# direction is a tuple of 3 floats (the cube cut local_z vector).
 # Pushed by set_weld_from_edge_selection (cube cut), never popped — entries
 # become inert once the edge selection no longer matches.  This survives
 # undo/redo (module globals are outside Blender's undo system).
@@ -89,10 +91,18 @@ def _derive_weld_mode(bm, depth):
     return 'NONE', 0.0
 
 
-def set_weld_from_edge_selection(context, depth):
+def _direction_for_stack_entry(entry):
+    """Extract direction tuple from a stack entry, handling old 2-tuple format."""
+    if len(entry) >= 3:
+        return entry[2]
+    return (0.0, 0.0, 0.0)
+
+
+def set_weld_from_edge_selection(context, depth, direction):
     """Analyze current edge selection and push a weld entry onto the stack.
 
     Called from cube_cut after successful execution.
+    direction is a Vector or tuple of 3 floats (the cube cut local_z).
     """
     obj = context.active_object
     if not obj or obj.type != 'MESH':
@@ -105,29 +115,35 @@ def set_weld_from_edge_selection(context, depth):
     props = context.scene.level_design_props
     props.weld_mode = mode
     props.weld_depth = effective_depth
-    debug_log(f"[Weld] Set weld mode: {mode} (depth={depth})")
+    dir_tuple = tuple(direction)
+    props.weld_direction = dir_tuple
+    debug_log(f"[Weld] Set weld mode: {mode} (depth={depth}, direction={dir_tuple})")
 
     edge_indices = frozenset(e.index for e in bm.edges if e.select)
-    _weld_stack.append((depth, edge_indices))
+    _weld_stack.append((depth, edge_indices, dir_tuple))
 
 
 def derive_weld_from_stack(bm):
     """Derive weld mode by matching current edge selection against the stack.
 
-    Returns (mode, depth) tuple.  Checks from most-recent to oldest.
+    Returns (mode, depth, direction) tuple.  Checks from most-recent to oldest.
+    direction is a tuple of 3 floats.
     """
     if not _weld_stack:
-        return 'NONE', 0.0
+        return 'NONE', 0.0, (0.0, 0.0, 0.0)
 
     current = frozenset(e.index for e in bm.edges if e.select)
     if not current:
-        return 'NONE', 0.0
+        return 'NONE', 0.0, (0.0, 0.0, 0.0)
 
-    for depth, edge_indices in reversed(_weld_stack):
+    for entry in reversed(_weld_stack):
+        depth = entry[0]
+        edge_indices = entry[1]
         if current == edge_indices:
-            return _derive_weld_mode(bm, depth)
+            mode, eff_depth = _derive_weld_mode(bm, depth)
+            return mode, eff_depth, _direction_for_stack_entry(entry)
 
-    return 'NONE', 0.0
+    return 'NONE', 0.0, (0.0, 0.0, 0.0)
 
 
 def sync_weld_props(context, bm):
@@ -140,12 +156,13 @@ def sync_weld_props(context, bm):
     if _weld_op_running:
         return
 
-    mode, depth = derive_weld_from_stack(bm)
+    mode, depth, direction = derive_weld_from_stack(bm)
     props = context.scene.level_design_props
     if mode != props.weld_mode or (mode != 'NONE' and abs(depth - props.weld_depth) > 0.001):
         props.weld_mode = mode
         props.weld_depth = depth
-        debug_log(f"[Weld] Sync props: {mode} (depth={depth})")
+        props.weld_direction = direction
+        debug_log(f"[Weld] Sync props: {mode} (depth={depth}, direction={direction})")
 
 
 def clear_weld_stack():
@@ -194,7 +211,10 @@ class MESH_OT_context_weld(bpy.types.Operator):
             if weld_mode == 'BRIDGE':
                 return self._execute_bridge(context)
             elif weld_mode == 'CORRIDOR':
-                return self._execute_corridor(context, props.weld_depth)
+                return self._execute_corridor(
+                    context, props.weld_depth,
+                    Vector(props.weld_direction),
+                )
         finally:
             _weld_op_running = False
 
@@ -212,7 +232,7 @@ class MESH_OT_context_weld(bpy.types.Operator):
         self.report({'INFO'}, "Bridged edge loops")
         return {'FINISHED'}
 
-    def _execute_corridor(self, context, depth):
+    def _execute_corridor(self, context, depth, direction):
         """Create a face from the edge loop, then extrude it to the given depth."""
         obj = context.active_object
         if not obj or obj.type != 'MESH':
@@ -262,15 +282,15 @@ class MESH_OT_context_weld(bpy.types.Operator):
             if uv_source_face:
                 break
 
-        # Step 2: Extrude the new face along its normal by the given depth
+        # Step 2: Extrude the new face along the cube cut direction by the given depth
         selected_faces = new_faces
 
         # Switch to face select mode for the extrude
         bm.select_mode = {'FACE'}
         context.tool_settings.mesh_select_mode = (False, False, True)
-        # The filled face's normal points outward (same as the surrounding
-        # plane). Negate it so the corridor extrudes inward through the wall.
-        face_normal = -selected_faces[0].normal.copy()
+        # Use the cube cut direction (local_z) stored when the cut was made.
+        # This ensures the corridor is axis-aligned even on sloped surfaces.
+        extrude_dir = direction.normalized()
 
         # Include the face's edges in geom so extrude_face_region properly
         # consumes the original face instead of leaving it behind.
@@ -299,9 +319,9 @@ class MESH_OT_context_weld(bpy.types.Operator):
         for f in extruded_faces:
             f.select = True
 
-        # Move extruded verts along the face normal
+        # Move extruded verts along the stored cube cut direction
         for v in extruded_verts:
-            v.co += face_normal * depth
+            v.co += extrude_dir * depth
 
         bm.normal_update()
 
