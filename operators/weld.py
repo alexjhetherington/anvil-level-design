@@ -16,7 +16,9 @@ matching the current edge selection against stored entries.
 import bpy
 import bmesh
 
-from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar
+from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer
+from ..handlers import cache_single_face, face_data_cache
+from .texture_apply import set_uv_from_other_face
 
 
 # Stack of weld entries: each is (depth, frozenset_of_edge_indices).
@@ -245,16 +247,27 @@ class MESH_OT_context_weld(bpy.types.Operator):
             f.select = True
         bm.select_flush_mode()
 
+        # Find an adjacent frame face to use as UV source for the cap later.
+        # Must be captured before extrusion since the filled face gets consumed.
+        bm.normal_update()
+        uv_source_face = None
+        for filled_face in new_faces:
+            for edge in filled_face.edges:
+                for neighbor in edge.link_faces:
+                    if neighbor != filled_face and neighbor.is_valid:
+                        uv_source_face = neighbor
+                        break
+                if uv_source_face:
+                    break
+            if uv_source_face:
+                break
+
         # Step 2: Extrude the new face along its normal by the given depth
         selected_faces = new_faces
 
         # Switch to face select mode for the extrude
         bm.select_mode = {'FACE'}
         context.tool_settings.mesh_select_mode = (False, False, True)
-
-        # Recompute normals so the filled face has a valid normal before we
-        # capture it — contextual_create doesn't guarantee up-to-date normals.
-        bm.normal_update()
         # The filled face's normal points outward (same as the surrounding
         # plane). Negate it so the corridor extrudes inward through the wall.
         face_normal = -selected_faces[0].normal.copy()
@@ -291,6 +304,20 @@ class MESH_OT_context_weld(bpy.types.Operator):
             v.co += face_normal * depth
 
         bm.normal_update()
+
+        # Apply UVs to the extruded cap face from the adjacent frame face.
+        # Then cache the cap so the depsgraph handler doesn't overwrite it.
+        if uv_source_face and uv_source_face.is_valid:
+            uv_layer = get_render_active_uv_layer(bm, me)
+            if uv_layer:
+                ppm = context.scene.level_design_props.pixels_per_meter
+                for cap_face in extruded_faces:
+                    set_uv_from_other_face(
+                        uv_source_face, cap_face, uv_layer, ppm, me,
+                        obj.matrix_world,
+                    )
+                    cache_single_face(cap_face, bm, ppm, me)
+
         bmesh.update_edit_mesh(me)
 
         context.scene.level_design_props.weld_mode = 'NONE'
