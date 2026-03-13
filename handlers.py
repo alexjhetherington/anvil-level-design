@@ -1719,9 +1719,19 @@ def on_undo_post(scene):
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
-    # Reset weld flag so undo-restored weld state is trusted
-    from .operators.weld import reset_weld_edge_tracking
-    reset_weld_edge_tracking()
+    # Re-derive weld state from the stack using undo-restored edge selection.
+    # Done here (not via timer) so the UI is correct immediately.
+    try:
+        context = bpy.context
+        if context.mode == 'EDIT_MESH':
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                import bmesh as _bm
+                bm = _bm.from_edit_mesh(obj.data)
+                from .operators.weld import sync_weld_props
+                sync_weld_props(context, bm)
+    except Exception:
+        pass
     # Use a short timer to ensure the depsgraph update triggered by undo
     # has completed before we clear the flag
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
@@ -1768,9 +1778,18 @@ def on_redo_post(scene):
     # Reset selection tracking so the next update detects a change
     _last_selected_face_indices = set()
     _last_active_face_index = -1
-    # Reset weld flag so redo-restored weld state is trusted
-    from .operators.weld import reset_weld_edge_tracking
-    reset_weld_edge_tracking()
+    # Re-derive weld state from the stack using redo-restored edge selection.
+    try:
+        context = bpy.context
+        if context.mode == 'EDIT_MESH':
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                import bmesh as _bm
+                bm = _bm.from_edit_mesh(obj.data)
+                from .operators.weld import sync_weld_props
+                sync_weld_props(context, bm)
+    except Exception:
+        pass
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
     # Refresh UI panels immediately
     try:
@@ -1992,11 +2011,11 @@ def on_depsgraph_update(scene, depsgraph):
                         if allow_active_image_update:
                             update_active_image_from_face(context)
 
-                    # Check if edge selection changed (for weld invalidation)
-                    if props.weld_mode != 'NONE':
-                        from .operators.weld import check_weld_selection_changed, clear_weld_state
-                        if check_weld_selection_changed(bm):
-                            clear_weld_state(context)
+                    # Keep weld scene properties in sync with the stack.
+                    # Handles both manual edge selection changes and post-
+                    # undo/redo state (the stack is the source of truth).
+                    from .operators.weld import sync_weld_props
+                    sync_weld_props(context, bm)
 
                     # Store data before any transform if cache is empty
                     if not face_data_cache and context.mode == 'EDIT_MESH':

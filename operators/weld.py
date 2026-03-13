@@ -5,6 +5,12 @@ Performs contextual weld actions based on the state left by previous operations
 (e.g., cube cut). The weld action depends on the edge selection topology:
 - Two distinct edge groups → Bridge Edge Loops
 - One distinct edge group → Corridor (fill face + extrude)
+
+Weld state is tracked via a module-level stack that maps edge selections to
+their weld parameters.  Because Blender's undo reliably restores *geometry*
+(and therefore edge selections) but does NOT reliably restore scene properties
+set by addon operators, the stack lets us re-derive the correct weld mode by
+matching the current edge selection against stored entries.
 """
 
 import bpy
@@ -13,11 +19,15 @@ import bmesh
 from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar
 
 
-# Track selected edge indices when weld was set, to detect selection changes
-_weld_edge_selection = frozenset()
+# Stack of weld entries: each is (depth, frozenset_of_edge_indices).
+# Pushed by set_weld_from_edge_selection (cube cut), never popped — entries
+# become inert once the edge selection no longer matches.  This survives
+# undo/redo (module globals are outside Blender's undo system).
+_weld_stack = []
 
-# After undo/redo, we need to re-sync edge tracking from the restored state
-_weld_needs_resync = False
+# Guard flag: True while the weld operator is executing, prevents the
+# depsgraph handler from running redundant derivation mid-operator.
+_weld_op_running = False
 
 
 def _count_edge_groups(bm):
@@ -60,13 +70,28 @@ def _count_edge_groups(bm):
     return groups
 
 
+def _derive_weld_mode(bm, depth):
+    """Derive the weld mode from the current edge selection and depth.
+
+    Returns (mode, depth) tuple where mode is 'BRIDGE', 'CORRIDOR', or 'NONE'.
+    """
+    groups = _count_edge_groups(bm)
+
+    if groups == 2:
+        return 'BRIDGE', 0.0
+    elif groups == 1:
+        selected_verts = list({v for e in bm.edges if e.select for v in e.verts})
+        if abs(depth) > 0 and are_verts_coplanar(selected_verts):
+            return 'CORRIDOR', depth
+        return 'NONE', 0.0
+    return 'NONE', 0.0
+
+
 def set_weld_from_edge_selection(context, depth):
-    """Analyze current edge selection and set the weld state on the scene.
+    """Analyze current edge selection and push a weld entry onto the stack.
 
     Called from cube_cut after successful execution.
     """
-    global _weld_edge_selection
-
     obj = context.active_object
     if not obj or obj.type != 'MESH':
         return
@@ -74,66 +99,56 @@ def set_weld_from_edge_selection(context, depth):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    groups = _count_edge_groups(bm)
+    mode, effective_depth = _derive_weld_mode(bm, depth)
     props = context.scene.level_design_props
+    props.weld_mode = mode
+    props.weld_depth = effective_depth
+    debug_log(f"[Weld] Set weld mode: {mode} (depth={depth})")
 
-    if groups == 2:
-        props.weld_mode = 'BRIDGE'
-        props.weld_depth = 0.0
-        debug_log(f"[Weld] Set weld mode: BRIDGE (2 edge groups)")
-    elif groups == 1:
-        selected_verts = list({v for e in bm.edges if e.select for v in e.verts})
-        if abs(depth) > 0 and are_verts_coplanar(selected_verts):
-            props.weld_mode = 'CORRIDOR'
-            props.weld_depth = depth
-            debug_log(f"[Weld] Set weld mode: CORRIDOR (1 edge group, depth={depth})")
-        else:
-            props.weld_mode = 'NONE'
-            props.weld_depth = 0.0
-            debug_log(f"[Weld] No weld: 1 edge group (depth={depth}, coplanar={are_verts_coplanar(selected_verts)})")
-    else:
-        props.weld_mode = 'NONE'
-        props.weld_depth = 0.0
-        debug_log(f"[Weld] No weld: {groups} edge groups")
-
-    _weld_edge_selection = frozenset(e.index for e in bm.edges if e.select)
+    edge_indices = frozenset(e.index for e in bm.edges if e.select)
+    _weld_stack.append((depth, edge_indices))
 
 
-def check_weld_selection_changed(bm):
-    """Check if edge selection has changed since weld was set.
+def derive_weld_from_stack(bm):
+    """Derive weld mode by matching current edge selection against the stack.
 
-    Returns True if selection differs from the stored weld selection.
-    After undo/redo, re-syncs edge tracking from the restored state.
+    Returns (mode, depth) tuple.  Checks from most-recent to oldest.
     """
-    global _weld_edge_selection, _weld_needs_resync
-
-    if _weld_needs_resync:
-        # Undo/redo restored the weld state; re-sync edge tracking
-        _weld_edge_selection = frozenset(e.index for e in bm.edges if e.select)
-        _weld_needs_resync = False
-        return False
+    if not _weld_stack:
+        return 'NONE', 0.0
 
     current = frozenset(e.index for e in bm.edges if e.select)
-    return current != _weld_edge_selection
+    if not current:
+        return 'NONE', 0.0
+
+    for depth, edge_indices in reversed(_weld_stack):
+        if current == edge_indices:
+            return _derive_weld_mode(bm, depth)
+
+    return 'NONE', 0.0
 
 
-def clear_weld_state(context):
-    """Clear the weld state."""
-    props = context.scene.level_design_props
-    if props.weld_mode != 'NONE':
-        debug_log(f"[Weld] Cleared weld state (was {props.weld_mode})")
-        props.weld_mode = 'NONE'
-        props.weld_depth = 0.0
+def sync_weld_props(context, bm):
+    """Re-derive weld state from the stack and update scene properties.
 
-
-def reset_weld_edge_tracking():
-    """Reset edge selection tracking. Called on undo/redo.
-
-    Sets a resync flag so the next depsgraph check re-populates edge tracking
-    from the undo-restored state rather than immediately clearing the weld.
+    Called from undo/redo handlers and the depsgraph handler to keep
+    scene properties in sync with the authoritative stack state.
+    Skipped while the weld operator is executing.
     """
-    global _weld_needs_resync
-    _weld_needs_resync = True
+    if _weld_op_running:
+        return
+
+    mode, depth = derive_weld_from_stack(bm)
+    props = context.scene.level_design_props
+    if mode != props.weld_mode or (mode != 'NONE' and abs(depth - props.weld_depth) > 0.001):
+        props.weld_mode = mode
+        props.weld_depth = depth
+        debug_log(f"[Weld] Sync props: {mode} (depth={depth})")
+
+
+def clear_weld_stack():
+    """Clear the weld stack.  Called on test cleanup and mode changes."""
+    _weld_stack.clear()
 
 
 def get_weld_display_name(weld_mode):
@@ -156,6 +171,8 @@ class MESH_OT_context_weld(bpy.types.Operator):
         return is_level_design_workspace()
 
     def execute(self, context):
+        global _weld_op_running
+
         if not hasattr(context.scene, 'level_design_props'):
             return {'CANCELLED'}
 
@@ -170,10 +187,14 @@ class MESH_OT_context_weld(bpy.types.Operator):
                 context.mode == 'EDIT_MESH'):
             return {'CANCELLED'}
 
-        if weld_mode == 'BRIDGE':
-            return self._execute_bridge(context)
-        elif weld_mode == 'CORRIDOR':
-            return self._execute_corridor(context, props.weld_depth)
+        _weld_op_running = True
+        try:
+            if weld_mode == 'BRIDGE':
+                return self._execute_bridge(context)
+            elif weld_mode == 'CORRIDOR':
+                return self._execute_corridor(context, props.weld_depth)
+        finally:
+            _weld_op_running = False
 
         return {'CANCELLED'}
 
@@ -195,22 +216,37 @@ class MESH_OT_context_weld(bpy.types.Operator):
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
 
-        # Step 1: Create face from selected edges (like pressing F)
-        try:
-            bpy.ops.mesh.edge_face_add()
-        except RuntimeError as e:
-            self.report({'ERROR'}, f"Fill failed: {e}")
-            return {'CANCELLED'}
-
-        # Step 2: Extrude the new face along its normal by the given depth
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
 
-        # The newly created face should be selected
-        selected_faces = [f for f in bm.faces if f.select]
-        if not selected_faces:
+        # Step 1: Create face from selected edges using bmesh directly
+        # (avoids bpy.ops.mesh.edge_face_add which creates a separate undo
+        # step, breaking Ctrl+Z restoration of the weld state)
+        selected_edges = [e for e in bm.edges if e.select]
+        if not selected_edges:
+            self.report({'ERROR'}, "No edges selected")
+            return {'CANCELLED'}
+
+        try:
+            result = bmesh.ops.contextual_create(bm, geom=selected_edges)
+        except Exception as e:
+            self.report({'ERROR'}, f"Fill failed: {e}")
+            return {'CANCELLED'}
+
+        new_faces = result.get('faces', [])
+        if not new_faces:
             self.report({'ERROR'}, "No face created")
             return {'CANCELLED'}
+
+        # Select the new face(s)
+        for f in bm.faces:
+            f.select = False
+        for f in new_faces:
+            f.select = True
+        bm.select_flush_mode()
+
+        # Step 2: Extrude the new face along its normal by the given depth
+        selected_faces = new_faces
 
         # Switch to face select mode for the extrude
         bm.select_mode = {'FACE'}

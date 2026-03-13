@@ -40,8 +40,8 @@ def _purge_all():
 
     # Reset weld module state to prevent stale BMesh references from being
     # accessed in the depsgraph handler after objects are deleted.
-    from ..operators.weld import reset_weld_edge_tracking
-    reset_weld_edge_tracking()
+    from ..operators.weld import clear_weld_stack
+    clear_weld_stack()
     props = bpy.context.scene.level_design_props
     props.weld_mode = 'NONE'
     props.weld_depth = 0.0
