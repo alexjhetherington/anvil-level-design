@@ -588,6 +588,7 @@ class pick_image_from_face(Operator):
         closest_distance = float('inf')
         hit_obj = None
         hit_mat_index = None
+        hit_face_index = None
 
         # Raycast against all visible mesh objects
         for obj in context.view_layer.objects:
@@ -621,6 +622,7 @@ class pick_image_from_face(Operator):
                     closest_distance = distance
                     hit_obj = obj
                     hit_mat_index = bm.faces[face_index].material_index
+                    hit_face_index = face_index
             else:
                 # Use evaluated mesh for object mode or non-active edit objects
                 depsgraph = context.evaluated_depsgraph_get()
@@ -647,6 +649,7 @@ class pick_image_from_face(Operator):
                     closest_distance = distance
                     hit_obj = obj
                     hit_mat_index = me_eval.polygons[face_index].material_index
+                    hit_face_index = face_index
 
                 # Clean up evaluated mesh
                 obj_eval.to_mesh_clear()
@@ -691,22 +694,7 @@ class pick_image_from_face(Operator):
         if mat is None:
             mat = create_material_with_image(image)
 
-        # Capture old material info BEFORE adding the new material slot.
-        # If captured after append, objects with zero materials would see
-        # face.material_index 0 resolve to the NEW material, incorrectly
-        # reporting has_image=True and preventing the scale/rotation/offset reset.
-        face_old_info = {}
-        for f in selected_faces:
-            f_mat_idx = f.material_index
-            f_mat = me.materials[f_mat_idx] if f_mat_idx < len(me.materials) else None
-            f_img = get_image_from_material(f_mat)
-            face_old_info[f.index] = {
-                'mat': f_mat,
-                'has_image': f_img is not None,
-                'tex_dims': get_texture_dimensions_from_material(f_mat, ppm),
-            }
-
-        # Ensure material slot exists (after capturing old info)
+        # Ensure material slot exists
         if mat.name not in me.materials:
             me.materials.append(mat)
 
@@ -715,6 +703,23 @@ class pick_image_from_face(Operator):
         # Assign material to all selected faces
         for face in selected_faces:
             face.material_index = mat_index
+
+        # Build source face reference for UV transfer from hovered face
+        is_same_object = (hit_obj == edit_obj)
+        _source_bm = None
+        if is_same_object:
+            _source_face = bm_edit.faces[hit_face_index]
+            _source_uv = uv_layer
+            _source_me = me
+            _source_to_target = None
+        else:
+            _source_bm = bmesh.new()
+            _source_bm.from_mesh(hit_obj.data)
+            _source_bm.faces.ensure_lookup_table()
+            _source_face = _source_bm.faces[hit_face_index]
+            _source_uv = _source_bm.loops.layers.uv.verify()
+            _source_me = hit_obj.data
+            _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
 
         new_is_hotspottable = is_texture_hotspottable(image.name)
 
@@ -743,37 +748,47 @@ class pick_image_from_face(Operator):
                 for face in all_hotspot_faces:
                     if face.is_valid:
                         cache_single_face(face, bm_edit, ppm, me)
-        elif props.auto_hotspot and not new_is_hotspottable and any_previous_was_hotspottable and any_connected_has_hotspot:
-            all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
+        else:
+            if (props.auto_hotspot and not new_is_hotspottable
+                    and any_previous_was_hotspottable and any_connected_has_hotspot):
+                all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
-            if all_hotspot_faces:
-                selected_face_indices = {f.index for f in bm_edit.faces if f.select}
-                active_face_index = bm_edit.faces.active.index if bm_edit.faces.active else None
+                if all_hotspot_faces:
+                    selected_face_indices = {f.index for f in bm_edit.faces if f.select}
+                    active_face_index = bm_edit.faces.active.index if bm_edit.faces.active else None
 
-                seam_mode = props.hotspot_seam_mode
-                allow_combined_faces = edit_obj.anvil_allow_combined_faces
-                size_weight = edit_obj.anvil_hotspot_size_weight
+                    seam_mode = props.hotspot_seam_mode
+                    allow_combined_faces = edit_obj.anvil_allow_combined_faces
+                    size_weight = edit_obj.anvil_hotspot_size_weight
 
-                apply_hotspots_to_mesh(
-                    bm_edit, me, all_hotspot_faces, seam_mode, allow_combined_faces,
-                    edit_obj.matrix_world, ppm, size_weight
+                    apply_hotspots_to_mesh(
+                        bm_edit, me, all_hotspot_faces, seam_mode, allow_combined_faces,
+                        edit_obj.matrix_world, ppm, size_weight
+                    )
+
+                    bm_edit.faces.ensure_lookup_table()
+                    for face in bm_edit.faces:
+                        face.select = face.index in selected_face_indices
+                    if active_face_index is not None and active_face_index < len(bm_edit.faces):
+                        bm_edit.faces.active = bm_edit.faces[active_face_index]
+
+                    for face in all_hotspot_faces:
+                        if face.is_valid:
+                            cache_single_face(face, bm_edit, ppm, me)
+
+            # Transfer UV from hovered (source) face to each selected (target) face
+            for target_face in selected_faces:
+                set_uv_from_other_face(
+                    _source_face, target_face, uv_layer,
+                    ppm, me, edit_obj.matrix_world,
+                    bm=bm_edit,
+                    source_uv_layer=_source_uv,
+                    source_me=_source_me,
+                    source_to_target=_source_to_target,
                 )
 
-                bm_edit.faces.ensure_lookup_table()
-                for face in bm_edit.faces:
-                    face.select = face.index in selected_face_indices
-                if active_face_index is not None and active_face_index < len(bm_edit.faces):
-                    bm_edit.faces.active = bm_edit.faces[active_face_index]
-
-                for face in all_hotspot_faces:
-                    if face.is_valid:
-                        cache_single_face(face, bm_edit, ppm, me)
-
-            from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm_edit)
-        else:
-            from ..handlers import _apply_regular_uv_projection
-            _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm_edit)
+        if _source_bm is not None:
+            _source_bm.free()
 
         bmesh.update_edit_mesh(me)
 

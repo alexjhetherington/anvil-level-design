@@ -95,7 +95,7 @@ class TextureApplyTest(AnvilTestCase):
 
     def test_apply_from_adjacent_face(self):
         """Applying from an adjacent face should transfer scale and rotation."""
-        obj = _create_two_face_plane("apply_adjacent", 2.0, 2.0, 45.0, 0.1, 0.1)
+        obj = _create_two_face_plane("apply_adjacent", 2.5, 1.5, 45.0, 0.1, 0.1)
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
         ctx = _get_context_override()
@@ -106,7 +106,13 @@ class TextureApplyTest(AnvilTestCase):
         uv_layer = bm.loops.layers.uv.verify()
         bm.faces.ensure_lookup_table()
 
-        # Apply UV from face 1 (scale=2, rot=45) to face 0 (scale=1, rot=0)
+        # Verify faces start with different scales
+        source_t = derive_transform_from_uvs(bm.faces[1], uv_layer, ppm, obj.data)
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertAlmostEqual(source_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 1.0, places=3)
+
+        # Apply UV from face 1 (scale=2.5/1.5, rot=45) to face 0 (scale=1/1, rot=0)
         result = set_uv_from_other_face(
             bm.faces[1], bm.faces[0], uv_layer,
             ppm, obj.data, obj.matrix_world,
@@ -116,11 +122,9 @@ class TextureApplyTest(AnvilTestCase):
 
         target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
         self.assertIsNotNone(target_t)
-        self.assertAlmostEqual(target_t['scale_u'], 2.0, places=3)
-        self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.5, places=3)
         self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
-        # Offset is computed for seamless tiling at the shared edge,
-        # so just verify it was set (not None)
         self.assertIsNotNone(target_t['offset_x'])
         self.assertIsNotNone(target_t['offset_y'])
 
@@ -129,7 +133,7 @@ class TextureApplyTest(AnvilTestCase):
 
     def test_apply_different_params(self):
         """Applying from an adjacent face with different scale/rotation/offset."""
-        obj = _create_two_face_plane("apply_params", 3.0, 3.0, 30.0, 0.25, 0.5)
+        obj = _create_two_face_plane("apply_params", 3.0, 2.0, 30.0, 0.25, 0.5)
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
         ctx = _get_context_override()
@@ -139,6 +143,14 @@ class TextureApplyTest(AnvilTestCase):
         bm = bmesh.from_edit_mesh(obj.data)
         uv_layer = bm.loops.layers.uv.verify()
         bm.faces.ensure_lookup_table()
+
+        # Verify faces start with different scales
+        source_t = derive_transform_from_uvs(bm.faces[1], uv_layer, ppm, obj.data)
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertAlmostEqual(source_t['scale_u'], 3.0, places=3)
+        self.assertAlmostEqual(source_t['scale_v'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 1.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.0, places=3)
 
         result = set_uv_from_other_face(
             bm.faces[1], bm.faces[0], uv_layer,
@@ -150,7 +162,7 @@ class TextureApplyTest(AnvilTestCase):
         target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
         self.assertIsNotNone(target_t)
         self.assertAlmostEqual(target_t['scale_u'], 3.0, places=3)
-        self.assertAlmostEqual(target_t['scale_v'], 3.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
         self.assertAlmostEqual(target_t['rotation'], 30.0, places=3)
         self.assertIsNotNone(target_t['offset_x'])
         self.assertIsNotNone(target_t['offset_y'])
@@ -181,7 +193,7 @@ class TextureApplyTest(AnvilTestCase):
         uv_a = bm_a.loops.layers.uv.verify()
         bm_a.faces.ensure_lookup_table()
         bm_a.faces[0].material_index = 0
-        apply_uv_to_face(bm_a.faces[0], uv_a, 2.0, 2.0, 45.0, 0.3, 0.7,
+        apply_uv_to_face(bm_a.faces[0], uv_a, 2.5, 1.5, 45.0, 0.3, 0.7,
                          mat, ppm, mesh_a)
 
         # --- Target object (not in edit mode, standalone bmesh) ---
@@ -201,6 +213,14 @@ class TextureApplyTest(AnvilTestCase):
         obj_b.location.x = 1
         bpy.context.view_layer.update()
 
+        # Verify faces start with different scales
+        source_t = derive_transform_from_uvs(bm_a.faces[0], uv_a, ppm, mesh_a)
+        target_t = derive_transform_from_uvs(bm_b.faces[0], uv_b, ppm, mesh_b)
+        self.assertAlmostEqual(source_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(source_t['scale_v'], 1.5, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 1.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.0, places=3)
+
         # Objects side by side; source_to_target accounts for the offset
         source_to_target = obj_b.matrix_world.inverted() @ obj_a.matrix_world
 
@@ -214,8 +234,8 @@ class TextureApplyTest(AnvilTestCase):
 
         target_t = derive_transform_from_uvs(bm_b.faces[0], uv_b, ppm, mesh_b)
         self.assertIsNotNone(target_t)
-        self.assertAlmostEqual(target_t['scale_u'], 2.0, places=3)
-        self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.5, places=3)
         self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
         self.assertIsNotNone(target_t['offset_x'])
         self.assertIsNotNone(target_t['offset_y'])
