@@ -78,7 +78,12 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
         success, message = result
 
         if success:
-            set_weld_from_edge_selection(context, abs(depth), -local_z)
+            extrude_dir = -local_z
+            back_point = first_vertex + local_z * depth
+            back_plane_offset = back_point.dot(extrude_dir.normalized())
+            set_weld_from_edge_selection(
+                context, abs(depth), extrude_dir, back_plane_offset,
+            )
 
         return result
 

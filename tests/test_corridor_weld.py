@@ -87,13 +87,14 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         bmesh.update_edit_mesh(obj.data)
 
         # Cube cut: hole at x=[0.25,0.75], z=[0.25,0.75], passing through y=0
-        # Cuboid spans y=[-0.25, 0.25], fully enclosing the plane at y=0
+        # Cuboid spans y=[-0.25, 0.5], fully enclosing the plane at y=0
+        # depth=0.75 so the back plane lands at y=0.5 for the corridor cap
         with bpy.context.temp_override(**ctx):
             success, msg = execute_cube_cut(
                 bpy.context,
                 Vector((0.25, -0.25, 0.25)),
                 Vector((0.75, -0.25, 0.75)),
-                0.5,
+                0.75,
                 Vector((1, 0, 0)),
                 Vector((0, 0, 1)),
                 Vector((0, 1, 0)),
@@ -103,7 +104,8 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         yield 0.1
 
         # Set up weld state (simulating what the cube cut operator does)
-        set_weld_from_edge_selection(bpy.context, 0.5, (0, 1, 0))
+        # back_plane_offset = 0.5 (back plane at y=0.5 projected onto (0,1,0))
+        set_weld_from_edge_selection(bpy.context, 0.75, (0, 1, 0), 0.5)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'CORRIDOR',
@@ -240,8 +242,8 @@ class CorridorWeldSlopedTest(AnvilTestCase):
 
         A horizontal cube cut (local_z along +Y) creates a hole where
         the cuboid intersects the slope. Corridor weld fills the hole
-        and extrudes along the cube cut direction (+Y), producing a
-        horizontal corridor.  The back face is vertical.
+        and extrudes to the cube cut back plane, producing a horizontal
+        corridor with a flat cap perpendicular to the extrusion direction.
         """
         obj = _create_sloped_plane("corridor_slope")
 
@@ -274,7 +276,8 @@ class CorridorWeldSlopedTest(AnvilTestCase):
         yield 0.1
 
         # Set up weld state
-        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0))
+        # back_plane_offset = 1.0 (back plane at y=1.0 projected onto (0,1,0))
+        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'CORRIDOR',
@@ -296,10 +299,8 @@ class CorridorWeldSlopedTest(AnvilTestCase):
         self.assertEqual(len(bm.verts), 12)
         self.assertEqual(len(bm.faces), 9)
 
-        # Extrusion goes along +Y (cube cut direction) * depth 1.0
-        # Hole corners offset by (0, +1, 0):
-        #   (0.25, 0.25, 0.25) → (0.25, 1.25, 0.25)
-        #   (0.25, 0.75, 0.75) → (0.25, 1.75, 0.75)
+        # Extrusion projects hole corners onto the cube cut back plane at y=1.0.
+        # All extruded verts share y=1.0 (flat cap perpendicular to extrude dir).
         expected_verts = sorted([
             # Original plane corners
             (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
@@ -307,11 +308,11 @@ class CorridorWeldSlopedTest(AnvilTestCase):
             # Hole corners on slope (where cuboid intersects plane z=y)
             (0.25, 0.25, 0.25), (0.75, 0.25, 0.25),
             (0.75, 0.75, 0.75), (0.25, 0.75, 0.75),
-            # Extruded verts (along +Y, horizontal corridor)
-            (0.25, 1.25, 0.25),
-            (0.75, 1.25, 0.25),
-            (0.75, 1.75, 0.75),
-            (0.25, 1.75, 0.75),
+            # Extruded verts (projected onto back plane at y=1.0)
+            (0.25, 1.0, 0.25),
+            (0.75, 1.0, 0.25),
+            (0.75, 1.0, 0.75),
+            (0.25, 1.0, 0.75),
         ])
         actual_verts = sorted([_vert_key(v) for v in bm.verts])
         self.assertEqual(actual_verts, expected_verts)
@@ -331,27 +332,27 @@ class CorridorWeldSlopedTest(AnvilTestCase):
             (0, -1, 1, 0.12, 0.5, 0.5): sorted([
                 (0.0, 0.0, 0.0), (0.0, 1.0, 1.0),
                 (0.25, 0.25, 0.25), (0.25, 0.75, 0.75)]),
-            # Back face (end of corridor at y+1.0, same normal as sloped front)
-            (0, -1, 1, 0.5, 1.5, 0.5): sorted([
-                (0.25, 1.25, 0.25), (0.25, 1.75, 0.75),
-                (0.75, 1.25, 0.25), (0.75, 1.75, 0.75)]),
-            # Side faces (connecting hole to extruded verts along +Y)
+            # Back face (flat cap at y=1.0, perpendicular to extrude direction)
+            (0, -1, 0, 0.5, 1.0, 0.5): sorted([
+                (0.25, 1.0, 0.25), (0.25, 1.0, 0.75),
+                (0.75, 1.0, 0.25), (0.75, 1.0, 0.75)]),
+            # Side faces (connecting hole to extruded verts)
             # Bottom (z=0.25 plane, normal +Z facing into corridor)
-            (0, 0, 1, 0.5, 0.75, 0.25): sorted([
-                (0.25, 0.25, 0.25), (0.25, 1.25, 0.25),
-                (0.75, 0.25, 0.25), (0.75, 1.25, 0.25)]),
+            (0, 0, 1, 0.5, 0.62, 0.25): sorted([
+                (0.25, 0.25, 0.25), (0.25, 1.0, 0.25),
+                (0.75, 0.25, 0.25), (0.75, 1.0, 0.25)]),
             # Top (z=0.75 plane, normal -Z facing into corridor)
-            (0, 0, -1, 0.5, 1.25, 0.75): sorted([
-                (0.25, 0.75, 0.75), (0.25, 1.75, 0.75),
-                (0.75, 0.75, 0.75), (0.75, 1.75, 0.75)]),
+            (0, 0, -1, 0.5, 0.88, 0.75): sorted([
+                (0.25, 0.75, 0.75), (0.25, 1.0, 0.75),
+                (0.75, 0.75, 0.75), (0.75, 1.0, 0.75)]),
             # Left (x=0.25 plane)
-            (1, 0, 0, 0.25, 1.0, 0.5): sorted([
+            (1, 0, 0, 0.25, 0.75, 0.5): sorted([
                 (0.25, 0.25, 0.25), (0.25, 0.75, 0.75),
-                (0.25, 1.25, 0.25), (0.25, 1.75, 0.75)]),
+                (0.25, 1.0, 0.25), (0.25, 1.0, 0.75)]),
             # Right (x=0.75 plane)
-            (-1, 0, 0, 0.75, 1.0, 0.5): sorted([
+            (-1, 0, 0, 0.75, 0.75, 0.5): sorted([
                 (0.75, 0.25, 0.25), (0.75, 0.75, 0.75),
-                (0.75, 1.25, 0.25), (0.75, 1.75, 0.75)]),
+                (0.75, 1.0, 0.25), (0.75, 1.0, 0.75)]),
         }
 
         for face in bm.faces:

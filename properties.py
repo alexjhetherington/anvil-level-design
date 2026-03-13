@@ -584,6 +584,12 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=(0.0, 0.0, 0.0),
     )
 
+    weld_back_plane_offset: FloatProperty(
+        name="Weld Back Plane Offset",
+        description="Projection of the cube cut back plane onto the extrusion direction",
+        default=0.0,
+    )
+
 
 def register():
     bpy.utils.register_class(AnvilUVMapSettings)

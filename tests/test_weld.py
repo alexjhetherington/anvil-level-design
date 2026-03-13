@@ -74,7 +74,7 @@ class WeldUndoStackTest(AnvilTestCase):
 
         # Simulate cube cut setting the weld state
         from ..operators.weld import set_weld_from_edge_selection
-        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1))
+        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5)
 
         yield 0.5
 
