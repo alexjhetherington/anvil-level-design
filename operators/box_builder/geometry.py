@@ -98,6 +98,22 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     # Apply material and UVs
     _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj)
 
+    # Diagnostic: check for zero-area UVs after box creation
+    if uv_layer is not None:
+        for face in new_faces:
+            if not face.is_valid:
+                continue
+            uvs = [loop[uv_layer].uv.copy() for loop in face.loops]
+            uv_area = 0.0
+            for i in range(1, len(uvs) - 1):
+                ea = uvs[i] - uvs[0]
+                eb = uvs[i + 1] - uvs[0]
+                uv_area += abs(ea.x * eb.y - ea.y * eb.x)
+            if uv_area < 1e-8:
+                debug_log(f"[BoxBuilder] WARNING: face {face.index} has zero-area UVs after creation "
+                          f"(source_face={'index ' + str(source_face.index) if source_face else 'None'}, "
+                          f"mat_idx={face.material_index})")
+
     # Select only the newly created box geometry
     for f in bm.faces:
         f.select = False
@@ -221,7 +237,10 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj_matrix)
+            result = set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj_matrix)
+            if not result:
+                debug_log(f"[BoxBuilder] set_uv_from_other_face FAILED for face {face.index} "
+                          f"(source face {source_face.index}, source area={source_face.calc_area():.6f})")
     else:
         # Default: use active image, falling back to previous image
         image = get_active_image()

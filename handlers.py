@@ -499,6 +499,18 @@ def _project_new_faces(context, bm):
 
         source_face = _get_best_neighbor_face(face, excluded)
 
+        # Check if this face already has non-zero UVs (e.g. set by box builder)
+        _had_uvs = False
+        if unlocked_layers:
+            _check_layer = unlocked_layers[0]
+            _check_uvs = [loop[_check_layer].uv.copy() for loop in face.loops]
+            _uv_area = 0.0
+            for _i in range(1, len(_check_uvs) - 1):
+                _ea = _check_uvs[_i] - _check_uvs[0]
+                _eb = _check_uvs[_i + 1] - _check_uvs[0]
+                _uv_area += abs(_ea.x * _eb.y - _ea.y * _eb.x)
+            _had_uvs = _uv_area > 1e-8
+
         # Project on all unlocked layers
         for uv_layer in unlocked_layers:
             if source_face:
@@ -507,6 +519,11 @@ def _project_new_faces(context, bm):
                 # No valid neighbor - fall back to world-space projection
                 mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
                 apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
+
+        if _had_uvs:
+            debug_log(f"[ProjectNewFaces] Re-projected face {face.index} that already had UVs "
+                      f"(source={'face ' + str(source_face.index) if source_face else 'NONE/fallback'})")
+
         projected_count += 1
 
     if projected_count > 0:

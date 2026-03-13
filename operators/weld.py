@@ -439,6 +439,8 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
     def _execute_corridor(self, context, depth, direction, back_plane_offset):
         """Create a face from the edge loop, then extrude it to the back plane."""
+        debug_log(f"[Corridor] Execute: depth={depth:.4f}, direction={direction}, "
+                  f"back_plane_offset={back_plane_offset:.4f}")
         obj = context.active_object
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
@@ -493,9 +495,18 @@ class MESH_OT_context_weld(bpy.types.Operator):
         # Switch to face select mode for the extrude
         bm.select_mode = {'FACE'}
         context.tool_settings.mesh_select_mode = (False, False, True)
-        # Use the cube cut direction (local_z) stored when the cut was made.
-        # This ensures the corridor is axis-aligned even on sloped surfaces.
-        extrude_dir = direction.normalized()
+        # The cube cut stores direction and back_plane_offset in world space,
+        # but bmesh vertices are in object-local space.  Transform both to local.
+        world_to_local_rot = obj.matrix_world.inverted().to_3x3()
+        extrude_dir = (world_to_local_rot @ direction).normalized()
+        origin_proj = obj.matrix_world.translation.dot(direction.normalized())
+        local_back_plane_offset = back_plane_offset - origin_proj
+
+        debug_log(f"[Corridor] Filled face center={selected_faces[0].calc_center_median()}, "
+                  f"normal={selected_faces[0].normal}")
+        debug_log(f"[Corridor] World->local: extrude_dir={extrude_dir}, "
+                  f"local_back_plane_offset={local_back_plane_offset:.4f} "
+                  f"(world={back_plane_offset:.4f} - origin_proj={origin_proj:.4f})")
 
         # Include the face's edges in geom so extrude_face_region properly
         # consumes the original face instead of leaving it behind.
@@ -527,8 +538,15 @@ class MESH_OT_context_weld(bpy.types.Operator):
         # Project extruded verts onto the cube cut's back plane.
         # This produces a flat cap perpendicular to the extrusion direction,
         # even when the hole is on a sloped surface.
+        debug_log(f"[Corridor] Projecting {len(extruded_verts)} verts onto back plane: "
+                  f"extrude_dir={extrude_dir}, local_back_plane_offset={local_back_plane_offset:.4f}")
         for v in extruded_verts:
-            v.co += extrude_dir * (back_plane_offset - v.co.dot(extrude_dir))
+            _old_co = v.co.copy()
+            _proj = v.co.dot(extrude_dir)
+            _delta = local_back_plane_offset - _proj
+            v.co += extrude_dir * _delta
+            debug_log(f"[Corridor]   vert {v.index}: {_old_co} -> {v.co} "
+                      f"(proj={_proj:.4f}, delta={_delta:.4f})")
 
         bm.normal_update()
 

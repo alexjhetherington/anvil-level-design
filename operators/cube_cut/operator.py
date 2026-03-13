@@ -81,6 +81,12 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
             extrude_dir = -local_z
             back_point = first_vertex + local_z * depth
             back_plane_offset = back_point.dot(extrude_dir.normalized())
+            from ...utils import debug_log
+            debug_log(f"[CubeCut] Corridor depth setup: depth={depth:.4f}, abs_depth={abs(depth):.4f}")
+            debug_log(f"[CubeCut]   first_vertex={first_vertex}, second_vertex={second_vertex}")
+            debug_log(f"[CubeCut]   local_z={local_z}, extrude_dir={extrude_dir}")
+            debug_log(f"[CubeCut]   back_point={back_point} (first_vertex + local_z * depth)")
+            debug_log(f"[CubeCut]   back_plane_offset={back_plane_offset:.4f} (back_point dot extrude_dir)")
             set_weld_from_edge_selection(
                 context, abs(depth), extrude_dir, back_plane_offset,
             )
