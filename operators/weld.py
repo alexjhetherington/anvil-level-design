@@ -2,9 +2,10 @@
 Context Aware Weld - Operator and state management
 
 Performs contextual weld actions based on the state left by previous operations
-(e.g., cube cut). The weld action depends on the edge selection topology:
+(e.g., cube cut, box builder). The weld action depends on context:
 - Two distinct edge groups → Bridge Edge Loops
 - One distinct edge group → Corridor (fill face + extrude)
+- Box builder with no coplanar inward-facing overlap → Invert (flip normals)
 
 Weld state is tracked via a module-level stack that maps edge selections to
 their weld parameters.  Because Blender's undo reliably restores *geometry*
@@ -23,17 +24,25 @@ from .texture_apply import set_uv_from_other_face
 
 
 # Stack of weld entries: each is (depth, frozenset_of_edge_indices, direction,
-# back_plane_offset).  direction is a tuple of 3 floats (the cube cut local_z
-# vector).  back_plane_offset is the projection of the cube cut's back plane
-# onto the extrusion direction.
-# Pushed by set_weld_from_edge_selection (cube cut), never popped — entries
-# become inert once the edge selection no longer matches.  This survives
-# undo/redo (module globals are outside Blender's undo system).
+# back_plane_offset, mode_override).  direction is a tuple of 3 floats (the
+# cube cut local_z vector).  back_plane_offset is the projection of the cube
+# cut's back plane onto the extrusion direction.  mode_override is None for
+# cube cut entries (mode derived from topology) or a string like 'INVERT' for
+# box builder entries.
+# Pushed by set_weld_from_edge_selection (cube cut) and
+# set_weld_from_box_builder, never popped — entries become inert once the edge
+# selection no longer matches.  This survives undo/redo (module globals are
+# outside Blender's undo system).
 _weld_stack = []
 
 # Guard flag: True while the weld operator is executing, prevents the
 # depsgraph handler from running redundant derivation mid-operator.
 _weld_op_running = False
+
+# Object name for object-mode weld tracking.  Set when box builder
+# creates a box in object mode; cleared when weld is executed or the
+# user selects a different object.  Survives undo/redo (module global).
+_weld_object_name = ""
 
 
 def _count_edge_groups(bm):
@@ -107,6 +116,13 @@ def _back_plane_for_stack_entry(entry):
     return 0.0
 
 
+def _mode_override_for_stack_entry(entry):
+    """Extract mode_override from a stack entry, handling old formats."""
+    if len(entry) >= 5:
+        return entry[4]
+    return None
+
+
 def set_weld_from_edge_selection(context, depth, direction, back_plane_offset):
     """Analyze current edge selection and push a weld entry onto the stack.
 
@@ -152,6 +168,10 @@ def derive_weld_from_stack(bm):
         depth = entry[0]
         edge_indices = entry[1]
         if current == edge_indices:
+            override = _mode_override_for_stack_entry(entry)
+            if override:
+                return (override, 0.0, _direction_for_stack_entry(entry),
+                        _back_plane_for_stack_entry(entry))
             mode, eff_depth = _derive_weld_mode(bm, depth)
             return (mode, eff_depth, _direction_for_stack_entry(entry),
                     _back_plane_for_stack_entry(entry))
@@ -181,7 +201,41 @@ def sync_weld_props(context, bm):
 
 def clear_weld_stack():
     """Clear the weld stack.  Called on test cleanup and mode changes."""
+    global _weld_object_name
     _weld_stack.clear()
+    _weld_object_name = ""
+
+
+def set_weld_object_tracking(name):
+    """Track which object the weld was set for in object mode."""
+    global _weld_object_name
+    _weld_object_name = name
+
+
+def sync_object_mode_weld(props, active_obj_name):
+    """Clear weld mode if the active object has changed in object mode.
+
+    Called from the depsgraph handler.  Only clears, never restores —
+    restoration happens in the undo/redo handlers.
+    """
+    global _weld_object_name
+    if not _weld_object_name:
+        return
+    if active_obj_name != _weld_object_name:
+        props.weld_mode = 'NONE'
+        debug_log(f"[Weld] Object mode weld cleared: active={active_obj_name}, expected={_weld_object_name}")
+
+
+def sync_object_mode_weld_undo(props, active_obj_name):
+    """Restore weld mode after undo if the active object matches.
+
+    Called from undo/redo handlers.
+    """
+    if not _weld_object_name:
+        return
+    if active_obj_name == _weld_object_name:
+        props.weld_mode = 'INVERT'
+        debug_log(f"[Weld] Object mode weld restored after undo: {active_obj_name}")
 
 
 def get_weld_display_name(weld_mode):
@@ -190,7 +244,111 @@ def get_weld_display_name(weld_mode):
         return "Bridge Edge Loops"
     elif weld_mode == 'CORRIDOR':
         return "Corridor"
+    elif weld_mode == 'INVERT':
+        return "Invert"
     return "None"
+
+
+def _faces_coplanar_antiparallel(face_a, face_b, tolerance=0.001):
+    """Check if two faces are on the same plane with opposite normals."""
+    dot = face_a.normal.dot(face_b.normal)
+    if dot > -0.99:
+        return False
+    dist = abs((face_b.verts[0].co - face_a.verts[0].co).dot(face_a.normal))
+    return dist < tolerance
+
+
+def _project_face_2d(face, axis_u, axis_v):
+    """Project face vertices onto 2D coordinates using two plane axes."""
+    return [(v.co.dot(axis_u), v.co.dot(axis_v)) for v in face.verts]
+
+
+def _polygons_overlap_2d(poly_a, poly_b):
+    """Check if two convex 2D polygons overlap using the separating axis theorem."""
+    for poly in [poly_a, poly_b]:
+        n = len(poly)
+        for i in range(n):
+            j = (i + 1) % n
+            edge_x = poly[j][0] - poly[i][0]
+            edge_y = poly[j][1] - poly[i][1]
+            axis = (-edge_y, edge_x)
+
+            min_a = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
+            max_a = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
+            min_b = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
+            max_b = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
+
+            if max_a <= min_b + 1e-6 or max_b <= min_a + 1e-6:
+                return False
+    return True
+
+
+def _faces_overlap(face_a, face_b):
+    """Check if two coplanar faces overlap when projected onto their shared plane."""
+    normal = face_a.normal
+    if abs(normal.z) < 0.9:
+        up = Vector((0, 0, 1))
+    else:
+        up = Vector((1, 0, 0))
+    axis_u = normal.cross(up).normalized()
+    axis_v = normal.cross(axis_u).normalized()
+
+    poly_a = _project_face_2d(face_a, axis_u, axis_v)
+    poly_b = _project_face_2d(face_b, axis_u, axis_v)
+    return _polygons_overlap_2d(poly_a, poly_b)
+
+
+def _check_box_needs_invert(bm, box_faces):
+    """Check if a box builder result should use INVERT weld mode.
+
+    Returns True if no non-box face is coplanar with a box face, has an
+    anti-parallel normal (pointing into the box), and overlaps it in 2D.
+    """
+    box_face_set = set(f.index for f in box_faces)
+    other_faces = [f for f in bm.faces if f.index not in box_face_set]
+
+    if not other_faces:
+        return True
+
+    for box_face in box_faces:
+        for other_face in other_faces:
+            if _faces_coplanar_antiparallel(box_face, other_face):
+                if _faces_overlap(box_face, other_face):
+                    return False
+    return True
+
+
+def set_weld_from_box_builder(context):
+    """Analyze box builder output and set weld mode to INVERT or NONE.
+
+    Called from the box builder operator after successful box creation.
+    The newly created box faces must be selected in the active edit mesh.
+    """
+    obj = context.active_object
+    if not obj or obj.type != 'MESH':
+        return
+
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.edges.index_update()
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
+
+    box_faces = [f for f in bm.faces if f.select]
+    if not box_faces:
+        return
+
+    if _check_box_needs_invert(bm, box_faces):
+        mode = 'INVERT'
+    else:
+        mode = 'NONE'
+
+    props = context.scene.level_design_props
+    props.weld_mode = mode
+    debug_log(f"[Weld] Box builder weld mode: {mode}")
+
+    edge_indices = frozenset(e.index for e in bm.edges if e.select)
+    _weld_stack.append((0.0, edge_indices, (0.0, 0.0, 0.0), 0.0, mode if mode != 'NONE' else None))
 
 
 class MESH_OT_context_weld(bpy.types.Operator):
@@ -216,8 +374,11 @@ class MESH_OT_context_weld(bpy.types.Operator):
             return {'CANCELLED'}
 
         if not (context.active_object and
-                context.active_object.type == 'MESH' and
-                context.mode == 'EDIT_MESH'):
+                context.active_object.type == 'MESH'):
+            return {'CANCELLED'}
+
+        # BRIDGE and CORRIDOR require edit mode; INVERT works from object mode too
+        if weld_mode in ('BRIDGE', 'CORRIDOR') and context.mode != 'EDIT_MESH':
             return {'CANCELLED'}
 
         _weld_op_running = True
@@ -230,6 +391,8 @@ class MESH_OT_context_weld(bpy.types.Operator):
                     Vector(props.weld_direction),
                     props.weld_back_plane_offset,
                 )
+            elif weld_mode == 'INVERT':
+                return self._execute_invert(context)
         finally:
             _weld_op_running = False
 
@@ -245,6 +408,33 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         context.scene.level_design_props.weld_mode = 'NONE'
         self.report({'INFO'}, "Bridged edge loops")
+        return {'FINISHED'}
+
+    def _execute_invert(self, context):
+        """Flip normals on the mesh.
+
+        In edit mode: flips only the selected (new box) faces.
+        In object mode: enters edit mode, selects all, flips, returns to object mode.
+        """
+        global _weld_object_name
+        entered_edit = False
+        if context.mode != 'EDIT_MESH':
+            bpy.ops.object.mode_set(mode='EDIT')
+            entered_edit = True
+            bpy.ops.mesh.select_all(action='SELECT')
+
+        try:
+            bpy.ops.mesh.flip_normals()
+        except RuntimeError as e:
+            self.report({'ERROR'}, f"Invert failed: {e}")
+            return {'CANCELLED'}
+        finally:
+            if entered_edit:
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+        context.scene.level_design_props.weld_mode = 'NONE'
+        _weld_object_name = ""
+        self.report({'INFO'}, "Normals inverted")
         return {'FINISHED'}
 
     def _execute_corridor(self, context, depth, direction, back_plane_offset):

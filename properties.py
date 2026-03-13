@@ -567,6 +567,7 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
             ('NONE', "None", "No weld action pending"),
             ('BRIDGE', "Bridge Edge Loops", "Bridge two edge loops"),
             ('CORRIDOR', "Corridor", "Create face and extrude corridor"),
+            ('INVERT', "Invert", "Flip normals on the mesh"),
         ],
         default='NONE',
     )

@@ -1735,6 +1735,13 @@ def on_undo_post(scene):
                 bm = _bm.from_edit_mesh(obj.data)
                 from .operators.weld import sync_weld_props
                 sync_weld_props(context, bm)
+        else:
+            from .operators.weld import sync_object_mode_weld_undo
+            active = context.active_object
+            active_name = active.name if active else ""
+            sync_object_mode_weld_undo(
+                context.scene.level_design_props, active_name,
+            )
     except Exception:
         pass
     # Use a short timer to ensure the depsgraph update triggered by undo
@@ -1793,6 +1800,13 @@ def on_redo_post(scene):
                 bm = _bm.from_edit_mesh(obj.data)
                 from .operators.weld import sync_weld_props
                 sync_weld_props(context, bm)
+        else:
+            from .operators.weld import sync_object_mode_weld_undo
+            active = context.active_object
+            active_name = active.name if active else ""
+            sync_object_mode_weld_undo(
+                context.scene.level_design_props, active_name,
+            )
     except Exception:
         pass
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
@@ -1937,6 +1951,13 @@ def on_depsgraph_update(scene, depsgraph):
         # re-entering edit mode (even on the same object) is detected as fresh
         if context.mode != 'EDIT_MESH' and _last_edit_object_name is not None:
             _last_edit_object_name = None
+
+        # In object mode, clear weld if the active object has changed
+        if context.mode != 'EDIT_MESH' and props.weld_mode != 'NONE':
+            from .operators.weld import sync_object_mode_weld
+            active = context.active_object
+            active_name = active.name if active else ""
+            sync_object_mode_weld(props, active_name)
 
         # Handle mesh updates (UV lock, world-scale UVs)
         for update in depsgraph.updates:
