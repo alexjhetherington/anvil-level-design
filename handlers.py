@@ -43,6 +43,7 @@ from .utils import (
     get_all_uv_layers, sync_uv_map_settings,
 )
 from .properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
+from .workspace import setup_addon_workspaces, subscribe_splash_watcher, reset_specialized_template_flag
 
 
 _auto_hotspot_pending = False
@@ -1873,6 +1874,13 @@ def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
     global _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph
     global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
+
+    # Set up workspaces and scene settings for new (unsaved) files
+    reset_specialized_template_flag()
+    if not bpy.data.filepath:
+        setup_addon_workspaces()
+        subscribe_splash_watcher()
+
     # Invalidate face caches - file state has changed
     face_data_cache.clear()
     last_face_count = 0

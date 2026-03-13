@@ -5,6 +5,7 @@
 - Even more sensible texturing on currently blank textured faces
 - Fix a class of bugs relating to invalid cache on undo / redo
 - Texture application from file browser handles undo properly
+- Addon initialising works when creating new files from inside blender, ignoring specialised templates
 
 ## 1.3.3
 - Fix incorrect UV on extruded face when using the extrusion tool
