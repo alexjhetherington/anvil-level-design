@@ -1478,7 +1478,9 @@ class LEVELDESIGN_OT_apply_hotspot(Operator):
         bm = bmesh.from_edit_mesh(me)
 
         # Store original selection to restore after operation (only relevant in edit mode)
-        originally_selected_face_indices = {f.index for f in bm.faces if f.select}
+        from ..utils import get_face_id_layer, save_face_selection, restore_face_selection
+        id_layer = get_face_id_layer(bm)
+        selected_ids, active_id = save_face_selection(bm, id_layer)
 
         # In object mode, apply to all faces; in edit mode, use selection or all faces
         if was_object_mode:
@@ -1500,8 +1502,7 @@ class LEVELDESIGN_OT_apply_hotspot(Operator):
 
         # Restore original face selection (only relevant if staying in edit mode)
         if not was_object_mode:
-            for f in bm.faces:
-                f.select = f.index in originally_selected_face_indices
+            restore_face_selection(bm, id_layer, selected_ids, active_id)
 
         bmesh.update_edit_mesh(me)
 

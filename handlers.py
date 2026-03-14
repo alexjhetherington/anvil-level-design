@@ -38,6 +38,9 @@ from .utils import (
     get_texture_dimensions_from_material, get_face_local_axes, normalize_offset,
     get_local_x_from_verts_3d, debug_log, face_has_hotspot_material,
     any_connected_face_has_hotspot, get_all_hotspot_faces,
+    get_face_id_layer, ensure_face_ids, assign_face_id,
+    reindex_face_ids,
+    save_face_selection, restore_face_selection,
     is_level_design_workspace, face_aligned_project,
     get_render_active_uv_layer, get_unlocked_uv_layers, get_locked_uv_layers,
     get_all_uv_layers, sync_uv_map_settings,
@@ -104,15 +107,17 @@ def _any_hotspot_geometry_changed(bm, me):
     Returns True if any hotspot face is new or has moved vertices.
     Returns False if all hotspot faces match their cached geometry (e.g., after undo).
     """
+    id_layer = get_face_id_layer(bm)
     for face in bm.faces:
         if not face.is_valid or not face_has_hotspot_material(face, me):
             continue
 
-        if face.index not in face_data_cache:
+        face_id = face[id_layer]
+        if face_id == 0 or face_id not in face_data_cache:
             # New face - geometry changed
             return True
 
-        cached = face_data_cache[face.index]
+        cached = face_data_cache[face_id]
         cached_verts = cached.get('verts', [])
         current_verts = [v.co.copy() for v in face.verts]
 
@@ -181,8 +186,8 @@ def _apply_auto_hotspots_deferred():
             return None
 
         # Save selection state
-        selected_face_indices = {f.index for f in bm.faces if f.select}
-        active_face_index = bm.faces.active.index if bm.faces.active else None
+        id_layer = get_face_id_layer(bm)
+        selected_ids, active_id = save_face_selection(bm, id_layer)
 
         props = context.scene.level_design_props
         seam_mode = props.hotspot_seam_mode
@@ -198,11 +203,7 @@ def _apply_auto_hotspots_deferred():
         debug_log(f"[AutoHotspot] Applied: {result}")
 
         # Restore selection state
-        bm.faces.ensure_lookup_table()
-        for face in bm.faces:
-            face.select = face.index in selected_face_indices
-        if active_face_index is not None and active_face_index < len(bm.faces):
-            bm.faces.active = bm.faces[active_face_index]
+        restore_face_selection(bm, id_layer, selected_ids, active_id)
 
         # Copy hotspot UVs from primary unlocked layer to other unlocked layers
         unlocked_layers = get_unlocked_uv_layers(bm, obj, me)
@@ -240,7 +241,7 @@ def _apply_auto_hotspots():
     bpy.app.timers.register(_apply_auto_hotspots_deferred, first_interval=0.1)
 
 
-def _get_best_neighbor_face(face, excluded_faces):
+def _get_best_neighbor_face(face, excluded_faces, id_layer):
     """Find the best neighboring face to use as UV source.
 
     Priority 1: Prefer neighbors facing a similar direction (positive normal dot product).
@@ -274,7 +275,7 @@ def _get_best_neighbor_face(face, excluded_faces):
                 # whose cached center is closest (most likely the parent face)
                 is_coplanar = (face.normal - linked_face.normal).length < 0.01
                 if is_coplanar:
-                    cached = face_data_cache.get(linked_face.index)
+                    cached = face_data_cache.get(linked_face[id_layer])
                     if cached and cached.get('center'):
                         dist = (cached['center'] - face_center).length
                     else:
@@ -318,85 +319,110 @@ def _project_new_faces(context, bm):
     props = context.scene.level_design_props
     ppm = props.pixels_per_meter
 
-    # Collect "displaced entries": cached faces whose normals have changed.
-    # Each entry stores the old normal and center so we can identify new faces
-    # that are extruded copies (same normal, different plane) vs bevel remnants
-    # (same normal, same plane / coplanar).
-    displaced_entries = []
-    for f in bm.faces:
-        if not f.is_valid:
-            continue
-        cached = face_data_cache.get(f.index)
-        if not cached:
-            continue
-        cached_normal = cached.get('normal')
-        if cached_normal and (f.normal - cached_normal).length > 0.01:
-            displaced_entries.append({
-                'normal': cached_normal,
-                'center': cached.get('center'),
-            })
+    id_layer = get_face_id_layer(bm)
 
-    # Identify new faces, skipping extruded copies.
-    # A new face is an extruded copy if its normal matches a displaced normal
-    # AND it is NOT coplanar with the cached face (i.e. it's on a different,
-    # parallel plane — offset by the extrude distance).
-    # Coplanar faces (same normal, same plane) are bevel remnants and should
-    # be included for projection.
+    # --- Handle duplicate face IDs ---
+    # BMesh operations (extrude, bevel, etc.) copy all custom data from
+    # source faces to new faces, including our managed face ID.
+    #
+    # Categorize faces with duplicated IDs:
+    #   coplanar: same normal & same plane as cache → UV from cached transform
+    #   extrusion: same normal but different plane → skip (Blender set UVs)
+    #   other (different normal): treat as new, UV from neighbors
+    seen_ids = set()
+    duplicated_ids = set()
+    for face in bm.faces:
+        fid = face[id_layer]
+        if fid == 0:
+            continue
+        if fid in seen_ids:
+            duplicated_ids.add(fid)
+        seen_ids.add(fid)
+
+    # For each duplicated ID group, categorize faces by their relationship
+    # to the cached version. IDs are NOT reset here — reindex_face_ids()
+    # assigns fresh unique IDs at the end of cache_face_data().
+    #
+    # Categories:
+    #   exact: same normal, same plane, same verts as cache → skip
+    #          (likely extrusion with no movement yet)
+    #   coplanar: same normal & same plane but verts changed → UV from cache
+    #   extrusion: same normal but different plane → skip (Blender set UVs)
+    #   other: different normal or uncategorized → treat as new face
+    dupe_exact = set()       # geometry unchanged from cache — skip entirely
+    dupe_coplanar = set()    # faces to UV from cache (keep their ID)
+    dupe_extrusions = set()  # faces to skip entirely
+    dupe_other = set()       # different normal or uncategorized duplicates (treat as new)
+
+    if duplicated_ids:
+        # For each duplicated ID, find the coplanar face (if any)
+        id_to_coplanar = {}  # fid -> face that is coplanar
+        for face in bm.faces:
+            fid = face[id_layer]
+            if fid not in duplicated_ids or not face.is_valid:
+                continue
+            if face_has_hotspot_material(face, me):
+                continue
+
+            cached = face_data_cache.get(fid)
+            if not cached or not cached.get('normal'):
+                continue
+
+            cached_normal = cached['normal']
+            if (face.normal - cached_normal).length < 0.01:
+                cached_center = cached.get('center')
+                if cached_center is not None:
+                    dist_to_plane = abs(cached_normal.dot(
+                        face.calc_center_median() - cached_center))
+                    if dist_to_plane < 0.01:
+                        # Coplanar — check if verts are exactly unchanged
+                        cached_verts = cached['verts']
+                        current_verts = [v.co for v in face.verts]
+                        if (len(current_verts) == len(cached_verts)
+                                and all((cv - cav).length < 0.0001
+                                        for cv, cav in zip(current_verts,
+                                                           cached_verts))):
+                            id_to_coplanar[fid] = ('exact', face)
+                        else:
+                            id_to_coplanar[fid] = ('coplanar', face)
+                    else:
+                        dupe_extrusions.add(face)
+
+        for fid, (category, face) in id_to_coplanar.items():
+            if category == 'exact':
+                dupe_exact.add(face)
+            else:
+                dupe_coplanar.add(face)
+
+        # All remaining duplicate faces that aren't categorized
+        all_categorized = dupe_exact | dupe_coplanar | dupe_extrusions
+        for face in bm.faces:
+            fid = face[id_layer]
+            if fid not in duplicated_ids:
+                continue
+            if face not in all_categorized:
+                dupe_other.add(face)
+
+    # --- Identify new faces and build the affected set ---
+
+    # New faces: ID 0 (freshly created) or dupe_other (duplicate ID but
+    # different normal — not categorized as exact/coplanar/extrusion).
     new_faces = set()
     for f in bm.faces:
-        if f.is_valid and f.index not in face_data_cache and not face_has_hotspot_material(f, me):
-            skip = False
-            for entry in displaced_entries:
-                dn = entry['normal']
-                if (f.normal - dn).length < 0.01:
-                    # Normal matches — check coplanarity.
-                    # If the face center lies on the cached face's plane,
-                    # it's coplanar (bevel remnant). Otherwise it's an
-                    # extruded copy on a parallel plane.
-                    dc = entry['center']
-                    if dc is not None:
-                        dist = abs(dn.dot(f.calc_center_median() - dc))
-                        if dist > 0.001:
-                            skip = True
-                            break
-            if not skip:
-                new_faces.add(f)
+        if not f.is_valid or face_has_hotspot_material(f, me):
+            continue
+        if f[id_layer] == 0 or f in dupe_other:
+            new_faces.add(f)
 
-    if not new_faces:
+    if not new_faces and not dupe_coplanar:
         return
 
-    # Seed: new faces that border at least one cached face.
-    seeds = set()
-    for f in new_faces:
-        for edge in f.edges:
-            for neighbor in edge.link_faces:
-                if neighbor not in new_faces and neighbor.is_valid and neighbor.index in face_data_cache:
-                    seeds.add(f)
-                    break
-            if f in seeds:
-                break
-
-    if not seeds:
-        return
-
-    # Flood-fill from seeds through adjacent new faces so that interior
-    # new faces (e.g. bevel segments not directly bordering cached faces)
-    # are also included for projection.
-    affected = set(seeds)
-    flood_queue = list(seeds)
-    while flood_queue:
-        current = flood_queue.pop(0)
-        for edge in current.edges:
-            for neighbor in edge.link_faces:
-                if neighbor in new_faces and neighbor not in affected:
-                    affected.add(neighbor)
-                    flood_queue.append(neighbor)
-
+    # Start with all new faces, then BFS outward into adjacent cached faces
+    # whose vertices have moved. Those may need re-projection too (e.g. bevel
+    # shrinks a face, weld translates a face changing its world-space offset).
+    affected = set(new_faces)
     queue = list(affected)
-
-    # BFS expand: from seed faces, find adjacent cached faces with moved vertices.
-    # Also mark all new faces as visited so they aren't traversed or used as sources.
-    visited = set(affected) | new_faces
+    visited = set(affected) | dupe_extrusions | dupe_exact
     while queue:
         current = queue.pop(0)
         for edge in current.edges:
@@ -408,7 +434,8 @@ def _project_new_faces(context, bm):
                 if face_has_hotspot_material(neighbor, me):
                     continue
 
-                cached = face_data_cache.get(neighbor.index)
+                neighbor_id = neighbor[id_layer]
+                cached = face_data_cache.get(neighbor_id) if neighbor_id != 0 else None
                 if not cached:
                     continue
 
@@ -429,33 +456,68 @@ def _project_new_faces(context, bm):
                     affected.add(neighbor)
                     queue.append(neighbor)
 
-    # Step 1: Re-project cached faces that are still coplanar with their
-    # cached state (e.g. subdivide/loop-cut shrinks a face but keeps it on
-    # the same plane).
+    # Step 1: Re-project coplanar faces whose geometry changed from cache.
+    # Two sources feed into this:
+    #   - dupe_coplanar: duplicate-ID faces on the same plane (verts changed)
+    #   - coplanar_modified: unique-ID faces from the BFS that are still
+    #     coplanar with cache but have moved vertices (e.g. subdivide/loop-cut)
+    # Re-projecting these first makes them valid neighbor sources for step 2.
+    # Categorize affected faces that have a cached ID (BFS-expanded existing
+    # faces, not new/ID-0 faces):
+    #   coplanar_modified: same normal, same plane, verts changed → re-project
+    #                      from cache (e.g. subdivide/loop-cut shrinks a face)
+    #   translated: same normal, all verts moved by the same offset (pure
+    #               translation) → skip, Blender already handled the UVs
+    #   (everything else falls through to Step 2 wavefront projection)
     coplanar_modified = set()
+    translated = set()
     for face in affected:
-        if face.index not in face_data_cache or face in new_faces:
+        face_id = face[id_layer]
+        if face_id == 0:
             continue
-        cached = face_data_cache[face.index]
+        cached = face_data_cache.get(face_id)
+        if not cached:
+            continue
         cached_normal = cached.get('normal')
-        if cached_normal and (face.normal - cached_normal).length < 0.01:
+        if not cached_normal or (face.normal - cached_normal).length >= 0.01:
+            continue
+
+        cached_verts = cached['verts']
+        current_verts = [v.co for v in face.verts]
+        if len(current_verts) != len(cached_verts):
+            continue
+
+        if all((cv - cav).length < 0.0001
+               for cv, cav in zip(current_verts, cached_verts)):
+            continue
+
+        # Check if pure translation (all verts moved by the same offset)
+        offset = current_verts[0] - cached_verts[0]
+        if all((cv - cav - offset).length < 0.0001
+               for cv, cav in zip(current_verts[1:], cached_verts[1:])):
+            translated.add(face)
+        else:
             coplanar_modified.add(face)
 
-    for face in coplanar_modified:
+    coplanar_reproject = dupe_coplanar | coplanar_modified
+
+    for face in coplanar_reproject:
         if face.calc_area() < 1e-8:
             continue
-        cached = face_data_cache[face.index]
+        face_id = face[id_layer]
+        cached = face_data_cache.get(face_id)
+        if not cached:
+            continue
         cached_normal = cached['normal']
         cached_verts = cached['verts']
 
-        # Reconstruct source face local axes from cached vertex positions
         source_local_x = get_local_x_from_verts_3d(cached_verts)
         if not source_local_x:
             continue
         source_local_y = cached_normal.cross(source_local_x).normalized()
 
         for uv_layer in unlocked_layers:
-            layer_data = get_cached_layer_data(face.index, uv_layer.name)
+            layer_data = get_cached_layer_data(face_id, uv_layer.name)
             if layer_data:
                 scale_u = layer_data.get('scale_u', 1.0)
                 scale_v = layer_data.get('scale_v', 1.0)
@@ -470,7 +532,6 @@ def _project_new_faces(context, bm):
             if abs(scale_u) < 1e-8 or abs(scale_v) < 1e-8:
                 continue
 
-            # Use cached first vertex position and its UV as reference point
             ref_point_co = cached_verts[0]
             if cached_uvs and len(cached_uvs) > 0:
                 ref_point_uv = cached_uvs[0]
@@ -484,47 +545,60 @@ def _project_new_faces(context, bm):
                 ref_point_co, ref_point_uv,
             )
     affected -= coplanar_modified
+    affected -= translated
 
-    # Step 2: Project remaining affected faces (new faces and existing faces that are no longer coplanar) using
-    # neighbors as UV source. Coplanar cached faces fixed above are now
-    # valid sources. Only exclude new faces from being sources.
+    # Step 2: Wavefront projection of remaining affected faces.
+    # Process in BFS order outward from cached/coplanar faces: each projected
+    # face becomes a valid source for its neighbors in the next wave. This
+    # handles interior faces (e.g. bevel segments) that don't directly border
+    # cached geometry.
     # Skip zero-area faces — they can't be projected meaningfully (e.g. during
     # modal extrude, new faces start collapsed). They'll be handled later when
     # the modal moves them and they gain area (see _was_zero_area check in main loop).
-    excluded = new_faces - coplanar_modified
-    projected_count = len(coplanar_modified)
-    for face in affected:
-        if face.calc_area() < 1e-8:
-            continue
+    excluded = (new_faces | dupe_extrusions) - coplanar_reproject
+    projected_count = len(coplanar_reproject)
+    remaining = sorted(affected,
+                       key=lambda f: f.calc_center_median().length_squared)
+    made_progress = True
+    while made_progress:
+        made_progress = False
+        still_remaining = []
+        for face in remaining:
+            if face.calc_area() < 1e-8:
+                continue
 
-        source_face = _get_best_neighbor_face(face, excluded)
+            source_face = _get_best_neighbor_face(face, excluded, id_layer)
 
-        # Check if this face already has non-zero UVs (e.g. set by box builder)
-        _had_uvs = False
-        if unlocked_layers:
-            _check_layer = unlocked_layers[0]
-            _check_uvs = [loop[_check_layer].uv.copy() for loop in face.loops]
-            _uv_area = 0.0
-            for _i in range(1, len(_check_uvs) - 1):
-                _ea = _check_uvs[_i] - _check_uvs[0]
-                _eb = _check_uvs[_i + 1] - _check_uvs[0]
-                _uv_area += abs(_ea.x * _eb.y - _ea.y * _eb.x)
-            _had_uvs = _uv_area > 1e-8
+            if not source_face:
+                still_remaining.append(face)
+                continue
 
-        # Project on all unlocked layers
-        for uv_layer in unlocked_layers:
-            if source_face:
+            # Check if this face already has non-zero UVs (e.g. set by box builder)
+            _had_uvs = False
+            if unlocked_layers:
+                _check_layer = unlocked_layers[0]
+                _check_uvs = [loop[_check_layer].uv.copy() for loop in face.loops]
+                _uv_area = 0.0
+                for _i in range(1, len(_check_uvs) - 1):
+                    _ea = _check_uvs[_i] - _check_uvs[0]
+                    _eb = _check_uvs[_i + 1] - _check_uvs[0]
+                    _uv_area += abs(_ea.x * _eb.y - _ea.y * _eb.x)
+                _had_uvs = _uv_area > 1e-8
+
+            # Project on all unlocked layers
+            for uv_layer in unlocked_layers:
                 set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
-            else:
-                # No valid neighbor - fall back to world-space projection
-                mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
-                apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0, mat, ppm, me)
 
-        if _had_uvs:
-            debug_log(f"[ProjectNewFaces] Re-projected face {face.index} that already had UVs "
-                      f"(source={'face ' + str(source_face.index) if source_face else 'NONE/fallback'})")
+            if _had_uvs:
+                debug_log(f"[ProjectNewFaces] Re-projected face {face.index} that already had UVs "
+                          f"(source=face {source_face.index})")
 
-        projected_count += 1
+            # This face is now a valid source for its neighbors
+            excluded.discard(face)
+            projected_count += 1
+            made_progress = True
+
+        remaining = still_remaining
 
     if projected_count > 0:
         bmesh.update_edit_mesh(me)
@@ -628,6 +702,7 @@ def cache_single_face(face, bm, ppm=None, me=None):
 
     Updates the face_data_cache entry for this face without clearing the cache.
     Caches UV data for ALL UV layers in a 'uv_layers' dict keyed by layer name.
+    Assigns a managed face ID if the face doesn't have one yet.
 
     Args:
         face: BMesh face to cache
@@ -637,6 +712,10 @@ def cache_single_face(face, bm, ppm=None, me=None):
     """
     if face is None or not face.is_valid:
         return
+
+    # Ensure the face has a managed ID
+    id_layer = get_face_id_layer(bm)
+    face_id = assign_face_id(face, id_layer)
 
     cache_entry = {
         'verts': [v.co.copy() for v in face.verts],
@@ -674,21 +753,21 @@ def cache_single_face(face, bm, ppm=None, me=None):
                 cache_entry['offset_x'] = transform['offset_x']
                 cache_entry['offset_y'] = transform['offset_y']
 
-    face_data_cache[face.index] = cache_entry
+    face_data_cache[face_id] = cache_entry
 
 
-def get_cached_layer_data(face_index, layer_name):
+def get_cached_layer_data(face_id, layer_name):
     """Get cached UV data for a specific face and UV layer.
 
     Args:
-        face_index: Face index in the cache
+        face_id: Managed face ID (from the anvil_face_id layer)
         layer_name: UV layer name
 
     Returns:
         Dict with 'uvs', 'scale_u', 'scale_v', 'rotation', 'offset_x', 'offset_y'
         or None if not cached.
     """
-    cached = face_data_cache.get(face_index)
+    cached = face_data_cache.get(face_id)
     if not cached:
         return None
     return cached.get('uv_layers', {}).get(layer_name)
@@ -698,7 +777,8 @@ def cache_face_data(context):
     """Cache vertex positions and UVs for all faces in the mesh.
 
     Clears and rebuilds the entire face_data_cache. Used when UV lock is toggled
-    or when the mesh topology changes.
+    or when the mesh topology changes. Assigns managed face IDs to any faces
+    that don't have one yet.
     """
     global last_face_count, last_vertex_count
 
@@ -719,6 +799,11 @@ def cache_face_data(context):
     ppm = context.scene.level_design_props.pixels_per_meter
 
     face_data_cache.clear()
+
+    # Assign fresh unique IDs to all faces before caching.
+    # This guarantees no duplicates from BMesh operations that copy custom data.
+    id_layer = get_face_id_layer(bm)
+    reindex_face_ids(bm, id_layer)
 
     for face in bm.faces:
         cache_single_face(face, bm, ppm, me)
@@ -937,6 +1022,8 @@ def apply_world_scale_uvs(obj, scene):
     props = scene.level_design_props
     ppm = props.pixels_per_meter
 
+    id_layer = get_face_id_layer(bm)
+
     # Iterate using indices to be more resilient during topology changes
     face_indices = list(range(len(bm.faces)))
     uv_applied_count = 0
@@ -956,8 +1043,9 @@ def apply_world_scale_uvs(obj, scene):
                 return
 
             face = bm.faces[face_idx]
+            face_id = face[id_layer]
 
-            if face.index not in face_data_cache:
+            if face_id == 0 or face_id not in face_data_cache:
                 skipped_no_cache += 1
                 continue
 
@@ -966,7 +1054,7 @@ def apply_world_scale_uvs(obj, scene):
                 skipped_hotspot += 1
                 continue
 
-            cached = face_data_cache[face.index]
+            cached = face_data_cache[face_id]
             cached_verts = cached['verts']
 
             # HACK - premature optimisation? This cuts down a lot of faces but means we need to deal with Blender's own
@@ -997,7 +1085,7 @@ def apply_world_scale_uvs(obj, scene):
                 if in_modal_operation:
                     restored = False
                     for uv_layer in unlocked_layers:
-                        layer_data = get_cached_layer_data(face.index, uv_layer.name)
+                        layer_data = get_cached_layer_data(face_id, uv_layer.name)
                         if layer_data:
                             cached_uvs = layer_data.get('uvs')
                             if cached_uvs and len(cached_uvs) == len(face.loops):
@@ -1028,7 +1116,7 @@ def apply_world_scale_uvs(obj, scene):
 
             # Apply to each unlocked layer
             for uv_layer in unlocked_layers:
-                layer_data = get_cached_layer_data(face.index, uv_layer.name)
+                layer_data = get_cached_layer_data(face_id, uv_layer.name)
 
                 if layer_data:
                     scale_u = layer_data.get('scale_u', 1.0)
@@ -1049,10 +1137,11 @@ def apply_world_scale_uvs(obj, scene):
                 if _was_zero_area and face.calc_area() > 1e-8:
                     from .operators.texture_apply import set_uv_from_other_face
                     excluded = {f for f in bm.faces
-                                if f.is_valid and f.index in face_data_cache
-                                and abs(face_data_cache[f.index].get('scale_u', 1.0)) < 1e-8
-                                and abs(face_data_cache[f.index].get('scale_v', 1.0)) < 1e-8}
-                    source_face = _get_best_neighbor_face(face, excluded)
+                                if f.is_valid and f[id_layer] != 0
+                                and f[id_layer] in face_data_cache
+                                and abs(face_data_cache[f[id_layer]].get('scale_u', 1.0)) < 1e-8
+                                and abs(face_data_cache[f[id_layer]].get('scale_v', 1.0)) < 1e-8}
+                    source_face = _get_best_neighbor_face(face, excluded, id_layer)
                     if source_face:
                         set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
                     else:
@@ -1142,6 +1231,7 @@ def apply_uv_lock(obj, scene):
         return
 
     # Check if any faces have moved
+    id_layer = get_face_id_layer(bm)
     has_moved = False
     face_indices = list(range(len(bm.faces)))
     for face_idx in face_indices:
@@ -1150,11 +1240,12 @@ def apply_uv_lock(obj, scene):
                 return
 
             face = bm.faces[face_idx]
+            face_id = face[id_layer]
 
-            if face.index not in face_data_cache:
+            if face_id == 0 or face_id not in face_data_cache:
                 continue
 
-            cached = face_data_cache[face.index]
+            cached = face_data_cache[face_id]
             current_verts = [v.co.copy() for v in face.verts]
             if len(current_verts) != len(cached['verts']):
                 continue
@@ -1186,8 +1277,9 @@ def check_selection_changed(bm):
     """Check if face selection has changed. Returns True if selection changed."""
     global _last_selected_face_indices, _last_active_face_index
 
-    current_selected = {f.index for f in bm.faces if f.select}
-    current_active = bm.faces.active.index if bm.faces.active else -1
+    id_layer = get_face_id_layer(bm)
+    current_selected = {f[id_layer] for f in bm.faces if f.select}
+    current_active = bm.faces.active[id_layer] if bm.faces.active else -1
 
     if current_selected != _last_selected_face_indices or current_active != _last_active_face_index:
         _last_selected_face_indices = current_selected
@@ -1358,12 +1450,13 @@ def apply_texture_from_file_browser():
         # If captured after append, objects with zero materials would see
         # face.material_index 0 resolve to the NEW material, incorrectly
         # reporting has_image=True and preventing the scale/rotation/offset reset.
+        fb_id_layer = get_face_id_layer(bm)
         face_old_info = {}
         for f in selected_faces:
             f_mat_idx = f.material_index
             f_mat = obj.data.materials[f_mat_idx] if f_mat_idx < len(obj.data.materials) else None
             f_img = get_image_from_material(f_mat)
-            face_old_info[f.index] = {
+            face_old_info[f[fb_id_layer]] = {
                 'mat': f_mat,
                 'has_image': f_img is not None,
                 'tex_dims': get_texture_dimensions_from_material(f_mat, ppm),
@@ -1390,8 +1483,8 @@ def apply_texture_from_file_browser():
 
             if all_hotspot_faces:
                 # Save selection state (apply_hotspots_to_mesh modifies selection)
-                selected_face_indices = {f.index for f in bm.faces if f.select}
-                active_face_index = bm.faces.active.index if bm.faces.active else None
+                id_layer = get_face_id_layer(bm)
+                selected_ids, active_id = save_face_selection(bm, id_layer)
 
                 seam_mode = props.hotspot_seam_mode
                 allow_combined_faces = obj.anvil_allow_combined_faces
@@ -1405,11 +1498,7 @@ def apply_texture_from_file_browser():
                 )
 
                 # Restore selection state
-                bm.faces.ensure_lookup_table()
-                for face in bm.faces:
-                    face.select = face.index in selected_face_indices
-                if active_face_index is not None and active_face_index < len(bm.faces):
-                    bm.faces.active = bm.faces[active_face_index]
+                restore_face_selection(bm, id_layer, selected_ids, active_id)
 
                 # Cache all hotspot faces after application
                 for face in all_hotspot_faces:
@@ -1422,8 +1511,8 @@ def apply_texture_from_file_browser():
 
             if all_hotspot_faces:
                 # Save selection state
-                selected_face_indices = {f.index for f in bm.faces if f.select}
-                active_face_index = bm.faces.active.index if bm.faces.active else None
+                id_layer = get_face_id_layer(bm)
+                selected_ids, active_id = save_face_selection(bm, id_layer)
 
                 seam_mode = props.hotspot_seam_mode
                 allow_combined_faces = obj.anvil_allow_combined_faces
@@ -1437,11 +1526,7 @@ def apply_texture_from_file_browser():
                 )
 
                 # Restore selection state
-                bm.faces.ensure_lookup_table()
-                for face in bm.faces:
-                    face.select = face.index in selected_face_indices
-                if active_face_index is not None and active_face_index < len(bm.faces):
-                    bm.faces.active = bm.faces[active_face_index]
+                restore_face_selection(bm, id_layer, selected_ids, active_id)
 
                 # Cache all hotspot faces
                 for face in all_hotspot_faces:
@@ -1489,16 +1574,18 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
         mat: Material to use for texture dimensions
         ppm: Pixels per meter setting
         me: Mesh data
-        face_old_info: Dict mapping face index to old material info (captured before
+        face_old_info: Dict mapping managed face ID to old material info (captured before
             material assignment). Each entry has 'mat', 'has_image', 'tex_dims'.
         bm: BMesh instance (optional, for cache_single_face per-layer caching)
     """
+    id_layer = get_face_id_layer(bm) if bm is not None else None
     for target_face in selected_faces:
         # Get current transform to preserve it
         current_transform = derive_transform_from_uvs(target_face, uv_layer, ppm, me)
 
         # Get old material info
-        old_info = face_old_info[target_face.index]
+        face_key = target_face[id_layer] if id_layer is not None else target_face.index
+        old_info = face_old_info[face_key]
         old_has_image = old_info['has_image']
         old_tex_dims = old_info['tex_dims']
 

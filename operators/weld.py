@@ -19,7 +19,7 @@ import bmesh
 from mathutils import Vector
 
 from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer
-from ..handlers import cache_single_face, face_data_cache
+
 from .texture_apply import set_uv_from_other_face
 
 
@@ -551,7 +551,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
         bm.normal_update()
 
         # Apply UVs to the extruded cap face from the adjacent frame face.
-        # Then cache the cap so the depsgraph handler doesn't overwrite it.
         if uv_source_face and uv_source_face.is_valid:
             uv_layer = get_render_active_uv_layer(bm, me)
             if uv_layer:
@@ -561,7 +560,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
                         uv_source_face, cap_face, uv_layer, ppm, me,
                         obj.matrix_world,
                     )
-                    cache_single_face(cap_face, bm, ppm, me)
 
         bmesh.update_edit_mesh(me)
 

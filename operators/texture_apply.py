@@ -19,6 +19,9 @@ from ..utils import (
     face_has_hotspot_material,
     any_connected_face_has_hotspot,
     get_all_hotspot_faces,
+    get_face_id_layer,
+    save_face_selection,
+    restore_face_selection,
 )
 from ..properties import apply_uv_to_face
 from ..handlers import (
@@ -496,8 +499,8 @@ class apply_image_to_face(ModalPaintBase, Operator):
             all_hotspot_faces = get_all_hotspot_faces(bm, me)
 
             if all_hotspot_faces:
-                selected_face_indices = {f.index for f in bm.faces if f.select}
-                active_face_index = bm.faces.active.index if bm.faces.active else None
+                id_layer = get_face_id_layer(bm)
+                selected_ids, active_id = save_face_selection(bm, id_layer)
 
                 apply_hotspots_to_mesh(
                     bm, me, all_hotspot_faces, self._hotspot_seam_mode,
@@ -505,11 +508,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                     self._ppm, self._size_weight
                 )
 
-                bm.faces.ensure_lookup_table()
-                for face in bm.faces:
-                    face.select = face.index in selected_face_indices
-                if active_face_index is not None and active_face_index < len(bm.faces):
-                    bm.faces.active = bm.faces[active_face_index]
+                restore_face_selection(bm, id_layer, selected_ids, active_id)
 
                 for face in all_hotspot_faces:
                     if face.is_valid:
@@ -527,8 +526,8 @@ class apply_image_to_face(ModalPaintBase, Operator):
                 all_hotspot_faces = get_all_hotspot_faces(bm, me)
 
                 if all_hotspot_faces:
-                    selected_face_indices = {f.index for f in bm.faces if f.select}
-                    active_face_index = bm.faces.active.index if bm.faces.active else None
+                    id_layer = get_face_id_layer(bm)
+                    selected_ids, active_id = save_face_selection(bm, id_layer)
 
                     apply_hotspots_to_mesh(
                         bm, me, all_hotspot_faces, self._hotspot_seam_mode,
@@ -536,11 +535,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                         self._ppm, self._size_weight
                     )
 
-                    bm.faces.ensure_lookup_table()
-                    for face in bm.faces:
-                        face.select = face.index in selected_face_indices
-                    if active_face_index is not None and active_face_index < len(bm.faces):
-                        bm.faces.active = bm.faces[active_face_index]
+                    restore_face_selection(bm, id_layer, selected_ids, active_id)
 
                     for face in all_hotspot_faces:
                         if face.is_valid:
@@ -727,8 +722,8 @@ class pick_image_from_face(Operator):
             all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
             if all_hotspot_faces:
-                selected_face_indices = {f.index for f in bm_edit.faces if f.select}
-                active_face_index = bm_edit.faces.active.index if bm_edit.faces.active else None
+                id_layer = get_face_id_layer(bm_edit)
+                selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
                 seam_mode = props.hotspot_seam_mode
                 allow_combined_faces = edit_obj.anvil_allow_combined_faces
@@ -739,11 +734,7 @@ class pick_image_from_face(Operator):
                     edit_obj.matrix_world, ppm, size_weight
                 )
 
-                bm_edit.faces.ensure_lookup_table()
-                for face in bm_edit.faces:
-                    face.select = face.index in selected_face_indices
-                if active_face_index is not None and active_face_index < len(bm_edit.faces):
-                    bm_edit.faces.active = bm_edit.faces[active_face_index]
+                restore_face_selection(bm_edit, id_layer, selected_ids, active_id)
 
                 for face in all_hotspot_faces:
                     if face.is_valid:
@@ -754,8 +745,8 @@ class pick_image_from_face(Operator):
                 all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
                 if all_hotspot_faces:
-                    selected_face_indices = {f.index for f in bm_edit.faces if f.select}
-                    active_face_index = bm_edit.faces.active.index if bm_edit.faces.active else None
+                    id_layer = get_face_id_layer(bm_edit)
+                    selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
                     seam_mode = props.hotspot_seam_mode
                     allow_combined_faces = edit_obj.anvil_allow_combined_faces
@@ -766,11 +757,7 @@ class pick_image_from_face(Operator):
                         edit_obj.matrix_world, ppm, size_weight
                     )
 
-                    bm_edit.faces.ensure_lookup_table()
-                    for face in bm_edit.faces:
-                        face.select = face.index in selected_face_indices
-                    if active_face_index is not None and active_face_index < len(bm_edit.faces):
-                        bm_edit.faces.active = bm_edit.faces[active_face_index]
+                    restore_face_selection(bm_edit, id_layer, selected_ids, active_id)
 
                     for face in all_hotspot_faces:
                         if face.is_valid:
