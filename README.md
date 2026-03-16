@@ -8,6 +8,8 @@ Anvil LD is particularly inspired by Trenchbroom.
 
 Anvil LD is a hobby project. It is likely buggy.
 
+Chat with me in Discord: https://discord.gg/hHFZbDzR57
+
 ## Installation
 
 Download the zip from github: on the main github screen click code -> Download zip.
