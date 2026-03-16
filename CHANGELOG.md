@@ -1,7 +1,14 @@
 # Anvil Level Design Changelog
 
-## 1.3.4
+## 1.4.0
+- Significant refactor to face change identification
+- WELD mode (see README)
+- WELD corridor
+- WELD bridge edge loops
+- WELD invert box
+- Alt right click now picks scale
 - Cube cut now cuts faces that are coplanar with the cube if they point outward
+- Fix some incorrect uvs after Blender triangulate
 - Even more sensible texturing on currently blank textured faces
 - Fix a class of bugs relating to invalid cache on undo / redo
 - Texture application from file browser handles undo properly

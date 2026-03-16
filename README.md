@@ -21,6 +21,10 @@ Anvil adds new workspaces 'Hotspot Mapping' and 'Level Design.' You must be in t
 You can remap addon hotkeys in the addon preferences; they are collected there for your convenience. Common keys to remap or turn off are camera and texture application tools.
 
 Move around using the right mouse button.
+Tab switches between object and edit mode.
+Press G to move selection.
+Press E to extrude selection.
+Alt click to select loops.
 Press B to experiment with adding cubes. Object and edit mode.
 Press L to select connected faces; useful when added multiple cubes in edit mode and want to select them separately.
 Press C to experiment with cutting cubes. Edit mode only.
@@ -31,7 +35,9 @@ Extrude some faces to see the auto UVing do its magic.
 
 See the Anvil, Anvil (Settings) and Anvil (Export) panels to discover other features.
 
-*Do not resize items using the scale operator unless you also want the textures to scale.*
+*Do not resize in object mode using the scale operator unless you know what you're doing. You should prefer resizing your level by moving and extruding faces.*
+
+*Choosing whether to create disconnected geometry in edit mode or object mode is a matter of preference and organisation.*
 
 More details below!
 
@@ -129,7 +135,7 @@ It is important to have a wide variety of aspect ratios and sizes in your textur
 
 #### Selection
 
-#### Backface Culling
+##### Backface Culling
 
 Anvil overrides some selection behaviours to ignore culled backfaces when not in x-ray mode.
 
@@ -137,15 +143,19 @@ This works for box select and lasso select when single clicking, shift clicking,
 
 Due to blender api limitations it does not work for box selecting or lasso-ing items, and it does not work with circle select or the tweak tool.
 
-#### Paint Select
+##### Paint Select
 
 Ctrl Left mouse paint selects, which is similar to circle select (hold and drag to add crossed items to the selection) but respects backface culling.
 
-#### Select Connected
+##### Select Connected
 
 Anvil also has its own select connected. Press L while hovering your cursor over a 3d element so select all connected elements.
 
 Press Ctrl-L while hovering your cursor over a 3d element to select all connect elements with matching normals. Press Ctrl-L to add to the selection all faces at normals that are closest to facing the seed face normal. Continued Ctrl-Ls will select further faces. Ctrl-Shift-L will go back a step
+
+#### Weld
+
+Press W to *Context Aware Weld.* This action does various things in specific circumstances. The next weld is flagged in the Anvil panel; specifics are described in the appropriate sections in this README.
 
 #### Cube Cut
 
@@ -163,6 +173,10 @@ Hold shift on first click to start with a line (allows rotated cube cuts).
 
 Hold ctrl to lock the axis, allowing you to move the cursor off a given face while keeping the same draw plane.
 
+After a cube cut, WELD can do 2 things:
+1) When the cube cut has depth but intersects with one plane, WELD creates a corridor with a closed end to the depth of the cube cut
+2) The the cube cut spans across multiple faces, WELD joins the holes into a corridor with open ends
+
 #### Box Builder
 
 Press B in edit or object mode to enter box builder mode.
@@ -176,6 +190,8 @@ Select a vertex to align the box creation when not building on an existing face
 Hold shift on first click to start with a line (allows rotated built boxes).
 
 Hold ctrl to lock the axis, allowing you to move the cursor off a given face while keeping the same draw plane.
+
+After a cube cut, WELD will invert the cube.
 
 ### Camera and Viewport Tools
 
@@ -251,14 +267,15 @@ For a more convenient experience I recommend you consider adjusting the followin
 ## Limitations / Known Issues / Notes on Blender / Hacks / etc
 
 * Changing grid size does not work during an operation
-* Grid snapping does not work when zoomed out far in orthographic mode (blender bug: https://projects.blender.org/blender/blender/issues/137957)
-* Due to file browser API restrictions, you must hold alt-click to pick an image if it is already selected
-* Box selection, lasso selection, circle selection, and individual selection in tweak mode all do respect backface culling. This limitation is primarily due to the ways we can override existing operators
-* Blender has built in UV correct: correct face attributes. It defaults to off. It doesn't work well when extruding faces orthoganally
+* Grid snapping does not work when zoomed out far in orthographic mode (blender bug: https://projects.blender.org/blender/blender/issues/137957).
+* Due to file browser API restrictions, you must hold alt-click to pick an image if it is already selected.
+* Box selection, lasso selection, circle selection, and individual selection in tweak mode all do not respect backface culling. This limitation is primarily due to the ways we can override existing operators.
+* Blender has built in UV correct: correct face attributes. It defaults to off. It doesn't work well when extruding faces orthoganally.
 * Blender has built in UV correct: correct UV (vertex and edge slide). It defaults to on. It mostly works well but has a few annoyances (sometimes just doesn't work; base UV is affected by initial move when using the G hotkey). It also (guess) causes face data to move in memory, causing crashes when Anvil UV is working. UV correct is not exposed via Python, so we disable it by directly accessing blender memory. Brittle!
-* The way Anvil figures out which faces to auto UV is edge case city. Important cases include: only selected and adjacent faces are re-uved when modified; only selected and *new* faces (understood by face index) are uv-ed when the mesh topology changes. Using face-index to determine which faces are new is a bit brittle, but for now it seems to work well. It will break with other addons that create faces in complicated ways that re-order faces; there are ways to break free of face-index but it's not a priority right now. Only re-uving selected and adjacent faces when modified is a performance optimisation to avoid re-uving every face on mesh modification, and it also covers some other edge cases i.e. a user that enables UV lock to modify one face before disabling it likely does not want that face to be re-uved if they modify elsewhere in the mesh. It is therefore difficult to remove the 'selected' constraint. (just comparing raw vertex positions between updates would solve everything, but that's very intimidating!)
-* You are unable to set addon keymaps for modal internal hotkeys i.e. 'exit walk view.' For this reason, Anvil manually adjusts user keymaps when required.
+* The way Anvil figures out which faces to auto UV is edge case city. I recently (time of writing) made some large changes. Leaving undocumented until it is more stable.
+* You are unable to set addon keymaps for modal internal hotkeys i.e. 'exit walk view.' For this reason, Anvil manually adjusts user keymaps when required. I aim to do this in a way that does not destroy your existing keymaps.
 * Anvil manages materials for you based on image file names. If you rename an image file or rename a material you may run into issues.
+* The way we run initial addon setup is edge case city. See comments in code.
 
 ## Undocumented
 
