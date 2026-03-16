@@ -355,8 +355,9 @@ def _project_new_faces(context, bm):
     dupe_other = set()       # different normal or uncategorized duplicates (treat as new)
 
     if duplicated_ids:
-        # For each duplicated ID, find the coplanar face (if any)
-        id_to_coplanar = {}  # fid -> face that is coplanar
+        # For each duplicated ID, find coplanar faces (may be multiple,
+        # e.g. when a quad is triangulated into two coplanar triangles).
+        id_to_coplanar = {}  # fid -> list of (category, face)
         for face in bm.faces:
             fid = face[id_layer]
             if fid not in duplicated_ids or not face.is_valid:
@@ -382,17 +383,18 @@ def _project_new_faces(context, bm):
                                 and all((cv - cav).length < 0.0001
                                         for cv, cav in zip(current_verts,
                                                            cached_verts))):
-                            id_to_coplanar[fid] = ('exact', face)
+                            id_to_coplanar.setdefault(fid, []).append(('exact', face))
                         else:
-                            id_to_coplanar[fid] = ('coplanar', face)
+                            id_to_coplanar.setdefault(fid, []).append(('coplanar', face))
                     else:
                         dupe_extrusions.add(face)
 
-        for fid, (category, face) in id_to_coplanar.items():
-            if category == 'exact':
-                dupe_exact.add(face)
-            else:
-                dupe_coplanar.add(face)
+        for fid, entries in id_to_coplanar.items():
+            for category, face in entries:
+                if category == 'exact':
+                    dupe_exact.add(face)
+                else:
+                    dupe_coplanar.add(face)
 
         # All remaining duplicate faces that aren't categorized
         all_categorized = dupe_exact | dupe_coplanar | dupe_extrusions

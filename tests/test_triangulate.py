@@ -145,7 +145,7 @@ class TriangulateTest(AnvilTestCase):
             },
             (0.33, 0.33, 0.0): {
                 'scale_u': 1.0, 'scale_v': 1.0,
-                'rotation': 135.0, 'offset_x': 0.0, 'offset_y': 0.0,
+                'rotation': 135.0, 'offset_x': 1.0, 'offset_y': 0.0,
             },
             (0.67, 0.67, 0.0): {
                 'scale_u': 1.0, 'scale_v': 1.0,
