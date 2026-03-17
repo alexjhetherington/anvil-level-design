@@ -63,6 +63,8 @@ Fix Alpha Bleed is a utility tool that edits the source image to set transparent
 
 Alt Left Mouse tries to seamlessly tile textures across different faces and around corners.
 
+Shift Alt Left Mouse applies a texture with the same dimensions stretched to the target face (for example, useful for step sides). Shift Alt Right Mouse picks a texture to be stretched.
+
 Manual UV adjustments are possible via the Anvil LD panel:
 * Scale, Rotation, and Offset can be manually set. At 1 scale, the pixels per meter setting controls how large materials appear in the level
 * UV shapes that do not match the 3d face are not strongly support but:

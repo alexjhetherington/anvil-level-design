@@ -226,171 +226,240 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     )
 
 
-class apply_image_to_face(ModalPaintBase, Operator):
-    """Apply selected File Browser image to hovered face (drag to paint)"""
-    bl_idname = "leveldesign.apply_image_to_face"
-    bl_label = "Apply Image to Face"
-    bl_options = {'REGISTER', 'UNDO'}
+def _get_top_edge_index(face, obj_matrix):
+    """Return the loop index of the edge highest in world space.
 
-    @classmethod
-    def poll(cls, context):
-        return is_level_design_workspace()
+    The "top" edge is the one whose two vertices have the highest average
+    world-space Z coordinate.
+    """
+    loops = list(face.loops)
+    n = len(loops)
+    best_idx = 0
+    best_z = -float('inf')
+    for i in range(n):
+        a = obj_matrix @ loops[i].vert.co
+        b = obj_matrix @ loops[(i + 1) % n].vert.co
+        avg_z = (a.z + b.z) * 0.5
+        if avg_z > best_z:
+            best_z = avg_z
+            best_idx = i
+    return best_idx
 
-    def invoke(self, context, event):
-        obj = context.object
-        if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-            debug_log("[ApplyImage] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
-            return {'PASS_THROUGH'}
 
-        # Only work in face select mode
-        if not context.tool_settings.mesh_select_mode[2]:
-            debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
-            return {'PASS_THROUGH'}
+def _get_bottom_edge_index(face, obj_matrix):
+    """Return the loop index of the edge lowest in world space."""
+    loops = list(face.loops)
+    n = len(loops)
+    best_idx = 0
+    best_z = float('inf')
+    for i in range(n):
+        a = obj_matrix @ loops[i].vert.co
+        b = obj_matrix @ loops[(i + 1) % n].vert.co
+        avg_z = (a.z + b.z) * 0.5
+        if avg_z < best_z:
+            best_z = avg_z
+            best_idx = i
+    return best_idx
 
-        image = get_active_image()
-        if not image:
-            debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
-            return {'PASS_THROUGH'}
 
-        # Require exactly 1 face selected
-        bm_check = bmesh.from_edit_mesh(obj.data)
-        bm_check.faces.ensure_lookup_table()
-        selected_count = sum(1 for f in bm_check.faces if f.select)
-        if selected_count != 1:
-            debug_log(f"[ApplyImage] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
-            return {'PASS_THROUGH'}
+def stretch_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix, bm=None,
+                                source_uv_layer=None, source_me=None, source_to_target=None):
+    """Apply UV from source face stretched to fit target face.
 
-        source_face = bm_check.faces.active
-        if source_face is None or not source_face.select:
-            debug_log(f"[ApplyImage] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
-            return {'PASS_THROUGH'}
+    Copies the source face's UV region directly onto the target face.
+    For quad-to-quad, source UVs are copied with a vertex offset so the
+    visually top edge matches between source and target.
+    For non-quad faces, target vertices are projected into the source UV
+    bounding rectangle proportionally.
+    """
+    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
 
-        # Store state for paint session
-        self._source_face_index = source_face.index
-        self._image = image
-        self._obj_matrix = obj.matrix_world.copy()
+    source_loops = list(source_face.loops)
+    target_loops = list(target_face.loops)
+    source_uvs = [loop[src_uv].uv.copy() for loop in source_loops]
 
-        props = context.scene.level_design_props
-        self._ppm = props.pixels_per_meter
-        self._auto_hotspot = props.auto_hotspot
-        self._hotspot_seam_mode = props.hotspot_seam_mode
-        self._allow_combined_faces = obj.anvil_allow_combined_faces
-        self._size_weight = obj.anvil_hotspot_size_weight
-        self._painted_face_indices = set()
-        self._faces_previously_hotspottable = set()
+    # Determine object matrices for world-space comparisons
+    source_obj_matrix = obj_matrix
+    if source_to_target is not None:
+        # source_to_target = target_world_inv @ source_world
+        # so source_world = target_world @ source_to_target
+        source_obj_matrix = obj_matrix @ source_to_target
 
-        # Get or create material
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
-        self._mat = mat
-        if mat.name not in obj.data.materials:
-            obj.data.materials.append(mat)
-        self._mat_index = obj.data.materials.find(mat.name)
+    n_src = len(source_loops)
+    n_tgt = len(target_loops)
 
-        # ---- Cross-object: pre-build BVH trees for other visible meshes ----
-        self._other_objects_info = []
-        self._other_bmeshes = {}
-        self._paint_visited_other = set()
-        for other_obj in context.view_layer.objects:
-            if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
-                continue
-            other_me = other_obj.data
-            if other_me is None or len(other_me.polygons) == 0:
-                continue
-            bvh = BVHTree.FromPolygons(
-                [v.co for v in other_me.vertices],
-                [p.vertices for p in other_me.polygons]
-            )
-            self._other_objects_info.append({
-                'obj': other_obj,
-                'bvh': bvh,
-                'polygons': other_me.polygons,
-                'materials': other_me.materials,
-            })
+    if n_src == 4 and n_tgt == 4:
+        # Quad-to-quad: copy UVs directly with a rotation offset to match top edges
+        src_top = _get_top_edge_index(source_face, source_obj_matrix)
+        tgt_top = _get_top_edge_index(target_face, obj_matrix)
+        offset = tgt_top - src_top
 
-        debug_log(f"[ApplyImage] invoke OK: source_face={self._source_face_index}, image={image.name}, mat={mat.name}")
-        return self._invoke_paint(context, event)
+        for i in range(4):
+            src_idx = (i - offset) % 4
+            target_loops[i][uv_layer].uv = source_uvs[src_idx].copy()
 
-    def modal(self, context, event):
-        return self._modal_paint(context, event)
+        debug_log(f"[StretchApply] quad-to-quad face {target_face.index} | "
+                  f"src_top={src_top} tgt_top={tgt_top} offset={offset}")
+    else:
+        # Non-quad: map target vertices into source UV bounding rectangle
+        min_u = min(uv.x for uv in source_uvs)
+        max_u = max(uv.x for uv in source_uvs)
+        min_v = min(uv.y for uv in source_uvs)
+        max_v = max(uv.y for uv in source_uvs)
+        uv_width = max_u - min_u
+        uv_height = max_v - min_v
+        if uv_width < 1e-8 or uv_height < 1e-8:
+            return False
 
-    def paint_begin(self, context, event):
-        return True
+        # Derive local axes from the bottom edge of the target face
+        bot_idx = _get_bottom_edge_index(target_face, obj_matrix)
+        n = len(target_loops)
+        edge_vec = target_loops[(bot_idx + 1) % n].vert.co - target_loops[bot_idx].vert.co
+        if edge_vec.length < 1e-8:
+            return False
+        local_x = edge_vec.normalized()
+        normal = target_face.normal.normalized()
+        local_y = normal.cross(local_x).normalized()
 
-    def paint_cancel(self, context):
-        self._discard_other_bmeshes()
+        # Project all target vertices onto local axes
+        ref = target_loops[0].vert.co
+        xs = []
+        ys = []
+        for loop in target_loops:
+            delta = loop.vert.co - ref
+            xs.append(delta.dot(local_x))
+            ys.append(delta.dot(local_y))
 
-    def paint_sample(self, context, mouse_2d, region, rv3d):
-        obj = self._paint_obj
-        me = obj.data
-        bm = bmesh.from_edit_mesh(me)
-        bm.faces.ensure_lookup_table()
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        if x_range < 1e-8 or y_range < 1e-8:
+            return False
 
-        origin_local, dir_local = self._paint_ray_local(region, rv3d, mouse_2d)
+        # Map normalized position into source UV bounding rectangle
+        for i, loop in enumerate(target_loops):
+            t_x = (xs[i] - x_min) / x_range
+            t_y = (ys[i] - y_min) / y_range
+            loop[uv_layer].uv.x = min_u + t_x * uv_width
+            loop[uv_layer].uv.y = min_v + t_y * uv_height
 
-        location, normal, face_index, distance = raycast_bvh_skip_backfaces(
-            self._paint_bvh, origin_local, dir_local,
-            bm, me.materials, max_iterations=64
+        debug_log(f"[StretchApply] non-quad face {target_face.index} | "
+                  f"src_uv_box=({min_u:.4f},{min_v:.4f})-({max_u:.4f},{max_v:.4f})")
+
+    if me.is_editmode:
+        bmesh.update_edit_mesh(me)
+    if bm is not None:
+        cache_single_face(target_face, bm, ppm, me)
+
+    return True
+
+
+# ---- Shared helpers for apply/stretch-apply paint operators ----
+
+def _invoke_apply_setup(op, context, event):
+    """Common invoke setup for apply paint operators.
+
+    Validates preconditions, stores paint session state on `op`, and builds
+    cross-object BVH trees. Returns None on success or a Blender result set
+    (e.g. {'PASS_THROUGH'}) on failure.
+    """
+    obj = context.object
+    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+        debug_log("[ApplyImage] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
+        return {'PASS_THROUGH'}
+
+    if not context.tool_settings.mesh_select_mode[2]:
+        debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
+        return {'PASS_THROUGH'}
+
+    image = get_active_image()
+    if not image:
+        debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
+        return {'PASS_THROUGH'}
+
+    bm_check = bmesh.from_edit_mesh(obj.data)
+    bm_check.faces.ensure_lookup_table()
+    selected_count = sum(1 for f in bm_check.faces if f.select)
+    if selected_count != 1:
+        debug_log(f"[ApplyImage] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
+        return {'PASS_THROUGH'}
+
+    source_face = bm_check.faces.active
+    if source_face is None or not source_face.select:
+        debug_log(f"[ApplyImage] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
+        return {'PASS_THROUGH'}
+
+    op._source_face_index = source_face.index
+    op._image = image
+    op._obj_matrix = obj.matrix_world.copy()
+
+    props = context.scene.level_design_props
+    op._ppm = props.pixels_per_meter
+    op._auto_hotspot = props.auto_hotspot
+    op._hotspot_seam_mode = props.hotspot_seam_mode
+    op._allow_combined_faces = obj.anvil_allow_combined_faces
+    op._size_weight = obj.anvil_hotspot_size_weight
+    op._painted_face_indices = set()
+    op._faces_previously_hotspottable = set()
+
+    mat = find_material_with_image(image)
+    if mat is None:
+        mat = create_material_with_image(image)
+    op._mat = mat
+    if mat.name not in obj.data.materials:
+        obj.data.materials.append(mat)
+    op._mat_index = obj.data.materials.find(mat.name)
+
+    op._other_objects_info = []
+    op._other_bmeshes = {}
+    op._paint_visited_other = set()
+    for other_obj in context.view_layer.objects:
+        if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
+            continue
+        other_me = other_obj.data
+        if other_me is None or len(other_me.polygons) == 0:
+            continue
+        bvh = BVHTree.FromPolygons(
+            [v.co for v in other_me.vertices],
+            [p.vertices for p in other_me.polygons]
         )
+        op._other_objects_info.append({
+            'obj': other_obj,
+            'bvh': bvh,
+            'polygons': other_me.polygons,
+            'materials': other_me.materials,
+        })
 
-        # ---- Cross-object: check other objects for a closer hit ----
-        hit_other_obj, hit_other_face_index = self._raycast_other_objects(
-            mouse_2d, region, rv3d, face_index, distance
-        )
-        if hit_other_obj is not None:
-            self._apply_to_other_object(hit_other_obj, hit_other_face_index, bm, me)
-            return
+    debug_log(f"[ApplyImage] invoke OK: source_face={op._source_face_index}, image={image.name}, mat={mat.name}")
+    return None
 
-        # ---- Apply to active object ----
-        if face_index is None:
-            debug_log(f"[ApplyImage] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
-            return
 
-        debug_log(f"[ApplyImage] raycast hit face {face_index} at distance {distance:.4f}, mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f})")
-        if face_index in self._paint_visited:
-            return
-        self._paint_visited.add(face_index)
+def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
+    """Shared paint_sample implementation for apply paint operators."""
+    obj = op._paint_obj
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.faces.ensure_lookup_table()
 
-        target_face = bm.faces[face_index]
-        source_face = bm.faces[self._source_face_index]
+    origin_local, dir_local = op._paint_ray_local(region, rv3d, mouse_2d)
 
-        from ..utils import get_render_active_uv_layer
-        uv_layer = get_render_active_uv_layer(bm, me)
-        if uv_layer is None:
-            uv_layer = bm.loops.layers.uv.verify()
+    location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+        op._paint_bvh, origin_local, dir_local,
+        bm, me.materials, max_iterations=64
+    )
 
-        # Track if face previously had hotspot material
-        if face_has_hotspot_material(target_face, me):
-            self._faces_previously_hotspottable.add(face_index)
-
-        # Assign material
-        target_face.material_index = self._mat_index
-
-        # Apply UV from source face
-        set_uv_from_other_face(
-            source_face, target_face, uv_layer,
-            self._ppm, me, self._obj_matrix
-        )
-
-        self._painted_face_indices.add(face_index)
-
-    # ---- Cross-object helper methods ----
-
-    def _raycast_other_objects(self, mouse_2d, region, rv3d, active_face_index, active_distance):
-        """Raycast other visible mesh objects. Returns (obj, face_index) if a closer hit found."""
-        if not self._other_objects_info:
-            return None, None
-
-        best_distance = active_distance if active_face_index is not None else float('inf')
-        best_obj = None
-        best_face_index = None
+    # ---- Cross-object raycast: find closest hit among other visible meshes ----
+    hit_other_obj = None
+    hit_other_face_index = None
+    if op._other_objects_info:
+        best_distance = distance if face_index is not None else float('inf')
 
         coord = (mouse_2d.x, mouse_2d.y)
         view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
         ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
 
-        for info in self._other_objects_info:
+        for info in op._other_objects_info:
             other_obj = info['obj']
             matrix_inv = other_obj.matrix_world.inverted()
             origin_other = matrix_inv @ ray_origin
@@ -403,79 +472,229 @@ class apply_image_to_face(ModalPaintBase, Operator):
 
             if fidx is not None and dist < best_distance:
                 best_distance = dist
-                best_obj = other_obj
-                best_face_index = fidx
+                hit_other_obj = other_obj
+                hit_other_face_index = fidx
 
-        return best_obj, best_face_index
+    # ---- Apply to other object if it was the closest hit ----
+    if hit_other_obj is not None:
+        visit_key = (id(hit_other_obj), hit_other_face_index)
+        if visit_key not in op._paint_visited_other:
+            op._paint_visited_other.add(visit_key)
 
-    def _apply_to_other_object(self, other_obj, face_index, source_bm, source_me):
-        """Apply texture from source face to a face on another object."""
-        visit_key = (id(other_obj), face_index)
-        if visit_key in self._paint_visited_other:
-            return
-        self._paint_visited_other.add(visit_key)
+            other_me = hit_other_obj.data
+            obj_id = id(hit_other_obj)
 
-        other_me = other_obj.data
-        obj_id = id(other_obj)
+            if obj_id not in op._other_bmeshes:
+                other_bm = bmesh.new()
+                other_bm.from_mesh(other_me)
+                op._other_bmeshes[obj_id] = {
+                    'bm': other_bm,
+                    'obj': hit_other_obj,
+                }
+            other_data = op._other_bmeshes[obj_id]
+            other_bm = other_data['bm']
+            other_bm.faces.ensure_lookup_table()
 
-        # Get or create bmesh for this object
-        if obj_id not in self._other_bmeshes:
-            other_bm = bmesh.new()
-            other_bm.from_mesh(other_me)
-            self._other_bmeshes[obj_id] = {
-                'bm': other_bm,
-                'obj': other_obj,
-            }
-        other_data = self._other_bmeshes[obj_id]
-        other_bm = other_data['bm']
-        other_bm.faces.ensure_lookup_table()
+            if op._mat.name not in other_me.materials:
+                other_me.materials.append(op._mat)
+            other_mat_index = other_me.materials.find(op._mat.name)
 
-        # Ensure material exists on target object
-        if self._mat.name not in other_me.materials:
-            other_me.materials.append(self._mat)
-        other_mat_index = other_me.materials.find(self._mat.name)
+            target_face = other_bm.faces[hit_other_face_index]
+            source_face = bm.faces[op._source_face_index]
 
-        target_face = other_bm.faces[face_index]
-        source_face = source_bm.faces[self._source_face_index]
+            target_face.material_index = other_mat_index
 
-        target_face.material_index = other_mat_index
+            from ..utils import get_render_active_uv_layer
+            source_uv = get_render_active_uv_layer(bm, me)
+            if source_uv is None:
+                source_uv = bm.loops.layers.uv.verify()
+            target_uv = other_bm.loops.layers.uv.verify()
 
-        # Get UV layers for source and target
-        from ..utils import get_render_active_uv_layer
-        source_uv = get_render_active_uv_layer(source_bm, source_me)
-        if source_uv is None:
-            source_uv = source_bm.loops.layers.uv.verify()
-        target_uv = other_bm.loops.layers.uv.verify()
+            source_to_target = hit_other_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
 
-        source_to_target = other_obj.matrix_world.inverted() @ self._paint_obj.matrix_world
+            uv_func(
+                source_face, target_face, target_uv,
+                op._ppm, other_me, hit_other_obj.matrix_world,
+                source_uv_layer=source_uv, source_me=me,
+                source_to_target=source_to_target,
+            )
 
-        set_uv_from_other_face(
-            source_face, target_face, target_uv,
-            self._ppm, other_me, other_obj.matrix_world,
-            source_uv_layer=source_uv, source_me=source_me,
-            source_to_target=source_to_target,
-        )
+            debug_log(f"[ApplyImage] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
+        return
 
-        debug_log(f"[ApplyImage] cross-object hit: {other_obj.name} face {face_index}")
+    if face_index is None:
+        debug_log(f"[ApplyImage] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
+        return
 
-    def _flush_other_bmeshes(self):
-        """Write back and free all cross-object bmeshes."""
-        for data in self._other_bmeshes.values():
-            data['bm'].to_mesh(data['obj'].data)
-            data['bm'].free()
-        self._other_bmeshes.clear()
+    debug_log(f"[ApplyImage] raycast hit face {face_index} at distance {distance:.4f}, mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f})")
+    if face_index in op._paint_visited:
+        return
+    op._paint_visited.add(face_index)
 
-    def _discard_other_bmeshes(self):
-        """Free all cross-object bmeshes without writing back."""
-        for data in self._other_bmeshes.values():
-            data['bm'].free()
-        self._other_bmeshes.clear()
+    target_face = bm.faces[face_index]
+    source_face = bm.faces[op._source_face_index]
 
-    # ---- End cross-object helper methods ----
+    from ..utils import get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.verify()
+
+    if face_has_hotspot_material(target_face, me):
+        op._faces_previously_hotspottable.add(face_index)
+
+    target_face.material_index = op._mat_index
+
+    uv_func(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix)
+
+    op._painted_face_indices.add(face_index)
+
+
+def _flush_other_bmeshes(op):
+    """Write back and free all cross-object bmeshes."""
+    for data in op._other_bmeshes.values():
+        data['bm'].to_mesh(data['obj'].data)
+        data['bm'].free()
+    op._other_bmeshes.clear()
+
+
+def _discard_other_bmeshes(op):
+    """Free all cross-object bmeshes without writing back."""
+    for data in op._other_bmeshes.values():
+        data['bm'].free()
+    op._other_bmeshes.clear()
+
+
+def _pick_source_from_cursor(op, context, event):
+    """Raycast to find source face under cursor. Shared by pick operators.
+
+    Returns (hit_obj, hit_face_index, image) on success,
+    or sets op.report and returns None on failure.
+    """
+    edit_obj = context.object
+    if not edit_obj or edit_obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+        return None
+
+    bm_edit = bmesh.from_edit_mesh(edit_obj.data)
+    bm_edit.faces.ensure_lookup_table()
+    selected_faces = [f for f in bm_edit.faces if f.select]
+    if not selected_faces:
+        return None
+
+    region = context.region
+    rv3d = context.region_data
+    coord = (event.mouse_region_x, event.mouse_region_y)
+
+    view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
+    closest_distance = float('inf')
+    hit_obj = None
+    hit_mat_index = None
+    hit_face_index = None
+
+    for obj in context.view_layer.objects:
+        if obj.type != 'MESH' or not obj.visible_get():
+            continue
+        me = obj.data
+        if me is None:
+            continue
+
+        matrix_inv = obj.matrix_world.inverted()
+        ray_origin_local = matrix_inv @ ray_origin
+        ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+        if obj.mode == 'EDIT' and obj == context.object:
+            bm = bmesh.from_edit_mesh(me)
+            bm.faces.ensure_lookup_table()
+            bvh = BVHTree.FromBMesh(bm)
+
+            location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+                bvh, ray_origin_local, ray_direction_local,
+                bm, me.materials, max_iterations=64
+            )
+
+            if face_index is not None and distance < closest_distance:
+                closest_distance = distance
+                hit_obj = obj
+                hit_mat_index = bm.faces[face_index].material_index
+                hit_face_index = face_index
+        else:
+            depsgraph = context.evaluated_depsgraph_get()
+            obj_eval = obj.evaluated_get(depsgraph)
+            me_eval = obj_eval.to_mesh()
+            if me_eval is None or len(me_eval.polygons) == 0:
+                if me_eval:
+                    obj_eval.to_mesh_clear()
+                continue
+
+            bvh = BVHTree.FromPolygons(
+                [v.co for v in me_eval.vertices],
+                [p.vertices for p in me_eval.polygons]
+            )
+
+            location, normal, face_index, distance = raycast_bvh_skip_backfaces_polys(
+                bvh, ray_origin_local, ray_direction_local,
+                me_eval.polygons, me_eval.materials, max_iterations=64
+            )
+
+            if face_index is not None and distance < closest_distance:
+                closest_distance = distance
+                hit_obj = obj
+                hit_mat_index = me_eval.polygons[face_index].material_index
+                hit_face_index = face_index
+
+            obj_eval.to_mesh_clear()
+
+    if hit_obj is None:
+        op.report({'WARNING'}, "No face under cursor")
+        return None
+
+    hit_me = hit_obj.data
+    hit_mat = hit_me.materials[hit_mat_index] if hit_mat_index < len(hit_me.materials) else None
+    if not hit_mat:
+        op.report({'WARNING'}, "Face has no material")
+        return None
+
+    image = get_image_from_material(hit_mat)
+    if not image:
+        op.report({'WARNING'}, "Material has no image texture")
+        return None
+
+    return hit_obj, hit_face_index, image, selected_faces, bm_edit
+
+
+# ---- Apply Image to Face (Alt+Left Click) ----
+
+class apply_image_to_face(ModalPaintBase, Operator):
+    """Apply selected File Browser image to hovered face (drag to paint)"""
+    bl_idname = "leveldesign.apply_image_to_face"
+    bl_label = "Apply Image to Face"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def invoke(self, context, event):
+        result = _invoke_apply_setup(self, context, event)
+        if result is not None:
+            return result
+        return self._invoke_paint(context, event)
+
+    def modal(self, context, event):
+        return self._modal_paint(context, event)
+
+    def paint_begin(self, context, event):
+        return True
+
+    def paint_cancel(self, context):
+        _discard_other_bmeshes(self)
+
+    def paint_sample(self, context, mouse_2d, region, rv3d):
+        _paint_sample_impl(self, context, mouse_2d, region, rv3d, set_uv_from_other_face)
 
     def paint_finish(self, context):
-        # Flush cross-object changes
-        self._flush_other_bmeshes()
+        _flush_other_bmeshes(self)
 
         if not self._painted_face_indices:
             return
@@ -515,7 +734,6 @@ class apply_image_to_face(ModalPaintBase, Operator):
                         cache_single_face(face, bm, self._ppm, me)
         elif (self._auto_hotspot and not new_is_hotspottable
               and self._faces_previously_hotspottable):
-            # Check if any painted face has connected hotspot faces
             has_connected = False
             for fi in self._painted_face_indices:
                 if fi < len(bm.faces) and any_connected_face_has_hotspot(bm.faces[fi], me):
@@ -546,6 +764,47 @@ class apply_image_to_face(ModalPaintBase, Operator):
         redraw_ui_panels(context)
 
 
+# ---- Stretch Apply Image to Face (Shift+Alt+Left Click) ----
+
+class stretch_apply_image_to_face(ModalPaintBase, Operator):
+    """Stretch-apply selected File Browser image to hovered face (drag to paint)"""
+    bl_idname = "leveldesign.stretch_apply_image_to_face"
+    bl_label = "Stretch Apply Image to Face"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def invoke(self, context, event):
+        result = _invoke_apply_setup(self, context, event)
+        if result is not None:
+            return result
+        return self._invoke_paint(context, event)
+
+    def modal(self, context, event):
+        return self._modal_paint(context, event)
+
+    def paint_begin(self, context, event):
+        return True
+
+    def paint_cancel(self, context):
+        _discard_other_bmeshes(self)
+
+    def paint_sample(self, context, mouse_2d, region, rv3d):
+        _paint_sample_impl(self, context, mouse_2d, region, rv3d, stretch_uv_from_other_face)
+
+    def paint_finish(self, context):
+        _flush_other_bmeshes(self)
+        if not self._painted_face_indices:
+            return
+        update_ui_from_selection(context)
+        update_active_image_from_face(context)
+        redraw_ui_panels(context)
+
+
+# ---- Pick Image from Face (Alt+Right Click) ----
+
 class pick_image_from_face(Operator):
     """Pick texture from hovered face and apply to selected faces"""
     bl_idname = "leveldesign.pick_image_from_face"
@@ -560,112 +819,12 @@ class pick_image_from_face(Operator):
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
         from .uv_tools import apply_hotspots_to_mesh
 
-        # Require edit mode with faces selected
+        pick_result = _pick_source_from_cursor(self, context, event)
+        if pick_result is None:
+            return {'PASS_THROUGH'}
+        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+
         edit_obj = context.object
-        if not edit_obj or edit_obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-            return {'PASS_THROUGH'}
-
-        bm_edit = bmesh.from_edit_mesh(edit_obj.data)
-        bm_edit.faces.ensure_lookup_table()
-        selected_faces = [f for f in bm_edit.faces if f.select]
-        if not selected_faces:
-            return {'PASS_THROUGH'}
-
-        # Get ray from mouse position
-        region = context.region
-        rv3d = context.region_data
-        coord = (event.mouse_region_x, event.mouse_region_y)
-
-        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
-        # Track closest hit across all objects
-        closest_distance = float('inf')
-        hit_obj = None
-        hit_mat_index = None
-        hit_face_index = None
-
-        # Raycast against all visible mesh objects
-        for obj in context.view_layer.objects:
-            if obj.type != 'MESH' or not obj.visible_get():
-                continue
-
-            # Skip objects with no mesh data
-            me = obj.data
-            if me is None:
-                continue
-
-            # Transform ray to object local space
-            matrix_inv = obj.matrix_world.inverted()
-            ray_origin_local = matrix_inv @ ray_origin
-            ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
-
-            # Create BVHTree from the mesh
-            # For objects in edit mode, use bmesh; otherwise use evaluated mesh
-            if obj.mode == 'EDIT' and obj == context.object:
-                bm = bmesh.from_edit_mesh(me)
-                bm.faces.ensure_lookup_table()
-                bvh = BVHTree.FromBMesh(bm)
-
-                # Raycast, skipping backface-culled faces
-                location, normal, face_index, distance = raycast_bvh_skip_backfaces(
-                    bvh, ray_origin_local, ray_direction_local,
-                    bm, me.materials, max_iterations=64
-                )
-
-                if face_index is not None and distance < closest_distance:
-                    closest_distance = distance
-                    hit_obj = obj
-                    hit_mat_index = bm.faces[face_index].material_index
-                    hit_face_index = face_index
-            else:
-                # Use evaluated mesh for object mode or non-active edit objects
-                depsgraph = context.evaluated_depsgraph_get()
-                obj_eval = obj.evaluated_get(depsgraph)
-                me_eval = obj_eval.to_mesh()
-                if me_eval is None or len(me_eval.polygons) == 0:
-                    if me_eval:
-                        obj_eval.to_mesh_clear()
-                    continue
-
-                bvh = BVHTree.FromPolygons(
-                    [v.co for v in me_eval.vertices],
-                    [p.vertices for p in me_eval.polygons]
-                )
-
-                # Raycast, skipping backface-culled faces
-                location, normal, face_index, distance = raycast_bvh_skip_backfaces_polys(
-                    bvh, ray_origin_local, ray_direction_local,
-                    me_eval.polygons, me_eval.materials, max_iterations=64
-                )
-
-                # Get material index before clearing eval mesh
-                if face_index is not None and distance < closest_distance:
-                    closest_distance = distance
-                    hit_obj = obj
-                    hit_mat_index = me_eval.polygons[face_index].material_index
-                    hit_face_index = face_index
-
-                # Clean up evaluated mesh
-                obj_eval.to_mesh_clear()
-
-        if hit_obj is None:
-            self.report({'WARNING'}, "No face under cursor")
-            return {'CANCELLED'}
-
-        # Get material and extract image
-        hit_me = hit_obj.data
-        hit_mat = hit_me.materials[hit_mat_index] if hit_mat_index < len(hit_me.materials) else None
-        if not hit_mat:
-            self.report({'WARNING'}, "Face has no material")
-            return {'CANCELLED'}
-
-        image = get_image_from_material(hit_mat)
-        if not image:
-            self.report({'WARNING'}, "Material has no image texture")
-            return {'CANCELLED'}
-
-        # Apply the picked texture to all selected faces on the edit object
         me = edit_obj.data
         from ..utils import get_render_active_uv_layer
         uv_layer = get_render_active_uv_layer(bm_edit, me)
@@ -674,7 +833,6 @@ class pick_image_from_face(Operator):
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
-        # Check which selected faces previously had hotspottable textures
         faces_with_previous_hotspot = [f for f in selected_faces if face_has_hotspot_material(f, me)]
         any_previous_was_hotspottable = len(faces_with_previous_hotspot) > 0
 
@@ -684,22 +842,16 @@ class pick_image_from_face(Operator):
                 any_connected_has_hotspot = True
                 break
 
-        # Get or create material
         mat = find_material_with_image(image)
         if mat is None:
             mat = create_material_with_image(image)
-
-        # Ensure material slot exists
         if mat.name not in me.materials:
             me.materials.append(mat)
-
         mat_index = me.materials.find(mat.name)
 
-        # Assign material to all selected faces
         for face in selected_faces:
             face.material_index = mat_index
 
-        # Build source face reference for UV transfer from hovered face
         is_same_object = (hit_obj == edit_obj)
         _source_bm = None
         if is_same_object:
@@ -763,7 +915,6 @@ class pick_image_from_face(Operator):
                         if face.is_valid:
                             cache_single_face(face, bm_edit, ppm, me)
 
-            # Transfer UV from hovered (source) face to each selected (target) face
             for target_face in selected_faces:
                 set_uv_from_other_face(
                     _source_face, target_face, uv_layer,
@@ -779,7 +930,6 @@ class pick_image_from_face(Operator):
 
         bmesh.update_edit_mesh(me)
 
-        # Update UI state
         update_ui_from_selection(context)
         update_active_image_from_face(context)
         redraw_ui_panels(context)
@@ -788,9 +938,87 @@ class pick_image_from_face(Operator):
         return {'FINISHED'}
 
 
+# ---- Stretch Pick Image from Face (Shift+Alt+Right Click) ----
+
+class stretch_pick_image_from_face(Operator):
+    """Stretch-pick texture from hovered face and apply to selected faces"""
+    bl_idname = "leveldesign.stretch_pick_image_from_face"
+    bl_label = "Stretch Pick and Apply Texture"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def invoke(self, context, event):
+        pick_result = _pick_source_from_cursor(self, context, event)
+        if pick_result is None:
+            return {'PASS_THROUGH'}
+        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+
+        edit_obj = context.object
+        me = edit_obj.data
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm_edit, me)
+        if uv_layer is None:
+            uv_layer = bm_edit.loops.layers.uv.verify()
+        props = context.scene.level_design_props
+        ppm = props.pixels_per_meter
+
+        mat = find_material_with_image(image)
+        if mat is None:
+            mat = create_material_with_image(image)
+        if mat.name not in me.materials:
+            me.materials.append(mat)
+        mat_index = me.materials.find(mat.name)
+
+        for face in selected_faces:
+            face.material_index = mat_index
+
+        is_same_object = (hit_obj == edit_obj)
+        _source_bm = None
+        if is_same_object:
+            _source_face = bm_edit.faces[hit_face_index]
+            _source_uv = uv_layer
+            _source_me = me
+            _source_to_target = None
+        else:
+            _source_bm = bmesh.new()
+            _source_bm.from_mesh(hit_obj.data)
+            _source_bm.faces.ensure_lookup_table()
+            _source_face = _source_bm.faces[hit_face_index]
+            _source_uv = _source_bm.loops.layers.uv.verify()
+            _source_me = hit_obj.data
+            _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
+
+        for target_face in selected_faces:
+            stretch_uv_from_other_face(
+                _source_face, target_face, uv_layer,
+                ppm, me, edit_obj.matrix_world,
+                bm=bm_edit,
+                source_uv_layer=_source_uv,
+                source_me=_source_me,
+                source_to_target=_source_to_target,
+            )
+
+        if _source_bm is not None:
+            _source_bm.free()
+
+        bmesh.update_edit_mesh(me)
+
+        update_ui_from_selection(context)
+        update_active_image_from_face(context)
+        redraw_ui_panels(context)
+        self.report({'INFO'}, f"Stretch applied: {image.name}")
+
+        return {'FINISHED'}
+
+
 classes = (
     apply_image_to_face,
     pick_image_from_face,
+    stretch_apply_image_to_face,
+    stretch_pick_image_from_face,
 )
 
 addon_keymaps = []
@@ -800,13 +1028,11 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    # Register Alt+Click keymap
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if not kc:
         return
 
-    # Register in Mesh keymap for edit mode
     km = kc.keymaps.new(name='Mesh', space_type='EMPTY')
 
     # Alt+Left Click to apply image to face
@@ -822,6 +1048,26 @@ def register():
     kmi = km.keymap_items.new(
         pick_image_from_face.bl_idname,
         'RIGHTMOUSE', 'PRESS',
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    # Shift+Alt+Left Click to stretch-apply image to face
+    kmi = km.keymap_items.new(
+        stretch_apply_image_to_face.bl_idname,
+        'LEFTMOUSE', 'PRESS',
+        shift=True,
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    # Shift+Alt+Right Click to stretch-pick image from face
+    kmi = km.keymap_items.new(
+        stretch_pick_image_from_face.bl_idname,
+        'RIGHTMOUSE', 'PRESS',
+        shift=True,
         alt=True,
         head=True
     )

@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.1
+- Add pick and apply STRETCH texture
+
 ## 1.4.0
 - Significant refactor to face change identification
 - WELD mode (see README)

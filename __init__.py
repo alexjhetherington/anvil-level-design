@@ -87,6 +87,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.force_apply_texture": "UV",
             "leveldesign.apply_image_to_face": "UV",
             "leveldesign.pick_image_from_face": "UV",
+            "leveldesign.stretch_apply_image_to_face": "UV",
+            "leveldesign.stretch_pick_image_from_face": "UV",
             "leveldesign.grid_scale_up": "Tools",
             "leveldesign.grid_scale_down": "Tools",
             "leveldesign.line_mode_activate": "Tools",
