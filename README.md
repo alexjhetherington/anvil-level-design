@@ -16,6 +16,8 @@ Download the zip from github: on the main github screen click code -> Download z
 
 Edit -> Preferences -> v arrow -> Install From Disk -> Select the zip file
 
+Minimum Blender version is 5.1. Until Anvil is more mature, backwards compatibility is not prioritised.
+
 ## Quick Start
 
 Anvil adds new workspaces 'Hotspot Mapping' and 'Level Design.' You must be in those workspaces to use Anvil features. If you lose them, go to addon preferences -> Anvil -> Create X Workspace.
