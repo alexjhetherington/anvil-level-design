@@ -23,6 +23,7 @@ _REQUIRED_OPERATORS = [
     "view3d.view_axis",
     "view3d.walk",
     "wm.call_menu",
+    "wm.call_panel",
     "wm.save_mainfile",
     "workspace.reorder_to_front",
 ]

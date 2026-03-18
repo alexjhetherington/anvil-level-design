@@ -264,7 +264,7 @@ class LEVELDESIGN_OT_context_menu(Operator):
         elif context.mode == 'PAINT_WEIGHT':
             bpy.ops.wm.call_menu(name='VIEW3D_MT_weight_paint_context_menu')
         elif context.mode == 'PAINT_VERTEX':
-            bpy.ops.wm.call_menu(name='VIEW3D_MT_vertex_paint_context_menu')
+            bpy.ops.wm.call_panel(name='VIEW3D_PT_paint_vertex_context_menu')
         elif context.mode == 'PAINT_TEXTURE':
             bpy.ops.wm.call_menu(name='VIEW3D_MT_texture_paint_context_menu')
         else:
@@ -288,6 +288,7 @@ KEYMAPS_TO_REGISTER = [
     ("Armature", 'EMPTY'),
     ("Pose", 'EMPTY'),
     ("Sculpt", 'EMPTY'),
+    ("Vertex Paint", 'EMPTY'),
 ]
 
 

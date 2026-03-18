@@ -105,15 +105,15 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.label(text="Keybindings")
         row.operator("leveldesign.restore_default_keybindings", text="Restore Defaults")
-        layout.label(text="Context Menu is a default Blender item but is here because by default this addon remaps it", icon='INFO')
 
         # Category definitions: order matters for display
-        CATEGORY_ORDER = ["Navigation", "Selection", "UV", "Tools", "Other"]
+        REMAPPED_CATEGORY = "Remapped Defaults"
+        CATEGORY_ORDER = [REMAPPED_CATEGORY, "Navigation", "Selection", "UV", "Tools", "Other"]
         CATEGORY_MAP = {
             "leveldesign.walk_navigation_hold": "Navigation",
             "leveldesign.ortho_view": "Navigation",
             "leveldesign.ortho_pan": "Navigation",
-            "leveldesign.context_menu": "Navigation",
+            "leveldesign.context_menu": REMAPPED_CATEGORY,
             "leveldesign.backface_select": "Selection",
             "leveldesign.backface_object_select": "Selection",
             "leveldesign.backface_paint_select": "Selection",
@@ -145,12 +145,18 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             categorized_entries = {cat: [] for cat in CATEGORY_ORDER}
             walk_nav_primary_kmi = None
             walk_nav_all_user_kmis = []
+            context_menu_primary_kmi = None
+            context_menu_all_user_kmis = []
             for km_addon in kc_addon.keymaps:
                 # Find the corresponding user keymap
                 km_user = kc_user.keymaps.get(km_addon.name) if kc_user else None
 
                 for kmi_addon in km_addon.keymap_items:
-                    if kmi_addon.idname.startswith("leveldesign."):
+                    # Check if this is our vertex paint menu remap
+                    is_vp_menu = (kmi_addon.idname == "wm.call_panel"
+                                  and hasattr(kmi_addon.properties, "name")
+                                  and kmi_addon.properties.name == 'VIEW3D_PT_paint_vertex_context_menu')
+                    if kmi_addon.idname.startswith("leveldesign.") or is_vp_menu:
                         base_name = kmi_addon.name if kmi_addon.name else kmi_addon.idname
 
                         # Find the matching user keymap item
@@ -206,6 +212,15 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                 categorized_entries[category].append((base_name, km_addon, kmi_display))
                             continue
 
+                        # Deduplicate context menu — show one combined entry for all modes
+                        if kmi_addon.idname == "leveldesign.context_menu":
+                            context_menu_all_user_kmis.append(kmi_display)
+                            if context_menu_primary_kmi is None:
+                                context_menu_primary_kmi = kmi_display
+                                category = CATEGORY_MAP.get(kmi_addon.idname, "Other")
+                                categorized_entries[category].append(("Context Menu (Right Click)", km_addon, kmi_display))
+                            continue
+
                         # Check for property-based differentiation
                         if kmi_addon.idname == "leveldesign.ortho_view" and hasattr(kmi_addon.properties, "view_type"):
                             display_name = f"{base_name} - {kmi_addon.properties.view_type.title()}"
@@ -242,11 +257,16 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             display_name = "Fit to Face"
                         elif kmi_addon.idname == "leveldesign.select_invalid_uvs":
                             display_name = "Select Invalid UVs"
+                        elif is_vp_menu:
+                            display_name = "Vertex Paint Color Menu"
                         else:
                             # Add keymap context in brackets for mode-based differentiation
                             display_name = f"{base_name} ({km_addon.name})"
 
-                        category = CATEGORY_MAP.get(kmi_addon.idname, "Other")
+                        if is_vp_menu:
+                            category = REMAPPED_CATEGORY
+                        else:
+                            category = CATEGORY_MAP.get(kmi_addon.idname, "Other")
                         categorized_entries[category].append((display_name, km_addon, kmi_display))
 
             # Draw categorized entries
@@ -258,6 +278,10 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
 
                 box = layout.box()
                 box.label(text=category)
+                if category == REMAPPED_CATEGORY:
+                    box.label(text="Blender default hotkeys that have been remapped by this addon", icon='INFO')
+                if category == "Navigation":
+                    box.label(text="Walk navigation controls can be found in the Blender keymap menu at: 3D View -> View3D Walk Modal", icon='INFO')
                 for display_name, km, kmi in entries:
                     row = box.row(align=True)
                     row.label(text=display_name)
@@ -277,6 +301,17 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             setattr(kmi, attr, getattr(walk_nav_primary_kmi, attr))
                 from .operators import walk_navigation
                 walk_navigation.sync_confirm_key(walk_nav_primary_kmi.type)
+
+            # Sync context menu keybinds across all modes
+            if context_menu_primary_kmi:
+                for kmi in context_menu_all_user_kmis:
+                    if kmi is context_menu_primary_kmi:
+                        continue
+                    if kmi.map_type != context_menu_primary_kmi.map_type:
+                        kmi.map_type = context_menu_primary_kmi.map_type
+                    for attr in ('type', 'value', 'ctrl', 'shift', 'alt', 'oskey', 'active'):
+                        if getattr(kmi, attr) != getattr(context_menu_primary_kmi, attr):
+                            setattr(kmi, attr, getattr(context_menu_primary_kmi, attr))
 
 
 def register():

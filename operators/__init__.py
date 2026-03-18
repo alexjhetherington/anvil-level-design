@@ -13,6 +13,7 @@ from . import backface_select
 from . import select_linked
 from . import uv_select_invalid
 from . import weld
+from . import vertex_paint_color_picker
 
 
 def register():
@@ -31,9 +32,11 @@ def register():
     select_linked.register()
     uv_select_invalid.register()
     weld.register()
+    vertex_paint_color_picker.register()
 
 
 def unregister():
+    vertex_paint_color_picker.unregister()
     weld.unregister()
     uv_select_invalid.unregister()
     select_linked.unregister()
