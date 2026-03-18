@@ -287,7 +287,7 @@ def _do_edge_loop_select(bm, me, face, hit_point, extend, target_edge_override):
     bm.select_flush_mode()
     bmesh.update_edit_mesh(me)
 
-    bpy.ops.mesh.loop_multi_select(ring=False)
+    bpy.ops.mesh.select_edge_loop_multi()
 
     if extend:
         bm = bmesh.from_edit_mesh(me)
@@ -341,7 +341,7 @@ def _do_face_loop_select(bm, me, face, hit_point, extend, target_edge_override):
     bmesh.update_edit_mesh(me)
 
     # Get edge ring (face loops correspond to edge rings)
-    bpy.ops.mesh.loop_multi_select(ring=True)
+    bpy.ops.mesh.select_edge_ring_multi()
 
     # Re-fetch bmesh, collect ring edge indices
     bm = bmesh.from_edit_mesh(me)

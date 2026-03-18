@@ -1,7 +1,9 @@
 # Anvil Level Design Changelog
 
 ## 1.4.1
+- MINIMUM BLENDER VERSION 5.1
 - Add pick and apply STRETCH texture
+- Add very obvious error message when user's blender version is too low
 
 ## 1.4.0
 - Significant refactor to face change identification

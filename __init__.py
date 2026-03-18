@@ -2,13 +2,14 @@ bl_info = {
     "name": "Anvil Level Design",
     "author": "Alex Hetherington",
     "version": (1, 4, 0),
-    "blender": (5, 0, 0),
+    "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Level Design",
     "description": "TrenchBroom-style UV tools, texture application, and grid controls for level design",
     "category": "3D View",
 }
 
 import bpy
+import blf
 
 from . import properties
 from . import handlers
@@ -16,6 +17,44 @@ from . import operators
 from . import panels
 from . import workspace
 from . import hotspot_mapping
+from .utils import is_level_design_workspace
+
+_MINIMUM_BLENDER_VERSION = bl_info["blender"]
+_VERSION_OK = bpy.app.version >= _MINIMUM_BLENDER_VERSION
+
+_version_warning_handle = None
+
+
+def _draw_version_warning():
+    if not is_level_design_workspace():
+        return
+
+    region = bpy.context.region
+    if not region:
+        return
+
+    font_id = 0
+    min_ver = ".".join(str(v) for v in _MINIMUM_BLENDER_VERSION)
+    cur_ver = ".".join(str(v) for v in bpy.app.version[:3])
+
+    center_x = region.width // 2
+    center_y = region.height // 2
+
+    # Title
+    blf.size(font_id, 32)
+    blf.color(font_id, 1.0, 0.2, 0.2, 1.0)
+    title = "UNSUPPORTED BLENDER VERSION"
+    tw, th = blf.dimensions(font_id, title)
+    blf.position(font_id, center_x - tw / 2, center_y + 20, 0)
+    blf.draw(font_id, title)
+
+    # Details
+    blf.size(font_id, 20)
+    blf.color(font_id, 1.0, 0.8, 0.4, 1.0)
+    detail = f"Anvil Level Design requires Blender {min_ver} or newer (current: {cur_ver})"
+    dw, dh = blf.dimensions(font_id, detail)
+    blf.position(font_id, center_x - dw / 2, center_y - 20, 0)
+    blf.draw(font_id, detail)
 
 
 class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
@@ -241,7 +280,19 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
 
 
 def register():
+    global _version_warning_handle
+
     print("Anvil Level Design: Debug logging is DISABLED (toggle in Anvil Settings > Debug)", flush=True)
+
+    if not _VERSION_OK:
+        min_ver = ".".join(str(v) for v in _MINIMUM_BLENDER_VERSION)
+        cur_ver = ".".join(str(v) for v in bpy.app.version[:3])
+        print(f"Anvil Level Design: WARNING - Blender {cur_ver} is not supported. "
+              f"Minimum required version is {min_ver}.", flush=True)
+        _version_warning_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_version_warning, (), 'WINDOW', 'POST_PIXEL'
+        )
+
     bpy.utils.register_class(LEVELDESIGN_OT_restore_default_keybindings)
     bpy.utils.register_class(LevelDesignPreferences)
     properties.register()
@@ -253,6 +304,12 @@ def register():
 
 
 def unregister():
+    global _version_warning_handle
+
+    if _version_warning_handle is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_version_warning_handle, 'WINDOW')
+        _version_warning_handle = None
+
     hotspot_mapping.unregister()
     workspace.unregister()
     panels.unregister()
