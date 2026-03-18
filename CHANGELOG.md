@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.2
+- Fix regression caused by blender update stopping initial texture apply on default cube and new boxes in object mode
+
 ## 1.4.1
 - MINIMUM BLENDER VERSION 5.1
 - Add pick and apply STRETCH texture

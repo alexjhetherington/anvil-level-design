@@ -1416,19 +1416,25 @@ def apply_texture_from_file_browser():
 
         if in_edit_mode:
             bm = bmesh.from_edit_mesh(obj.data)
-            bm.faces.ensure_lookup_table()
+        else:
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+
+        # Ensure all custom data layers exist BEFORE storing face references,
+        # because adding new BMesh layers invalidates existing element refs.
+        uv_layer = get_render_active_uv_layer(bm, obj.data)
+        if uv_layer is None:
+            uv_layer = bm.loops.layers.uv.verify()
+        get_face_id_layer(bm)
+
+        bm.faces.ensure_lookup_table()
+
+        if in_edit_mode:
             selected_faces = [f for f in bm.faces if f.select]
             if not selected_faces:
                 return
         else:
-            bm = bmesh.new()
-            bm.from_mesh(obj.data)
-            bm.faces.ensure_lookup_table()
             selected_faces = list(bm.faces)
-
-        uv_layer = get_render_active_uv_layer(bm, obj.data)
-        if uv_layer is None:
-            uv_layer = bm.loops.layers.uv.verify()
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
