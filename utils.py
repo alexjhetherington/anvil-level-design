@@ -917,12 +917,51 @@ def is_texture_alpha_connected(mat):
     return False
 
 
+def is_vertex_colors_enabled(mat):
+    """Check if vertex colors multiply node setup is present in the material"""
+    if not mat or not mat.use_nodes or not mat.node_tree:
+        return False
+    for node in mat.node_tree.nodes:
+        if node.type == 'MIX_RGB' and node.blend_type == 'MULTIPLY':
+            # Check that a vertex color node feeds into it
+            for link in mat.node_tree.links:
+                if link.to_node == node and link.from_node.type == 'VERTEX_COLOR':
+                    return True
+    return False
+
+
+def remove_unused_nodes(mat):
+    """Recursively remove nodes that have no connected outputs.
+
+    Preserves Output Material and Principled BSDF nodes.
+    """
+    if not mat or not mat.use_nodes or not mat.node_tree:
+        return
+    nt = mat.node_tree
+    protected_types = {'OUTPUT_MATERIAL', 'BSDF_PRINCIPLED', 'TEX_IMAGE'}
+    changed = True
+    while changed:
+        changed = False
+        for node in list(nt.nodes):
+            if node.type in protected_types:
+                continue
+            has_connected_output = False
+            for output in node.outputs:
+                if output.links:
+                    has_connected_output = True
+                    break
+            if not has_connected_output:
+                nt.nodes.remove(node)
+                changed = True
+
+
 def get_default_material_settings():
     """Get the default material settings from the current scene."""
     props = bpy.context.scene.level_design_props
     return {
         'interpolation': props.default_interpolation,
         'texture_as_alpha': props.default_texture_as_alpha,
+        'vertex_colors': props.default_vertex_colors,
         'roughness': props.default_roughness,
     }
 
@@ -958,6 +997,30 @@ def create_material_with_image(image):
     if defaults['texture_as_alpha']:
         nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
         mat.blend_method = 'CLIP'
+
+    if defaults['vertex_colors']:
+        mix = nt.nodes.new("ShaderNodeMixRGB")
+        mix.blend_type = 'MULTIPLY'
+        mix.use_clamp = True
+        mix.inputs["Fac"].default_value = 1.0
+        mix.location = (-200, 200)
+
+        vc = nt.nodes.new("ShaderNodeVertexColor")
+        vc.location = (-400, -200)
+
+        # Remove existing tex Color -> BSDF Base Color link
+        for link in list(nt.links):
+            if (
+                link.from_node == tex
+                and link.from_socket.name == "Color"
+                and link.to_node == bsdf
+                and link.to_socket.name == "Base Color"
+            ):
+                nt.links.remove(link)
+
+        nt.links.new(tex.outputs["Color"], mix.inputs["Color1"])
+        nt.links.new(vc.outputs["Color"], mix.inputs["Color2"])
+        nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
 
     return mat
 

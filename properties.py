@@ -499,6 +499,12 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
+    default_vertex_colors: BoolProperty(
+        name="Vertex Colors",
+        description="Multiply texture by vertex colors for new materials",
+        default=False,
+    )
+
     default_roughness: FloatProperty(
         name="Roughness",
         description="Roughness value for new materials",

@@ -7,6 +7,7 @@ from ..utils import (
     find_material_with_image,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
+    is_vertex_colors_enabled,
     is_level_design_workspace,
 )
 from ..operators.grid_tools import get_unit_label
@@ -447,6 +448,22 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
                 row.enabled = False
                 row.label(text="Texture as Alpha: No material")
 
+            # Vertex colors checkbox
+            row = layout.row()
+            if mat:
+                vc_enabled = is_vertex_colors_enabled(mat)
+                row.operator(
+                    "leveldesign.toggle_vertex_colors",
+                    text="Vertex Colors",
+                    icon=(
+                        'CHECKBOX_HLT' if vc_enabled else 'CHECKBOX_DEHLT'
+                    ),
+                    depress=vc_enabled,
+                )
+            else:
+                row.enabled = False
+                row.label(text="Vertex Colors: No material")
+
             # Roughness slider
             row = layout.row()
             if bsdf:
@@ -562,6 +579,9 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
 
         # Texture as alpha
         layout.prop(props, "default_texture_as_alpha", toggle=True)
+
+        # Vertex colors
+        layout.prop(props, "default_vertex_colors", toggle=True)
 
         # Roughness
         layout.prop(props, "default_roughness")

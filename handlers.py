@@ -2051,6 +2051,18 @@ def on_depsgraph_update(scene, depsgraph):
         # Check for duplicate materials (from copy/paste operations)
         consolidate_duplicate_materials()
 
+        # Ensure all updated mesh objects have a color attribute
+        for update in depsgraph.updates:
+            if isinstance(update.id, bpy.types.Object):
+                obj = update.id
+                if obj.type == 'MESH' and obj.data and len(obj.data.color_attributes) == 0:
+                    # Use original data (not evaluated copy) so changes persist
+                    orig_mesh = bpy.data.meshes.get(obj.data.name)
+                    if orig_mesh and len(orig_mesh.color_attributes) == 0:
+                        orig_mesh.color_attributes.new("Color", 'BYTE_COLOR', 'CORNER')
+                        orig_mesh.color_attributes.active_color_index = 0
+                        orig_mesh.color_attributes.render_color_index = 0
+
         context = bpy.context
 
         # Safety check - ensure properties are registered

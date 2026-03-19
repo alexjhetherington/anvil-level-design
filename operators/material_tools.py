@@ -6,6 +6,8 @@ from ..utils import (
     get_texture_node_from_material,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
+    is_vertex_colors_enabled,
+    remove_unused_nodes,
 )
 from ..handlers import get_active_image
 
@@ -116,6 +118,73 @@ class LEVELDESIGN_OT_toggle_texture_alpha(Operator):
             # Connect alpha
             nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
             mat.blend_method = 'CLIP'
+
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_toggle_vertex_colors(Operator):
+    """Toggle vertex color multiply on the material"""
+
+    bl_idname = "leveldesign.toggle_vertex_colors"
+    bl_label = "Toggle Vertex Colors"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        image = get_active_image()
+        if not image:
+            return False
+        mat = find_material_with_image(image)
+        return mat is not None
+
+    def execute(self, context):
+        image = get_active_image()
+        mat = find_material_with_image(image)
+        tex = get_texture_node_from_material(mat)
+        bsdf = get_principled_bsdf_from_material(mat)
+
+        if not tex or not bsdf:
+            self.report({'WARNING'}, "Material missing texture or BSDF node")
+            return {'CANCELLED'}
+
+        nt = mat.node_tree
+
+        if is_vertex_colors_enabled(mat):
+            # Disable: reconnect tex Color directly to BSDF Base Color
+            # Remove any existing link into Base Color first
+            for link in list(nt.links):
+                if link.to_node == bsdf and link.to_socket.name == "Base Color":
+                    nt.links.remove(link)
+
+            nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+            remove_unused_nodes(mat)
+        else:
+            # Enable: insert Multiply node between tex and BSDF
+            # Remove existing tex Color -> BSDF Base Color link
+            for link in list(nt.links):
+                if (
+                    link.from_node == tex
+                    and link.from_socket.name == "Color"
+                    and link.to_node == bsdf
+                    and link.to_socket.name == "Base Color"
+                ):
+                    nt.links.remove(link)
+
+            mix = nt.nodes.new("ShaderNodeMixRGB")
+            mix.blend_type = 'MULTIPLY'
+            mix.use_clamp = True
+            mix.inputs["Fac"].default_value = 1.0
+            mix.location = (
+                (tex.location[0] + bsdf.location[0]) / 2,
+                tex.location[1] + 200,
+            )
+
+            vc = nt.nodes.new("ShaderNodeVertexColor")
+            vc.location = (tex.location[0], tex.location[1] - 200)
+
+            nt.links.new(tex.outputs["Color"], mix.inputs["Color1"])
+            nt.links.new(vc.outputs["Color"], mix.inputs["Color2"])
+            nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
 
         return {'FINISHED'}
 
@@ -238,6 +307,7 @@ classes = (
     LEVELDESIGN_OT_set_interpolation_closest,
     LEVELDESIGN_OT_set_interpolation_linear,
     LEVELDESIGN_OT_toggle_texture_alpha,
+    LEVELDESIGN_OT_toggle_vertex_colors,
     LEVELDESIGN_OT_fix_alpha_bleed,
     LEVELDESIGN_OT_set_default_interpolation,
     LEVELDESIGN_OT_cleanup_unused_materials,
