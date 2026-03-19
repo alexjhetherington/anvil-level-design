@@ -514,6 +514,15 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         subtype='FACTOR',
     )
 
+    default_metallic: FloatProperty(
+        name="Metallic",
+        description="Metallic value for new materials",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
     # === Export Properties (last used settings) ===
     last_export_filepath: StringProperty(
         name="Last Export Path",

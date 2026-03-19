@@ -474,6 +474,16 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
                 row.enabled = False
                 row.label(text="Roughness: No material")
 
+            # Metallic slider
+            row = layout.row()
+            if bsdf:
+                row.prop(
+                    bsdf.inputs["Metallic"], "default_value", text="Metallic"
+                )
+            else:
+                row.enabled = False
+                row.label(text="Metallic: No material")
+
             # Fix alpha bleed button
             layout.separator()
             layout.operator(
@@ -585,6 +595,9 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
 
         # Roughness
         layout.prop(props, "default_roughness")
+
+        # Metallic
+        layout.prop(props, "default_metallic")
 
 
 class LEVELDESIGN_PT_export_panel(Panel):

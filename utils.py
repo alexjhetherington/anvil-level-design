@@ -963,6 +963,7 @@ def get_default_material_settings():
         'texture_as_alpha': props.default_texture_as_alpha,
         'vertex_colors': props.default_vertex_colors,
         'roughness': props.default_roughness,
+        'metallic': props.default_metallic,
     }
 
 
@@ -986,6 +987,7 @@ def create_material_with_image(image):
     tex.interpolation = defaults['interpolation']
 
     bsdf.inputs["Roughness"].default_value = defaults['roughness']
+    bsdf.inputs["Metallic"].default_value = defaults['metallic']
 
     tex.location = (-400, 0)
     bsdf.location = (-200, 0)
