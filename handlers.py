@@ -1803,6 +1803,37 @@ def _clear_undo_flag():
     _undo_in_progress = False
 
 
+def _sync_weld_and_snapshot_selection():
+    """Sync weld state from BMesh/Mesh to scene props after undo/redo.
+
+    Also snapshots the current face selection so that the next depsgraph
+    check_selection_changed call doesn't see a false change and incorrectly
+    clear the restored weld state.
+    """
+    global _last_selected_face_indices, _last_active_face_index
+    try:
+        context = bpy.context
+        if context.mode == 'EDIT_MESH':
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                import bmesh as _bm
+                bm = _bm.from_edit_mesh(obj.data)
+                from .operators.weld import sync_weld_props
+                sync_weld_props(context, bm)
+                # Snapshot selection to prevent false weld clearing
+                id_layer = get_face_id_layer(bm)
+                _last_selected_face_indices = {f[id_layer] for f in bm.faces if f.select}
+                _last_active_face_index = bm.faces.active[id_layer] if bm.faces.active else -1
+        else:
+            from .operators.weld import sync_weld_props
+            sync_weld_props(context, None)
+            _last_selected_face_indices = set()
+            _last_active_face_index = -1
+    except Exception:
+        _last_selected_face_indices = set()
+        _last_active_face_index = -1
+
+
 @persistent
 def on_undo_pre(scene):
     """Handler called before an undo operation."""
@@ -1833,29 +1864,8 @@ def on_undo_post(scene):
     except Exception:
         last_face_count = 0
         last_vertex_count = 0
-    # Reset selection tracking so the next update detects a change
-    _last_selected_face_indices = set()
-    _last_active_face_index = -1
-    # Re-derive weld state from the stack using undo-restored edge selection.
-    # Done here (not via timer) so the UI is correct immediately.
-    try:
-        context = bpy.context
-        if context.mode == 'EDIT_MESH':
-            obj = context.active_object
-            if obj and obj.type == 'MESH':
-                import bmesh as _bm
-                bm = _bm.from_edit_mesh(obj.data)
-                from .operators.weld import sync_weld_props
-                sync_weld_props(context, bm)
-        else:
-            from .operators.weld import sync_object_mode_weld_undo
-            active = context.active_object
-            active_name = active.name if active else ""
-            sync_object_mode_weld_undo(
-                context.scene.level_design_props, active_name,
-            )
-    except Exception:
-        pass
+    # Sync weld state and snapshot selection (shared with redo handler)
+    _sync_weld_and_snapshot_selection()
     # Use a short timer to ensure the depsgraph update triggered by undo
     # has completed before we clear the flag
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
@@ -1899,28 +1909,8 @@ def on_redo_post(scene):
     except Exception:
         last_face_count = 0
         last_vertex_count = 0
-    # Reset selection tracking so the next update detects a change
-    _last_selected_face_indices = set()
-    _last_active_face_index = -1
-    # Re-derive weld state from the stack using redo-restored edge selection.
-    try:
-        context = bpy.context
-        if context.mode == 'EDIT_MESH':
-            obj = context.active_object
-            if obj and obj.type == 'MESH':
-                import bmesh as _bm
-                bm = _bm.from_edit_mesh(obj.data)
-                from .operators.weld import sync_weld_props
-                sync_weld_props(context, bm)
-        else:
-            from .operators.weld import sync_object_mode_weld_undo
-            active = context.active_object
-            active_name = active.name if active else ""
-            sync_object_mode_weld_undo(
-                context.scene.level_design_props, active_name,
-            )
-    except Exception:
-        pass
+    # Sync weld state and snapshot selection (shared with undo handler)
+    _sync_weld_and_snapshot_selection()
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
     # Refresh UI panels immediately
     try:
@@ -2076,12 +2066,10 @@ def on_depsgraph_update(scene, depsgraph):
         if context.mode != 'EDIT_MESH' and _last_edit_object_name is not None:
             _last_edit_object_name = None
 
-        # In object mode, clear weld if the active object has changed
-        if context.mode != 'EDIT_MESH' and props.weld_mode != 'NONE':
-            from .operators.weld import sync_object_mode_weld
-            active = context.active_object
-            active_name = active.name if active else ""
-            sync_object_mode_weld(props, active_name)
+        # In object mode, sync weld display from active object's mesh
+        if context.mode != 'EDIT_MESH':
+            from .operators.weld import sync_weld_props
+            sync_weld_props(context, None)
 
         # Handle mesh updates (UV lock, world-scale UVs)
         for update in depsgraph.updates:
@@ -2154,6 +2142,15 @@ def on_depsgraph_update(scene, depsgraph):
                         # Apply auto-hotspotting if enabled (after cache is updated)
                         # Force because cache_face_data already cached the new faces,
                         # so the geometry-changed check would incorrectly skip them
+                        # Snapshot selection so next check_selection_changed
+                        # doesn't see a false change from the topology update
+                        id_layer = get_face_id_layer(bm)
+                        _last_selected_face_indices = {f[id_layer] for f in bm.faces if f.select}
+                        _last_active_face_index = bm.faces.active[id_layer] if bm.faces.active else -1
+                        # Consume the weld-just-stored flag so it doesn't
+                        # incorrectly block the next genuine selection change
+                        from .operators import weld as _weld_mod
+                        _weld_mod._weld_just_stored = False
                         if not is_fresh_start and props.auto_hotspot:
                             _force_auto_hotspot = True
                             _apply_auto_hotspots()
@@ -2167,10 +2164,16 @@ def on_depsgraph_update(scene, depsgraph):
                         # Only update active image if allowed
                         if allow_active_image_update:
                             update_active_image_from_face(context)
+                        # Clear weld state when user changes selection,
+                        # but skip if weld was just stored (the operation
+                        # that set the weld also changed selection).
+                        from .operators import weld as _weld_mod
+                        if _weld_mod._weld_just_stored:
+                            _weld_mod._weld_just_stored = False
+                        else:
+                            _weld_mod.clear_weld_on_bmesh(bm)
 
-                    # Keep weld scene properties in sync with the stack.
-                    # Handles both manual edge selection changes and post-
-                    # undo/redo state (the stack is the source of truth).
+                    # Keep weld scene properties in sync with BMesh layers.
                     from .operators.weld import sync_weld_props
                     sync_weld_props(context, bm)
 

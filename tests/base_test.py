@@ -38,10 +38,11 @@ def _purge_all():
     set_previous_image(None)
     face_data_cache.clear()
 
-    # Reset weld module state to prevent stale BMesh references from being
-    # accessed in the depsgraph handler after objects are deleted.
-    from ..operators.weld import clear_weld_stack
-    clear_weld_stack()
+    # Reset weld module state (clears transient flags like _weld_op_running).
+    # Mesh-stored weld data is cleaned up when objects are deleted below.
+    from ..operators import weld as _weld_mod
+    _weld_mod._weld_op_running = False
+    _weld_mod._weld_just_stored = False
     props = bpy.context.scene.level_design_props
     props.weld_mode = 'NONE'
     props.weld_depth = 0.0

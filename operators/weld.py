@@ -7,11 +7,12 @@ Performs contextual weld actions based on the state left by previous operations
 - One distinct edge group → Corridor (fill face + extrude)
 - Box builder with no coplanar inward-facing overlap → Invert (flip normals)
 
-Weld state is tracked via a module-level stack that maps edge selections to
-their weld parameters.  Because Blender's undo reliably restores *geometry*
-(and therefore edge selections) but does NOT reliably restore scene properties
-set by addon operators, the stack lets us re-derive the correct weld mode by
-matching the current edge selection against stored entries.
+Edit mode: weld state is stored in BMesh custom data layers, which participate
+in Blender's edit-mode undo system.  On undo/redo the layers are restored
+automatically — no geometry derivation needed.
+
+Object mode: weld state is stored as Mesh custom properties (obj.data), which
+participate in object-mode undo.
 """
 
 import bpy
@@ -23,34 +24,151 @@ from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, ge
 from .texture_apply import set_uv_from_other_face
 
 
-# Stack of weld entries: each is (depth, frozenset_of_edge_indices, direction,
-# back_plane_offset, mode_override).  direction is a tuple of 3 floats (the
-# cube cut local_z vector).  back_plane_offset is the projection of the cube
-# cut's back plane onto the extrusion direction.  mode_override is None for
-# cube cut entries (mode derived from topology) or a string like 'INVERT' for
-# box builder entries.
-# Pushed by set_weld_from_edge_selection (cube cut) and
-# set_weld_from_box_builder, never popped — entries become inert once the edge
-# selection no longer matches.  This survives undo/redo (module globals are
-# outside Blender's undo system).
-_weld_stack = []
+# BMesh layer names (all stored on vert 0)
+_MODE_LAYER = "_aw_mode"    # int on verts — mode enum
+_DEPTH_LAYER = "_aw_depth"  # float on verts
+_DX_LAYER = "_aw_dx"        # float on verts — direction X
+_DY_LAYER = "_aw_dy"        # float on verts — direction Y
+_DZ_LAYER = "_aw_dz"        # float on verts — direction Z
+_BPO_LAYER = "_aw_bpo"      # float on verts — back plane offset
+_FACE_LAYER = "_aw_face"    # int on faces — 1 = box face for INVERT
+
+# Mesh custom property prefix (object mode only)
+_AW = "_aw_"
 
 # Guard flag: True while the weld operator is executing, prevents the
-# depsgraph handler from running redundant derivation mid-operator.
+# depsgraph handler from running redundant sync mid-operator.
 _weld_op_running = False
 
-# Object name for object-mode weld tracking.  Set when box builder
-# creates a box in object mode; cleared when weld is executed or the
-# user selects a different object.  Survives undo/redo (module global).
-_weld_object_name = ""
+# Guard flag: True after weld state is stored, consumed on the first
+# depsgraph selection-change so that the very selection change caused by
+# the operation that SET the weld doesn't immediately clear it.
+_weld_just_stored = False
 
+# Mode ↔ int mapping for the BMesh int layer
+_MODE_TO_STR = {0: 'NONE', 1: 'BRIDGE', 2: 'CORRIDOR', 3: 'INVERT'}
+_STR_TO_MODE = {'NONE': 0, 'BRIDGE': 1, 'CORRIDOR': 2, 'INVERT': 3}
+
+
+# ---------------------------------------------------------------------------
+# BMesh layer helpers (edit mode)
+# ---------------------------------------------------------------------------
+
+def _set_weld_on_bmesh(bm, mode, depth=0.0, direction=(0.0, 0.0, 0.0),
+                       back_plane_offset=0.0, box_faces=None):
+    """Store weld state in BMesh custom data layers."""
+    # Collect indices from saved refs BEFORE creating layers, because
+    # adding a new layer can invalidate existing BMFace/BMEdge pointers.
+    box_indices = set(f.index for f in box_faces) if box_faces else None
+
+    # Ensure all layers exist before accessing elements
+    mode_layer = bm.verts.layers.int.get(_MODE_LAYER) or bm.verts.layers.int.new(_MODE_LAYER)
+    depth_layer = bm.verts.layers.float.get(_DEPTH_LAYER) or bm.verts.layers.float.new(_DEPTH_LAYER)
+    dx_layer = bm.verts.layers.float.get(_DX_LAYER) or bm.verts.layers.float.new(_DX_LAYER)
+    dy_layer = bm.verts.layers.float.get(_DY_LAYER) or bm.verts.layers.float.new(_DY_LAYER)
+    dz_layer = bm.verts.layers.float.get(_DZ_LAYER) or bm.verts.layers.float.new(_DZ_LAYER)
+    bpo_layer = bm.verts.layers.float.get(_BPO_LAYER) or bm.verts.layers.float.new(_BPO_LAYER)
+
+    bm.verts.ensure_lookup_table()
+    v0 = bm.verts[0]
+    v0[mode_layer] = _STR_TO_MODE.get(mode, 0)
+    v0[depth_layer] = depth
+    v0[dx_layer] = direction[0]
+    v0[dy_layer] = direction[1]
+    v0[dz_layer] = direction[2]
+    v0[bpo_layer] = back_plane_offset
+
+    # Mark box faces (INVERT mode)
+    if box_indices is not None:
+        face_layer = bm.faces.layers.int.get(_FACE_LAYER) or bm.faces.layers.int.new(_FACE_LAYER)
+        bm.faces.ensure_lookup_table()
+        for f in bm.faces:
+            f[face_layer] = 1 if f.index in box_indices else 0
+
+
+def _get_weld_from_bmesh(bm):
+    """Read weld parameters from BMesh layers.
+
+    Returns (mode_str, depth, direction_tuple, back_plane_offset).
+    """
+    mode_layer = bm.verts.layers.int.get(_MODE_LAYER)
+    if mode_layer is None:
+        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0
+
+    bm.verts.ensure_lookup_table()
+    v0 = bm.verts[0]
+    mode = _MODE_TO_STR.get(v0[mode_layer], 'NONE')
+
+    depth_layer = bm.verts.layers.float.get(_DEPTH_LAYER)
+    dx_layer = bm.verts.layers.float.get(_DX_LAYER)
+    dy_layer = bm.verts.layers.float.get(_DY_LAYER)
+    dz_layer = bm.verts.layers.float.get(_DZ_LAYER)
+    bpo_layer = bm.verts.layers.float.get(_BPO_LAYER)
+
+    depth = v0[depth_layer] if depth_layer is not None else 0.0
+    direction = (
+        v0[dx_layer] if dx_layer is not None else 0.0,
+        v0[dy_layer] if dy_layer is not None else 0.0,
+        v0[dz_layer] if dz_layer is not None else 0.0,
+    )
+    bpo = v0[bpo_layer] if bpo_layer is not None else 0.0
+
+    return mode, depth, direction, bpo
+
+
+def clear_weld_on_bmesh(bm):
+    """Clear all weld BMesh layers (set to zero)."""
+    mode_layer = bm.verts.layers.int.get(_MODE_LAYER)
+    if mode_layer is not None:
+        bm.verts.ensure_lookup_table()
+        v0 = bm.verts[0]
+        v0[mode_layer] = 0
+        for name in (_DEPTH_LAYER, _DX_LAYER, _DY_LAYER, _DZ_LAYER, _BPO_LAYER):
+            layer = bm.verts.layers.float.get(name)
+            if layer is not None:
+                v0[layer] = 0.0
+
+    face_layer = bm.faces.layers.int.get(_FACE_LAYER)
+    if face_layer is not None:
+        for f in bm.faces:
+            f[face_layer] = 0
+
+
+def _get_marked_faces(bm):
+    """Return the list of BMFaces marked as box faces for INVERT."""
+    face_layer = bm.faces.layers.int.get(_FACE_LAYER)
+    if face_layer is None:
+        return []
+    bm.faces.ensure_lookup_table()
+    return [f for f in bm.faces if f[face_layer] != 0]
+
+
+# ---------------------------------------------------------------------------
+# Mesh property helpers (object mode only)
+# ---------------------------------------------------------------------------
+
+def _set_weld_mode_on_mesh(me, mode):
+    """Store weld mode as a Mesh custom property (object mode only)."""
+    me[_AW + "mode"] = mode
+
+
+def _get_weld_mode_from_mesh(me):
+    """Read weld mode from a Mesh custom property (object mode only)."""
+    return me.get(_AW + "mode", "NONE")
+
+
+def _clear_weld_on_mesh(me):
+    """Remove all weld custom properties from a Mesh datablock."""
+    for key in [k for k in me.keys() if k.startswith(_AW)]:
+        del me[key]
+
+
+# ---------------------------------------------------------------------------
+# Edge group counting
+# ---------------------------------------------------------------------------
 
 def _count_edge_groups(bm):
-    """Count the number of connected components of selected edges.
-
-    Returns the number of distinct groups of selected edges, where edges
-    are connected if they share a vertex.
-    """
+    """Count the number of connected components of selected edges."""
     bm.edges.ensure_lookup_table()
     selected_edges = [e for e in bm.edges if e.select]
     if not selected_edges:
@@ -60,7 +178,6 @@ def _count_edge_groups(bm):
     groups = 0
 
     edge_set = set(e.index for e in selected_edges)
-    # Map vertex -> list of selected edges
     vert_to_edges = {}
     for e in selected_edges:
         for v in e.verts:
@@ -70,7 +187,6 @@ def _count_edge_groups(bm):
         if e.index in visited:
             continue
         groups += 1
-        # BFS
         queue = [e.index]
         visited.add(e.index)
         while queue:
@@ -84,6 +200,10 @@ def _count_edge_groups(bm):
 
     return groups
 
+
+# ---------------------------------------------------------------------------
+# Mode derivation
+# ---------------------------------------------------------------------------
 
 def _derive_weld_mode(bm, depth):
     """Derive the weld mode from the current edge selection and depth.
@@ -102,35 +222,17 @@ def _derive_weld_mode(bm, depth):
     return 'NONE', 0.0
 
 
-def _direction_for_stack_entry(entry):
-    """Extract direction tuple from a stack entry, handling old 2-tuple format."""
-    if len(entry) >= 3:
-        return entry[2]
-    return (0.0, 0.0, 0.0)
-
-
-def _back_plane_for_stack_entry(entry):
-    """Extract back_plane_offset from a stack entry, handling old formats."""
-    if len(entry) >= 4:
-        return entry[3]
-    return 0.0
-
-
-def _mode_override_for_stack_entry(entry):
-    """Extract mode_override from a stack entry, handling old formats."""
-    if len(entry) >= 5:
-        return entry[4]
-    return None
-
+# ---------------------------------------------------------------------------
+# Public API — setting weld state
+# ---------------------------------------------------------------------------
 
 def set_weld_from_edge_selection(context, depth, direction, back_plane_offset):
-    """Analyze current edge selection and push a weld entry onto the stack.
+    """Analyze current edge selection and store weld state in BMesh layers.
 
     Called from cube_cut after successful execution.
-    direction is a Vector or tuple of 3 floats (the cube cut local_z).
-    back_plane_offset is the projection of the cube cut back plane onto
-    the extrusion direction (direction).
     """
+    global _weld_just_stored
+
     obj = context.active_object
     if not obj or obj.type != 'MESH':
         return
@@ -139,104 +241,132 @@ def set_weld_from_edge_selection(context, depth, direction, back_plane_offset):
     bm = bmesh.from_edit_mesh(me)
 
     mode, effective_depth = _derive_weld_mode(bm, depth)
+    dir_tuple = tuple(direction)
+
+    _set_weld_on_bmesh(bm, mode, effective_depth, dir_tuple, back_plane_offset)
+    _weld_just_stored = True
+    bmesh.update_edit_mesh(me)
+
+    # Sync to scene props for UI
     props = context.scene.level_design_props
     props.weld_mode = mode
     props.weld_depth = effective_depth
-    dir_tuple = tuple(direction)
     props.weld_direction = dir_tuple
     props.weld_back_plane_offset = back_plane_offset
     debug_log(f"[Weld] Set weld mode: {mode} (depth={depth}, direction={dir_tuple})")
 
-    edge_indices = frozenset(e.index for e in bm.edges if e.select)
-    _weld_stack.append((depth, edge_indices, dir_tuple, back_plane_offset))
 
+def set_weld_from_box_builder(context, new_face_vert_positions):
+    """Analyze box builder output and set weld mode to INVERT or NONE.
 
-def derive_weld_from_stack(bm):
-    """Derive weld mode by matching current edge selection against the stack.
-
-    Returns (mode, depth, direction, back_plane_offset) tuple.
-    Checks from most-recent to oldest.  direction is a tuple of 3 floats.
+    Called from the box builder operator after successful box creation in edit mode.
     """
-    if not _weld_stack:
-        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0
+    global _weld_just_stored
 
-    current = frozenset(e.index for e in bm.edges if e.select)
-    if not current:
-        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0
+    obj = context.active_object
+    if not obj or obj.type != 'MESH':
+        return
 
-    for entry in reversed(_weld_stack):
-        depth = entry[0]
-        edge_indices = entry[1]
-        if current == edge_indices:
-            override = _mode_override_for_stack_entry(entry)
-            if override:
-                return (override, 0.0, _direction_for_stack_entry(entry),
-                        _back_plane_for_stack_entry(entry))
-            mode, eff_depth = _derive_weld_mode(bm, depth)
-            return (mode, eff_depth, _direction_for_stack_entry(entry),
-                    _back_plane_for_stack_entry(entry))
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.edges.index_update()
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
 
-    return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0
+    # Find the box faces by matching vertex positions within the selection
+    position_set = set(new_face_vert_positions)
+    box_faces = []
+    for f in bm.faces:
+        if not f.select:
+            continue
+        face_verts = frozenset(tuple(v.co) for v in f.verts)
+        if face_verts in position_set:
+            box_faces.append(f)
+    if not box_faces:
+        return
 
+    if _check_box_needs_invert(bm, box_faces):
+        mode = 'INVERT'
+    else:
+        mode = 'NONE'
+
+    _set_weld_on_bmesh(bm, mode, box_faces=box_faces)
+    _weld_just_stored = True
+    bmesh.update_edit_mesh(me)
+
+    props = context.scene.level_design_props
+    props.weld_mode = mode
+    debug_log(f"[Weld] Box builder weld mode: {mode}")
+
+
+def set_weld_from_box_builder_object_mode(obj):
+    """Store INVERT weld on an object created by box builder in object mode.
+
+    Uses Mesh custom properties (which participate in object-mode undo).
+    """
+    _set_weld_mode_on_mesh(obj.data, 'INVERT')
+
+
+# ---------------------------------------------------------------------------
+# Sync weld state to scene props
+# ---------------------------------------------------------------------------
 
 def sync_weld_props(context, bm):
-    """Re-derive weld state from the stack and update scene properties.
+    """Read weld state and sync to scene props for UI display.
 
-    Called from undo/redo handlers and the depsgraph handler to keep
-    scene properties in sync with the authoritative stack state.
-    Skipped while the weld operator is executing.
+    Edit mode (bm is not None): reads from BMesh layers.  BMesh layers
+    participate in edit-mode undo, so weld data is restored automatically
+    on undo — no geometry derivation needed.
+
+    Object mode (bm is None): reads from Mesh custom properties.
+
+    Args:
+        context: Blender context
+        bm: BMesh of the active object (edit mode) or None (object mode)
     """
     if _weld_op_running:
         return
 
-    mode, depth, direction, back_plane_offset = derive_weld_from_stack(bm)
     props = context.scene.level_design_props
-    if mode != props.weld_mode or (mode != 'NONE' and abs(depth - props.weld_depth) > 0.001):
+    obj = context.active_object
+    if not obj or obj.type != 'MESH':
+        if props.weld_mode != 'NONE':
+            props.weld_mode = 'NONE'
+        return
+
+    if bm is not None:
+        # Edit mode: read from BMesh layers
+        mode, depth, direction, bpo = _get_weld_from_bmesh(bm)
+
+        if mode == 'NONE':
+            if props.weld_mode != 'NONE':
+                props.weld_mode = 'NONE'
+            return
+    else:
+        # Object mode: read from Mesh custom properties
+        mode = _get_weld_mode_from_mesh(obj.data)
+        depth = 0.0
+        direction = (0.0, 0.0, 0.0)
+        bpo = 0.0
+
+        if mode == 'NONE':
+            if props.weld_mode != 'NONE':
+                props.weld_mode = 'NONE'
+            return
+
+    # Update scene props for UI display
+    if (mode != props.weld_mode or
+            (mode != 'NONE' and abs(depth - props.weld_depth) > 0.001)):
         props.weld_mode = mode
         props.weld_depth = depth
         props.weld_direction = direction
-        props.weld_back_plane_offset = back_plane_offset
+        props.weld_back_plane_offset = bpo
         debug_log(f"[Weld] Sync props: {mode} (depth={depth}, direction={direction})")
 
 
-def clear_weld_stack():
-    """Clear the weld stack.  Called on test cleanup and mode changes."""
-    global _weld_object_name
-    _weld_stack.clear()
-    _weld_object_name = ""
-
-
-def set_weld_object_tracking(name):
-    """Track which object the weld was set for in object mode."""
-    global _weld_object_name
-    _weld_object_name = name
-
-
-def sync_object_mode_weld(props, active_obj_name):
-    """Clear weld mode if the active object has changed in object mode.
-
-    Called from the depsgraph handler.  Only clears, never restores —
-    restoration happens in the undo/redo handlers.
-    """
-    global _weld_object_name
-    if not _weld_object_name:
-        return
-    if active_obj_name != _weld_object_name:
-        props.weld_mode = 'NONE'
-        debug_log(f"[Weld] Object mode weld cleared: active={active_obj_name}, expected={_weld_object_name}")
-
-
-def sync_object_mode_weld_undo(props, active_obj_name):
-    """Restore weld mode after undo if the active object matches.
-
-    Called from undo/redo handlers.
-    """
-    if not _weld_object_name:
-        return
-    if active_obj_name == _weld_object_name:
-        props.weld_mode = 'INVERT'
-        debug_log(f"[Weld] Object mode weld restored after undo: {active_obj_name}")
-
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
 
 def get_weld_display_name(weld_mode):
     """Get a human-readable name for the weld mode."""
@@ -248,6 +378,10 @@ def get_weld_display_name(weld_mode):
         return "Invert"
     return "None"
 
+
+# ---------------------------------------------------------------------------
+# Geometry helpers (invert mode — used at setup time, not for undo)
+# ---------------------------------------------------------------------------
 
 def _faces_coplanar_antiparallel(face_a, face_b, tolerance=0.001):
     """Check if two faces are on the same plane with opposite normals."""
@@ -318,38 +452,9 @@ def _check_box_needs_invert(bm, box_faces):
     return True
 
 
-def set_weld_from_box_builder(context):
-    """Analyze box builder output and set weld mode to INVERT or NONE.
-
-    Called from the box builder operator after successful box creation.
-    The newly created box faces must be selected in the active edit mesh.
-    """
-    obj = context.active_object
-    if not obj or obj.type != 'MESH':
-        return
-
-    me = obj.data
-    bm = bmesh.from_edit_mesh(me)
-    bm.edges.index_update()
-    bm.faces.ensure_lookup_table()
-    bm.normal_update()
-
-    box_faces = [f for f in bm.faces if f.select]
-    if not box_faces:
-        return
-
-    if _check_box_needs_invert(bm, box_faces):
-        mode = 'INVERT'
-    else:
-        mode = 'NONE'
-
-    props = context.scene.level_design_props
-    props.weld_mode = mode
-    debug_log(f"[Weld] Box builder weld mode: {mode}")
-
-    edge_indices = frozenset(e.index for e in bm.edges if e.select)
-    _weld_stack.append((0.0, edge_indices, (0.0, 0.0, 0.0), 0.0, mode if mode != 'NONE' else None))
-
+# ---------------------------------------------------------------------------
+# Operator
+# ---------------------------------------------------------------------------
 
 class MESH_OT_context_weld(bpy.types.Operator):
     """Perform a context-aware weld action based on recent operations"""
@@ -381,6 +486,12 @@ class MESH_OT_context_weld(bpy.types.Operator):
         if weld_mode in ('BRIDGE', 'CORRIDOR') and context.mode != 'EDIT_MESH':
             return {'CANCELLED'}
 
+        # Read marked box faces from BMesh layers for INVERT in edit mode
+        invert_box_faces = []
+        if weld_mode == 'INVERT' and context.mode == 'EDIT_MESH':
+            bm = bmesh.from_edit_mesh(context.active_object.data)
+            invert_box_faces = _get_marked_faces(bm)
+
         _weld_op_running = True
         try:
             if weld_mode == 'BRIDGE':
@@ -392,7 +503,7 @@ class MESH_OT_context_weld(bpy.types.Operator):
                     props.weld_back_plane_offset,
                 )
             elif weld_mode == 'INVERT':
-                return self._execute_invert(context)
+                return self._execute_invert(context, invert_box_faces)
         finally:
             _weld_op_running = False
 
@@ -406,34 +517,89 @@ class MESH_OT_context_weld(bpy.types.Operator):
             self.report({'ERROR'}, f"Bridge failed: {e}")
             return {'CANCELLED'}
 
+        # Clear BMesh weld layers (participates in edit-mode undo).
+        me = context.active_object.data
+        bm = bmesh.from_edit_mesh(me)
+        clear_weld_on_bmesh(bm)
+        bmesh.update_edit_mesh(me)
+
         context.scene.level_design_props.weld_mode = 'NONE'
         self.report({'INFO'}, "Bridged edge loops")
         return {'FINISHED'}
 
-    def _execute_invert(self, context):
+    def _execute_invert(self, context, box_faces):
         """Flip normals on the mesh.
 
-        In edit mode: flips only the selected (new box) faces.
-        In object mode: enters edit mode, selects all, flips, returns to object mode.
+        In edit mode with box_faces: selects only those, flips, then restores
+        the original selection.
+        In object mode: enters edit mode, selects all, flips, returns to
+        object mode.
         """
-        global _weld_object_name
         entered_edit = False
+        prev_selected_faces = None
+
         if context.mode != 'EDIT_MESH':
             bpy.ops.object.mode_set(mode='EDIT')
             entered_edit = True
             bpy.ops.mesh.select_all(action='SELECT')
+        elif box_faces:
+            obj = context.active_object
+            me = obj.data
+            bm = bmesh.from_edit_mesh(me)
+            bm.faces.ensure_lookup_table()
+
+            # Save selected face indices, then select only the box faces
+            prev_selected_faces = [f.index for f in bm.faces if f.select]
+
+            for f in bm.faces:
+                f.select = False
+            for e in bm.edges:
+                e.select = False
+            for v in bm.verts:
+                v.select = False
+            for f in box_faces:
+                if f.is_valid:
+                    f.select = True
+            bm.select_flush(True)
+            bmesh.update_edit_mesh(me)
 
         try:
             bpy.ops.mesh.flip_normals()
         except RuntimeError as e:
-            self.report({'ERROR'}, f"Invert failed: {e}")
-            return {'CANCELLED'}
-        finally:
             if entered_edit:
                 bpy.ops.object.mode_set(mode='OBJECT')
+            self.report({'ERROR'}, f"Invert failed: {e}")
+            return {'CANCELLED'}
+
+        if entered_edit:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            # Object mode: clear Mesh custom properties (object-mode undo
+            # restores them).
+            _clear_weld_on_mesh(context.active_object.data)
+        else:
+            obj = context.active_object
+            me = obj.data
+            bm = bmesh.from_edit_mesh(me)
+            bm.faces.ensure_lookup_table()
+
+            # Restore the original selection
+            if prev_selected_faces is not None:
+                for f in bm.faces:
+                    f.select = False
+                for e in bm.edges:
+                    e.select = False
+                for v in bm.verts:
+                    v.select = False
+                for i in prev_selected_faces:
+                    if i < len(bm.faces):
+                        bm.faces[i].select = True
+                bm.select_flush(True)
+
+            # Clear BMesh weld layers (participates in edit-mode undo).
+            clear_weld_on_bmesh(bm)
+            bmesh.update_edit_mesh(me)
 
         context.scene.level_design_props.weld_mode = 'NONE'
-        _weld_object_name = ""
         self.report({'INFO'}, "Normals inverted")
         return {'FINISHED'}
 
@@ -449,8 +615,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(me)
 
         # Step 1: Create face from selected edges using bmesh directly
-        # (avoids bpy.ops.mesh.edge_face_add which creates a separate undo
-        # step, breaking Ctrl+Z restoration of the weld state)
         selected_edges = [e for e in bm.edges if e.select]
         if not selected_edges:
             self.report({'ERROR'}, "No edges selected")
@@ -475,7 +639,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
         bm.select_flush_mode()
 
         # Find an adjacent frame face to use as UV source for the cap later.
-        # Must be captured before extrusion since the filled face gets consumed.
         bm.normal_update()
         uv_source_face = None
         for filled_face in new_faces:
@@ -489,14 +652,11 @@ class MESH_OT_context_weld(bpy.types.Operator):
             if uv_source_face:
                 break
 
-        # Step 2: Extrude the new face along the cube cut direction by the given depth
+        # Step 2: Extrude the new face along the cube cut direction
         selected_faces = new_faces
 
-        # Switch to face select mode for the extrude
         bm.select_mode = {'FACE'}
         context.tool_settings.mesh_select_mode = (False, False, True)
-        # The cube cut stores direction and back_plane_offset in world space,
-        # but bmesh vertices are in object-local space.  Transform both to local.
         world_to_local_rot = obj.matrix_world.inverted().to_3x3()
         extrude_dir = (world_to_local_rot @ direction).normalized()
         origin_proj = obj.matrix_world.translation.dot(direction.normalized())
@@ -508,14 +668,11 @@ class MESH_OT_context_weld(bpy.types.Operator):
                   f"local_back_plane_offset={local_back_plane_offset:.4f} "
                   f"(world={back_plane_offset:.4f} - origin_proj={origin_proj:.4f})")
 
-        # Include the face's edges in geom so extrude_face_region properly
-        # consumes the original face instead of leaving it behind.
         extrude_geom = list(selected_faces)
         for f in selected_faces:
             extrude_geom.extend(f.edges)
         result = bmesh.ops.extrude_face_region(bm, geom=extrude_geom)
 
-        # Get the new geometry and move it
         extruded_verts = [g for g in result['geom'] if isinstance(g, bmesh.types.BMVert)]
         extruded_faces = [g for g in result['geom'] if isinstance(g, bmesh.types.BMFace)]
 
@@ -530,14 +687,10 @@ class MESH_OT_context_weld(bpy.types.Operator):
             e.select = False
         for v in bm.verts:
             v.select = False
-
-        # Select extruded geometry
         for f in extruded_faces:
             f.select = True
 
-        # Project extruded verts onto the cube cut's back plane.
-        # This produces a flat cap perpendicular to the extrusion direction,
-        # even when the hole is on a sloped surface.
+        # Project extruded verts onto the cube cut's back plane
         debug_log(f"[Corridor] Projecting {len(extruded_verts)} verts onto back plane: "
                   f"extrude_dir={extrude_dir}, local_back_plane_offset={local_back_plane_offset:.4f}")
         for v in extruded_verts:
@@ -561,6 +714,8 @@ class MESH_OT_context_weld(bpy.types.Operator):
                         obj.matrix_world,
                     )
 
+        # Clear BMesh weld layers (participates in edit-mode undo).
+        clear_weld_on_bmesh(bm)
         bmesh.update_edit_mesh(me)
 
         context.scene.level_design_props.weld_mode = 'NONE'

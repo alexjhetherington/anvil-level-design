@@ -13,7 +13,7 @@ from ..modal_draw.base_operator import ModalDrawBase
 from ..modal_draw import snapping
 from ..modal_draw import utils
 from ...utils import is_level_design_workspace
-from ..weld import set_weld_from_box_builder, set_weld_object_tracking
+from ..weld import set_weld_from_box_builder, set_weld_from_box_builder_object_mode
 
 
 def _get_selected_vertex_world_coords(context):
@@ -160,8 +160,8 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
                 ppm, reverse_plane_normal
             )
             if result[0] and is_box:
+                set_weld_from_box_builder_object_mode(context.active_object)
                 props.weld_mode = 'INVERT'
-                set_weld_object_tracking(context.active_object.name)
             return result
 
         obj = context.active_object
@@ -172,7 +172,8 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
         )
 
         if result[0] and is_box:
-            set_weld_from_box_builder(context)
+            new_face_verts = result[2] if len(result) > 2 else []
+            set_weld_from_box_builder(context, new_face_verts)
 
         return result
 

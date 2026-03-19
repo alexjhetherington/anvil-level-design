@@ -47,12 +47,12 @@ class BoxCutCorridorTest(AnvilTestCase):
 
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
-        success, msg = execute_box_builder(
+        box_result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
+        self.assertTrue(box_result[0], box_result[1])
 
         bm = bmesh.from_edit_mesh(obj.data)
         self.assertEqual(len(bm.verts), 8, "Box should have 8 verts")
@@ -61,7 +61,8 @@ class BoxCutCorridorTest(AnvilTestCase):
                          "Box should have a material from the active image")
 
         # -- Step 2: Weld invert --
-        set_weld_from_box_builder(bpy.context)
+        face_verts = box_result[2] if len(box_result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'INVERT',

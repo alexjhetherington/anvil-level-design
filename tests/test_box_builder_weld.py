@@ -6,7 +6,7 @@ from .base_test import AnvilTestCase
 from .helpers import _get_context_override
 
 from ..operators.box_builder.geometry import execute_box_builder, execute_box_builder_object_mode
-from ..operators.weld import set_weld_from_box_builder
+from ..operators.weld import set_weld_from_box_builder, set_weld_from_box_builder_object_mode
 
 
 class BoxBuilderWeldTest(AnvilTestCase):
@@ -78,8 +78,8 @@ class BoxBuilderWeldTest(AnvilTestCase):
         )
         self.assertTrue(success, msg)
 
-        # Production path: operator sets INVERT directly for object-mode boxes
-        # (new object has no other geometry, so overlap check is unnecessary)
+        # Production path: operator stores INVERT on object and sets scene prop
+        set_weld_from_box_builder_object_mode(bpy.context.active_object)
         bpy.context.scene.level_design_props.weld_mode = 'INVERT'
 
         props = bpy.context.scene.level_design_props
@@ -104,16 +104,17 @@ class BoxBuilderWeldTest(AnvilTestCase):
         obj = self._create_empty_mesh("standalone_box")
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
-        success, msg = execute_box_builder(
+        result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
+        self.assertTrue(result[0], result[1])
 
         # Production path: operator calls set_weld_from_box_builder after
         # execute_box_builder in edit mode
-        set_weld_from_box_builder(bpy.context)
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'INVERT',
@@ -132,14 +133,15 @@ class BoxBuilderWeldTest(AnvilTestCase):
         ])
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
-        success, msg = execute_box_builder(
+        result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
+        self.assertTrue(result[0], result[1])
 
-        set_weld_from_box_builder(bpy.context)
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'NONE',
@@ -159,14 +161,15 @@ class BoxBuilderWeldTest(AnvilTestCase):
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
         # Negative depth: box extends in -Y direction
-        success, msg = execute_box_builder(
+        result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), -1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
+        self.assertTrue(result[0], result[1])
 
-        set_weld_from_box_builder(bpy.context)
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'INVERT',
@@ -184,14 +187,15 @@ class BoxBuilderWeldTest(AnvilTestCase):
         ])
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
-        success, msg = execute_box_builder(
+        result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
+        self.assertTrue(result[0], result[1])
 
-        set_weld_from_box_builder(bpy.context)
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'INVERT',
@@ -218,13 +222,14 @@ class BoxBuilderWeldTest(AnvilTestCase):
             bpy.ops.ed.undo_push(message="Before box")
 
         # Build box
-        success, msg = execute_box_builder(
+        result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
             obj, ppm, False,
         )
-        self.assertTrue(success, msg)
-        set_weld_from_box_builder(bpy.context)
+        self.assertTrue(result[0], result[1])
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
 
         yield 0.5
 
@@ -258,3 +263,61 @@ class BoxBuilderWeldTest(AnvilTestCase):
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'INVERT',
                          "Step 3: should be INVERT after undo")
+
+    def test_edit_mode_undo_weld_restores_invert(self):
+        """Edit-mode: build box → weld invert → undo should restore INVERT.
+
+        Verifies that undoing a weld invert re-derives INVERT from the
+        consumed entries list.
+        """
+        obj = self._create_empty_mesh("undo_weld")
+        obj_name = obj.name
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        ctx = _get_context_override()
+        undo_ctx = self._undo_ctx()
+
+        # Baseline undo step
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before box")
+
+        # Build box
+        result = execute_box_builder(
+            Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
+            Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
+            obj, ppm, False,
+        )
+        self.assertTrue(result[0], result[1])
+        face_verts = result[2] if len(result) > 2 else []
+        set_weld_from_box_builder(bpy.context, face_verts)
+
+        yield 0.5
+
+        props = bpy.context.scene.level_design_props
+        self.assertEqual(props.weld_mode, 'INVERT',
+                         "Step 1: should be INVERT after box build")
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After box")
+
+        # Execute weld invert
+        with bpy.context.temp_override(**ctx):
+            result = bpy.ops.leveldesign.context_weld()
+        self.assertIn('FINISHED', result,
+                       "Weld INVERT should succeed")
+        self.assertEqual(props.weld_mode, 'NONE',
+                         "Step 2: should be NONE after weld invert")
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After weld")
+
+        # Undo weld → should restore INVERT
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        yield 0.5
+
+        obj = bpy.data.objects[obj_name]
+        bpy.context.view_layer.objects.active = obj
+        props = bpy.context.scene.level_design_props
+        self.assertEqual(props.weld_mode, 'INVERT',
+                         "Step 3: should be INVERT after undoing weld")

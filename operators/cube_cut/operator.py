@@ -51,7 +51,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
         self._second_vertex = self._second_vertex + offset
         self._depth = 10000
 
-        success, message = self._execute_action(
+        result = self._execute_action(
             context,
             self._first_vertex,
             self._second_vertex,
@@ -60,6 +60,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
             self._local_y,
             self._local_z
         )
+        success, message = result[0], result[1]
 
         if success:
             self.report({'INFO'}, message)

@@ -114,23 +114,22 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
                           f"(source_face={'index ' + str(source_face.index) if source_face else 'None'}, "
                           f"mat_idx={face.material_index})")
 
-    # Select only the newly created box geometry
-    for f in bm.faces:
-        f.select = False
-    for e in bm.edges:
-        e.select = False
-    for v in bm.verts:
-        v.select = False
+    # Add newly created box geometry to the existing selection
+    # Collect vertex positions per face for weld tracking (order-independent)
+    new_face_vert_positions = []
     for f in new_faces:
         if f.is_valid:
             f.select = True
+            new_face_vert_positions.append(
+                frozenset(tuple(v.co) for v in f.verts)
+            )
     bm.select_flush(True)
 
     bmesh.update_edit_mesh(me)
 
     if is_zero_depth:
-        return (True, "Plane created")
-    return (True, "Box created")
+        return (True, "Plane created", new_face_vert_positions)
+    return (True, "Box created", new_face_vert_positions)
 
 
 def _create_box(bm, origin, dx, dy, depth, lx, ly, lz, flip_count):

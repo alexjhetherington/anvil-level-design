@@ -43,7 +43,7 @@ class BoxBuilderTest(AnvilTestCase):
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
         # Build a 1x1x1 box: rectangle in XZ plane, depth along +Y
-        success, msg = execute_box_builder(
+        success, msg, *_ = execute_box_builder(
             Vector((0, 0, 0)),
             Vector((1, 0, 1)),
             1.0,
@@ -111,7 +111,7 @@ class BoxBuilderTest(AnvilTestCase):
 
         # Build a 1x1x1 box with NO active image — box builder skips
         # material/UV assignment when there is no image available
-        success, msg = execute_box_builder(
+        success, msg, *_ = execute_box_builder(
             Vector((0, 0, 0)),
             Vector((1, 0, 1)),
             1.0,
@@ -209,7 +209,7 @@ class BoxBuilderTest(AnvilTestCase):
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
 
         # Build a 1x1x1 box offset along X to avoid overlapping the plane
-        success, msg = execute_box_builder(
+        success, msg, *_ = execute_box_builder(
             Vector((2, 0, 0)),
             Vector((3, 0, 1)),
             1.0,

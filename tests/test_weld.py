@@ -148,3 +148,5 @@ class WeldUndoStackTest(AnvilTestCase):
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'NONE',
                          "Step 6: weld should be NONE before cube cut")
+
+

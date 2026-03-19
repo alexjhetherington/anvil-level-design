@@ -591,7 +591,7 @@ class ModalDrawBase:
 
     def _confirm_depth(self, context, event):
         """Confirm the depth and execute the action."""
-        success, message = self._execute_action(
+        result = self._execute_action(
             context,
             self._first_vertex,
             self._second_vertex,
@@ -600,6 +600,7 @@ class ModalDrawBase:
             self._local_y,
             self._local_z
         )
+        success, message = result[0], result[1]
 
         if success:
             self.report({'INFO'}, message)
