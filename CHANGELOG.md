@@ -5,7 +5,9 @@
 - Walk Navigation hold works in vertex paint mode (quick colour is rebound to 'C' by default)
 - Add metallic to materials
 - significant changes to Weld's undo / redo logic (likely fixes edge case bugs I'm not aware of)
-- Box builder adds to selection
+- Box builder adds to selection if there is a current selection, otherwise ends with no selection (reduces keys required for subsequent cuts)
+- Weld Invert keeps selection (reduces keys required for subsequent cuts)
+- Weld Corridor and Weld Bridge Edge loops end with no selection (reduces keys required for subsequent cuts)
 - Fix regression caused by blender update stopping initial texture apply on default cube and new boxes in object mode
 
 ## 1.4.1

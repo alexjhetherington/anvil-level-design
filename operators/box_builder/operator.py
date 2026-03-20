@@ -58,6 +58,10 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
             context.mode == 'EDIT_MESH'
         )
 
+    def invoke(self, context, event):
+        self._had_selection = bool(_get_selected_vertex_world_coords(context))
+        return super().invoke(context, event)
+
     def _is_valid_mode(self, context):
         return context.mode in ('EDIT_MESH', 'OBJECT')
 
@@ -174,6 +178,19 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
         if result[0] and is_box:
             new_face_verts = result[2] if len(result) > 2 else []
             set_weld_from_box_builder(context, new_face_verts)
+
+        # If there was no selection before invoking, deselect everything
+        if result[0] and not self._had_selection:
+            me = obj.data
+            bm = bmesh.from_edit_mesh(me)
+            for f in bm.faces:
+                f.select = False
+            for e in bm.edges:
+                e.select = False
+            for v in bm.verts:
+                v.select = False
+            bm.select_flush(False)
+            bmesh.update_edit_mesh(me)
 
         return result
 

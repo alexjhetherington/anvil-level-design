@@ -521,6 +521,17 @@ class MESH_OT_context_weld(bpy.types.Operator):
         me = context.active_object.data
         bm = bmesh.from_edit_mesh(me)
         clear_weld_on_bmesh(bm)
+
+        # Deselect everything and switch to face select mode
+        for f in bm.faces:
+            f.select = False
+        for e in bm.edges:
+            e.select = False
+        for v in bm.verts:
+            v.select = False
+        bm.select_flush(False)
+        context.tool_settings.mesh_select_mode = (False, False, True)
+
         bmesh.update_edit_mesh(me)
 
         context.scene.level_design_props.weld_mode = 'NONE'
@@ -716,6 +727,17 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         # Clear BMesh weld layers (participates in edit-mode undo).
         clear_weld_on_bmesh(bm)
+
+        # Deselect everything and switch to face select mode
+        for f in bm.faces:
+            f.select = False
+        for e in bm.edges:
+            e.select = False
+        for v in bm.verts:
+            v.select = False
+        bm.select_flush(False)
+        context.tool_settings.mesh_select_mode = (False, False, True)
+
         bmesh.update_edit_mesh(me)
 
         context.scene.level_design_props.weld_mode = 'NONE'
