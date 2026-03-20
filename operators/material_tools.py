@@ -170,10 +170,11 @@ class LEVELDESIGN_OT_toggle_vertex_colors(Operator):
                 ):
                     nt.links.remove(link)
 
-            mix = nt.nodes.new("ShaderNodeMixRGB")
+            mix = nt.nodes.new("ShaderNodeMix")
+            mix.data_type = 'RGBA'
             mix.blend_type = 'MULTIPLY'
-            mix.use_clamp = True
-            mix.inputs["Fac"].default_value = 1.0
+            mix.clamp_result = True
+            mix.inputs["Factor"].default_value = 1.0
             mix.location = (
                 (tex.location[0] + bsdf.location[0]) / 2,
                 tex.location[1] + 200,
@@ -182,9 +183,9 @@ class LEVELDESIGN_OT_toggle_vertex_colors(Operator):
             vc = nt.nodes.new("ShaderNodeVertexColor")
             vc.location = (tex.location[0], tex.location[1] - 200)
 
-            nt.links.new(tex.outputs["Color"], mix.inputs["Color1"])
-            nt.links.new(vc.outputs["Color"], mix.inputs["Color2"])
-            nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
+            nt.links.new(tex.outputs["Color"], mix.inputs[6])
+            nt.links.new(vc.outputs["Color"], mix.inputs[7])
+            nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
 
         return {'FINISHED'}
 

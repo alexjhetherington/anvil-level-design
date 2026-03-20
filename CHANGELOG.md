@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.3
+- Vertex colour node setup changed so Godot picks it up
+
 ## 1.4.2
 - Added option to enable vertex colours on materials (automatically mixes in the colour attribute with the image texture) (colour attribute always added by default)
 - Walk Navigation hold works in vertex paint mode (quick colour is rebound to 'C' by default)

@@ -922,8 +922,7 @@ def is_vertex_colors_enabled(mat):
     if not mat or not mat.use_nodes or not mat.node_tree:
         return False
     for node in mat.node_tree.nodes:
-        if node.type == 'MIX_RGB' and node.blend_type == 'MULTIPLY':
-            # Check that a vertex color node feeds into it
+        if node.type == 'MIX' and node.data_type == 'RGBA' and node.blend_type == 'MULTIPLY':
             for link in mat.node_tree.links:
                 if link.to_node == node and link.from_node.type == 'VERTEX_COLOR':
                     return True
@@ -1001,10 +1000,11 @@ def create_material_with_image(image):
         mat.blend_method = 'CLIP'
 
     if defaults['vertex_colors']:
-        mix = nt.nodes.new("ShaderNodeMixRGB")
+        mix = nt.nodes.new("ShaderNodeMix")
+        mix.data_type = 'RGBA'
         mix.blend_type = 'MULTIPLY'
-        mix.use_clamp = True
-        mix.inputs["Fac"].default_value = 1.0
+        mix.clamp_result = True
+        mix.inputs["Factor"].default_value = 1.0
         mix.location = (-200, 200)
 
         vc = nt.nodes.new("ShaderNodeVertexColor")
@@ -1020,9 +1020,9 @@ def create_material_with_image(image):
             ):
                 nt.links.remove(link)
 
-        nt.links.new(tex.outputs["Color"], mix.inputs["Color1"])
-        nt.links.new(vc.outputs["Color"], mix.inputs["Color2"])
-        nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
+        nt.links.new(tex.outputs["Color"], mix.inputs[6])
+        nt.links.new(vc.outputs["Color"], mix.inputs[7])
+        nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
 
     return mat
 
