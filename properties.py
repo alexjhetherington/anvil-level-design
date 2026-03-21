@@ -523,6 +523,48 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         subtype='FACTOR',
     )
 
+    # === Default Experimental Material Settings ===
+    default_emission_strength: FloatProperty(
+        name="Emission Strength",
+        description="Emission strength for new materials",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    default_emission_color: FloatVectorProperty(
+        name="Emission Color",
+        description="Emission color for new materials",
+        subtype='COLOR',
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    default_specular: FloatProperty(
+        name="Specular",
+        description="Specular (IOR Level) value for new materials",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    # === UI Collapse State ===
+    show_experimental_settings: BoolProperty(
+        name="Experimental Settings",
+        description="Show experimental material settings",
+        default=False,
+    )
+
+    show_default_experimental_settings: BoolProperty(
+        name="Experimental Settings",
+        description="Show default experimental material settings",
+        default=False,
+    )
+
     # === Export Properties (last used settings) ===
     last_export_filepath: StringProperty(
         name="Last Export Path",

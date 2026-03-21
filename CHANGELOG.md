@@ -2,6 +2,7 @@
 
 ## 1.4.4
 - Align actual and default material panel styling
+- Add emission and specular to material settings
 
 ## 1.4.3
 - Vertex colour node setup changed so Godot picks it up

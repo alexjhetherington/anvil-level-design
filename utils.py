@@ -963,6 +963,9 @@ def get_default_material_settings():
         'vertex_colors': props.default_vertex_colors,
         'roughness': props.default_roughness,
         'metallic': props.default_metallic,
+        'emission_strength': props.default_emission_strength,
+        'emission_color': tuple(props.default_emission_color),
+        'specular': props.default_specular,
     }
 
 
@@ -987,6 +990,9 @@ def create_material_with_image(image):
 
     bsdf.inputs["Roughness"].default_value = defaults['roughness']
     bsdf.inputs["Metallic"].default_value = defaults['metallic']
+    bsdf.inputs["Emission Strength"].default_value = defaults['emission_strength']
+    bsdf.inputs["Emission Color"].default_value = defaults['emission_color']
+    bsdf.inputs["Specular IOR Level"].default_value = defaults['specular']
 
     tex.location = (-400, 0)
     bsdf.location = (-200, 0)

@@ -484,6 +484,37 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
                 row.enabled = False
                 row.label(text="Metallic: No material")
 
+            # Experimental settings (collapsible)
+            layout.separator()
+            props = context.scene.level_design_props
+            row = layout.row()
+            row.prop(
+                props, "show_experimental_settings",
+                icon='DISCLOSURE_TRI_DOWN' if props.show_experimental_settings else 'DISCLOSURE_TRI_RIGHT',
+                emboss=False,
+            )
+            if props.show_experimental_settings:
+                box = layout.box()
+                col = box.column(align=True)
+                col.scale_y = 0.7
+                col.label(text="These settings may change in future")
+                col.label(text="versions of Anvil as they are not")
+                col.label(text="widely supported on game engine import.")
+                box.separator()
+
+                if bsdf:
+                    box.prop(bsdf.inputs["Emission Strength"], "default_value", text="Emission Strength")
+                    row = box.row(align=True)
+                    row.label(text="Emission Color")
+                    row.prop(bsdf.inputs["Emission Color"], "default_value", text="")
+                    box.prop(bsdf.inputs["Specular IOR Level"], "default_value", text="Specular")
+                else:
+                    col = box.column()
+                    col.enabled = False
+                    col.label(text="Emission Strength: No material")
+                    col.label(text="Emission Color: No material")
+                    col.label(text="Specular: No material")
+
             # Fix alpha bleed button
             layout.separator()
             layout.operator(
@@ -608,6 +639,29 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
 
         # Metallic
         layout.prop(props, "default_metallic")
+
+        # Experimental settings (collapsible)
+        layout.separator()
+        row = layout.row()
+        row.prop(
+            props, "show_default_experimental_settings",
+            icon='DISCLOSURE_TRI_DOWN' if props.show_default_experimental_settings else 'DISCLOSURE_TRI_RIGHT',
+            emboss=False,
+        )
+        if props.show_default_experimental_settings:
+            box = layout.box()
+            col = box.column(align=True)
+            col.scale_y = 0.7
+            col.label(text="These settings may change in future")
+            col.label(text="versions of Anvil as they are not")
+            col.label(text="widely supported on game engine import.")
+            box.separator()
+
+            box.prop(props, "default_emission_strength")
+            row = box.row(align=True)
+            row.label(text="Emission Color")
+            row.prop(props, "default_emission_color", text="")
+            box.prop(props, "default_specular")
 
 
 class LEVELDESIGN_PT_export_panel(Panel):

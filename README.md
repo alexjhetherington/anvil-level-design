@@ -285,6 +285,14 @@ For a more convenient experience I recommend you consider adjusting the followin
 * Anvil manages materials for you based on image file names. If you rename an image file or rename a material you may run into issues.
 * The way we run initial addon setup is edge case city. See comments in code.
 
+### GLTF / Godot Material Limitations
+
+Right now Anvil doesn't aim to support any particular engine. That being said, the shader settings Anvil controls are based on what exports to .gltf and imports into Godot. I've found a few issues!
+
+* Specular is not imported at all: https://github.com/godotengine/godot/issues/83320. I think there is a pr: https://github.com/godotengine/godot/pull/89344
+* If roughness in blender is changed to 1 (from another value), godot will not reimport it. Changing it to 0.999 works fine
+* Emission is scaled incorrectly (a tiny emission in Blender has the power of the sun in Godot)
+
 ## Undocumented
 
 Ok, the fact it's here means it's documented. This section is for stuff that is experimental / may be removed.
