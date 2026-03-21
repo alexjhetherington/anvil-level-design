@@ -588,10 +588,20 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
         ).interpolation = 'Linear'
 
         # Texture as alpha
-        layout.prop(props, "default_texture_as_alpha", toggle=True)
+        row = layout.row()
+        row.prop(
+            props, "default_texture_as_alpha",
+            text="Texture as Alpha",
+            icon='CHECKBOX_HLT' if props.default_texture_as_alpha else 'CHECKBOX_DEHLT',
+        )
 
         # Vertex colors
-        layout.prop(props, "default_vertex_colors", toggle=True)
+        row = layout.row()
+        row.prop(
+            props, "default_vertex_colors",
+            text="Vertex Colors",
+            icon='CHECKBOX_HLT' if props.default_vertex_colors else 'CHECKBOX_DEHLT',
+        )
 
         # Roughness
         layout.prop(props, "default_roughness")
