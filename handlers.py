@@ -546,7 +546,7 @@ def _project_new_faces(context, bm):
                 cached_normal, source_local_x, source_local_y,
                 ref_point_co, ref_point_uv,
             )
-    affected -= coplanar_modified
+    affected -= coplanar_reproject
     affected -= translated
 
     # Step 2: Wavefront projection of remaining affected faces.
