@@ -2125,12 +2125,32 @@ def on_depsgraph_update(scene, depsgraph):
                     allow_active_image_update = not is_fresh_start or _file_loaded_into_edit_depsgraph
 
                     # Check if topology changed (subdivision, extrusion, etc.)
-                    if current_face_count != last_face_count or current_vertex_count != last_vertex_count:
+                    topology_changed = current_face_count != last_face_count or current_vertex_count != last_vertex_count
+
+                    # Also detect when a modal operator (e.g. bevel) restored
+                    # from its internal snapshot and re-applied, which recreates
+                    # the BMesh.  The BMesh bevel op copies custom data from
+                    # source faces to new faces, producing duplicate face IDs.
+                    # Face/vert counts stay the same, so the normal topology
+                    # check misses this — but the stale IDs cause
+                    # apply_world_scale_uvs to apply wrong cached transforms.
+                    if not topology_changed and not is_fresh_start:
+                        id_layer_check = get_face_id_layer(bm)
+                        seen_ids = set()
+                        for face in bm.faces:
+                            fid = face[id_layer_check]
+                            if fid in seen_ids:
+                                topology_changed = True
+                                debug_log("[Depsgraph] Duplicate face IDs detected (modal restore/re-apply)")
+                                break
+                            seen_ids.add(fid)
+
+                    if topology_changed:
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")
 
-                        # Project new faces when faces were added
-                        # (not after object switch)
-                        if not is_fresh_start and current_face_count > last_face_count:
+                        # Project new faces when faces were added or modal
+                        # re-applied (duplicate IDs mean the mesh was rebuilt)
+                        if not is_fresh_start:
                             _project_new_faces(context, bm)
                         cache_face_data(context)
                         debug_log(f"[Depsgraph] Cache rebuilt ({len(face_data_cache)} faces)")

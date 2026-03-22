@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.5
+- Fix various bevel UV issues
+
 ## 1.4.4
 - Align actual and default material panel styling
 - Add emission and specular to material settings
