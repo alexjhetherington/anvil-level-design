@@ -269,3 +269,269 @@ class BridgeBevelCorridorTest(AnvilTestCase):
         if errors:
             self.fail(f"{len(failed_faces)} face(s) with wrong UVs:\n"
                       + "\n".join(errors))
+
+    def test_bridge_and_bevel_corridor_1_segment(self):
+        # 1. Create two vertical planes facing each other, 2 units apart
+        plane_a = create_vertical_plane("corridor_1s_a")
+        plane_b = create_vertical_plane("corridor_1s_b")
+
+        ctx = _get_context_override()
+
+        # plane_a already faces +Y (outward), no rotation needed.
+
+        # Rotate plane_b 180 degrees so it faces -Y (outward)
+        plane_b.select_set(True)
+        plane_a.select_set(False)
+        bpy.context.view_layer.objects.active = plane_b
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        plane_b.rotation_euler.z = math.pi
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.transform_apply(rotation=True)
+
+        # Move plane_b to Y=2
+        plane_b.location.y = 2.0
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.transform_apply(location=True)
+
+        # 2. Cut a hole in each plane using execute_cube_cut
+        for plane in [plane_a, plane_b]:
+            plane_a.select_set(plane is plane_a)
+            plane_b.select_set(plane is plane_b)
+            bpy.context.view_layer.objects.active = plane
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.object.mode_set(mode='EDIT')
+
+            bm = bmesh.from_edit_mesh(plane.data)
+            bm.select_mode = {'FACE'}
+            for f in bm.faces:
+                f.select = True
+            bmesh.update_edit_mesh(plane.data)
+
+            bm.verts.ensure_lookup_table()
+            plane_y = bm.verts[0].co.y
+
+            with bpy.context.temp_override(**ctx):
+                success, msg = execute_cube_cut(
+                    bpy.context,
+                    Vector((0.25, plane_y - 0.25, 0.25)),
+                    Vector((0.75, plane_y - 0.25, 0.75)),
+                    0.5,
+                    Vector((1, 0, 0)),
+                    Vector((0, 0, 1)),
+                    Vector((0, 1, 0)),
+                )
+            assert success, f"Cube cut failed on {plane.name}: {msg}"
+
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+        yield 0.5
+
+        # 3. Join both planes into one object
+        plane_a.select_set(True)
+        plane_b.select_set(True)
+        bpy.context.view_layer.objects.active = plane_a
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.join()
+        obj = plane_a
+
+        # 4. Enter edit mode, select hole boundary edges, and bridge
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+
+        def is_hole_boundary(e):
+            if not e.is_boundary:
+                return False
+            for v in e.verts:
+                x, z = v.co.x, v.co.z
+                x_on_hole = abs(x - 0.25) < 0.01 or abs(x - 0.75) < 0.01
+                z_on_hole = abs(z - 0.25) < 0.01 or abs(z - 0.75) < 0.01
+                if not (x_on_hole or z_on_hole):
+                    return False
+                if x < 0.24 or x > 0.76 or z < 0.24 or z > 0.76:
+                    return False
+            return True
+
+        boundary_count = _select_edges_by_filter(
+            bm, obj.data,
+            edge_filter=is_hole_boundary,
+        )
+        self.assertEqual(boundary_count, 8,
+                         f"Expected 8 hole boundary edges (4 per hole), got {boundary_count}")
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.bridge_edge_loops()
+
+        yield 0.5
+
+        # 5. Select the top two edges of the corridor for beveling
+        bm = bmesh.from_edit_mesh(obj.data)
+
+        count = _select_edges_by_filter(
+            bm, obj.data,
+            edge_filter=lambda e: (
+                all(abs(v.co.z - 0.75) < 0.05 for v in e.verts)
+                and abs(e.verts[0].co.y - e.verts[1].co.y) > 0.1
+            ),
+        )
+
+        self.assertEqual(count, 2,
+                         f"Expected 2 top corridor edges selected, got {count}")
+
+        # 6. Bevel the selected top edges into 1 segment
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.bevel(
+                offset=0.1,
+                offset_pct=0,
+                segments=1,
+                affect='EDGES',
+            )
+
+        yield 0.5
+
+        # No assertions - visual inspection only
+
+    def test_bridge_and_bevel_corridor_interactive(self):
+        """Same as 1-segment test but uses interactive Ctrl+B bevel modal."""
+        # 1. Create two vertical planes facing each other, 2 units apart
+        plane_a = create_vertical_plane("corridor_int_a")
+        plane_b = create_vertical_plane("corridor_int_b")
+
+        ctx = _get_context_override()
+
+        plane_b.select_set(True)
+        plane_a.select_set(False)
+        bpy.context.view_layer.objects.active = plane_b
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        plane_b.rotation_euler.z = math.pi
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.transform_apply(rotation=True)
+
+        plane_b.location.y = 2.0
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.transform_apply(location=True)
+
+        # 2. Cut holes
+        for plane in [plane_a, plane_b]:
+            plane_a.select_set(plane is plane_a)
+            plane_b.select_set(plane is plane_b)
+            bpy.context.view_layer.objects.active = plane
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.object.mode_set(mode='EDIT')
+
+            bm = bmesh.from_edit_mesh(plane.data)
+            bm.select_mode = {'FACE'}
+            for f in bm.faces:
+                f.select = True
+            bmesh.update_edit_mesh(plane.data)
+
+            bm.verts.ensure_lookup_table()
+            plane_y = bm.verts[0].co.y
+
+            with bpy.context.temp_override(**ctx):
+                success, msg = execute_cube_cut(
+                    bpy.context,
+                    Vector((0.25, plane_y - 0.25, 0.25)),
+                    Vector((0.75, plane_y - 0.25, 0.75)),
+                    0.5,
+                    Vector((1, 0, 0)),
+                    Vector((0, 0, 1)),
+                    Vector((0, 1, 0)),
+                )
+            assert success, f"Cube cut failed on {plane.name}: {msg}"
+
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+        yield 0.5
+
+        # 3. Join
+        plane_a.select_set(True)
+        plane_b.select_set(True)
+        bpy.context.view_layer.objects.active = plane_a
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.join()
+        obj = plane_a
+
+        # 4. Bridge hole edges
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+
+        def is_hole_boundary(e):
+            if not e.is_boundary:
+                return False
+            for v in e.verts:
+                x, z = v.co.x, v.co.z
+                x_on_hole = abs(x - 0.25) < 0.01 or abs(x - 0.75) < 0.01
+                z_on_hole = abs(z - 0.25) < 0.01 or abs(z - 0.75) < 0.01
+                if not (x_on_hole or z_on_hole):
+                    return False
+                if x < 0.24 or x > 0.76 or z < 0.24 or z > 0.76:
+                    return False
+            return True
+
+        boundary_count = _select_edges_by_filter(
+            bm, obj.data,
+            edge_filter=is_hole_boundary,
+        )
+        self.assertEqual(boundary_count, 8)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.bridge_edge_loops()
+
+        yield 0.5
+
+        # 5. Select the top two corridor edges
+        bm = bmesh.from_edit_mesh(obj.data)
+        count = _select_edges_by_filter(
+            bm, obj.data,
+            edge_filter=lambda e: (
+                all(abs(v.co.z - 0.75) < 0.05 for v in e.verts)
+                and abs(e.verts[0].co.y - e.verts[1].co.y) > 0.1
+            ),
+        )
+        self.assertEqual(count, 2)
+
+        # 6. Interactive bevel: Ctrl+B, move mouse to set offset, type 0.1, Enter
+        window = bpy.context.window or bpy.context.window_manager.windows[0]
+        mx, my = self._get_3d_viewport_center()
+
+        # Ctrl+B to start bevel modal
+        window.event_simulate(type='B', value='PRESS', x=mx, y=my, ctrl=True)
+        yield
+        window.event_simulate(type='B', value='RELEASE', x=mx, y=my)
+        yield
+
+        # Mouse move to kick the modal into tracking
+        window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx, y=my)
+        yield
+
+        # Move mouse a bit to simulate dragging (triggers intermediate depsgraph updates)
+        for i in range(5):
+            window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx + (i + 1) * 10, y=my)
+            yield
+
+        # Type exact value and confirm
+        yield from self._simulate_number(0.1)
+        yield from self._simulate_key_tap('RET')
+        yield 0.5
+
+        # 7. Dump face transforms
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv[0]
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        for face in bm.faces:
+            n = face.normal
+            c = face.calc_center_median()
+            key = (round(n.x, 2), round(n.y, 2), round(n.z, 2),
+                   round(c.x, 2), round(c.y, 2), round(c.z, 2))
+            t = derive_transform_from_uvs(face, uv_layer, ppm, obj.data)
+            print(f"FACE {key}: scale_u={t['scale_u']:.4f} scale_v={t['scale_v']:.4f} "
+                  f"rot={t['rotation']:.2f} ox={t['offset_x']:.2f} oy={t['offset_y']:.2f}")
