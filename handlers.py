@@ -627,6 +627,12 @@ _last_edit_object_name = None
 _file_loaded_into_edit_depsgraph = False
 # Track modal operators for UV world-scale baseline
 _tracked_modal_operators = set()
+# Modal operators that restore-from-snapshot and re-apply on each mouse move.
+# During these modals, cache rebuild is deferred to preserve the pre-operation
+# baseline for correct UV projection across restore/re-apply cycles.
+_TOPOLOGY_MODAL_OPS = {
+    'MESH_OT_bevel',
+}
 # Track the file browser watcher modal operator
 _file_browser_watcher_running = False
 # Track the previously selected file browser path (to avoid reapplying same image)
@@ -2152,28 +2158,39 @@ def on_depsgraph_update(scene, depsgraph):
                         # re-applied (duplicate IDs mean the mesh was rebuilt)
                         if not is_fresh_start:
                             _project_new_faces(context, bm)
-                        cache_face_data(context)
-                        debug_log(f"[Depsgraph] Cache rebuilt ({len(face_data_cache)} faces)")
-                        update_ui_from_selection(context)
-                        # Only update active image if allowed
-                        if allow_active_image_update:
-                            update_active_image_from_face(context)
-                        _file_loaded_into_edit_depsgraph = False
-                        # Apply auto-hotspotting if enabled (after cache is updated)
-                        # Force because cache_face_data already cached the new faces,
-                        # so the geometry-changed check would incorrectly skip them
-                        # Snapshot selection so next check_selection_changed
-                        # doesn't see a false change from the topology update
-                        id_layer = get_face_id_layer(bm)
-                        _last_selected_face_indices = {f[id_layer] for f in bm.faces if f.select}
-                        _last_active_face_index = bm.faces.active[id_layer] if bm.faces.active else -1
-                        # Consume the weld-just-stored flag so it doesn't
-                        # incorrectly block the next genuine selection change
-                        from .operators import weld as _weld_mod
-                        _weld_mod._weld_just_stored = False
-                        if not is_fresh_start and props.auto_hotspot:
-                            _force_auto_hotspot = True
-                            _apply_auto_hotspots()
+
+                        # Check if a topology-changing modal (e.g. bevel) is
+                        # active.  These modals restore from a pre-op snapshot
+                        # and re-apply on every mouse move, so the cache must
+                        # stay at the pre-op baseline for correct projection.
+                        # Cache rebuild is deferred until the modal ends (next
+                        # topology-changed fire with no active modal).
+                        topo_window = bpy.context.window
+                        topo_modals = set(op.bl_idname for op in topo_window.modal_operators) if topo_window else set()
+                        in_topology_modal = bool(topo_modals & _TOPOLOGY_MODAL_OPS)
+
+                        if in_topology_modal:
+                            debug_log("[Depsgraph] Skipping cache rebuild (topology modal active)")
+                        else:
+                            cache_face_data(context)
+                            debug_log(f"[Depsgraph] Cache rebuilt ({len(face_data_cache)} faces)")
+                            update_ui_from_selection(context)
+                            # Only update active image if allowed
+                            if allow_active_image_update:
+                                update_active_image_from_face(context)
+                            _file_loaded_into_edit_depsgraph = False
+                            # Snapshot selection so next check_selection_changed
+                            # doesn't see a false change from the topology update
+                            id_layer = get_face_id_layer(bm)
+                            _last_selected_face_indices = {f[id_layer] for f in bm.faces if f.select}
+                            _last_active_face_index = bm.faces.active[id_layer] if bm.faces.active else -1
+                            # Consume the weld-just-stored flag so it doesn't
+                            # incorrectly block the next genuine selection change
+                            from .operators import weld as _weld_mod
+                            _weld_mod._weld_just_stored = False
+                            if not is_fresh_start and props.auto_hotspot:
+                                _force_auto_hotspot = True
+                                _apply_auto_hotspots()
                         return
 
                     # Check if selection changed
