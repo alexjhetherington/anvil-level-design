@@ -132,6 +132,8 @@ class BoxCutCorridorTest(AnvilTestCase):
         # back_plane_offset = back_point · extrude_dir = -0.5
         set_weld_from_edge_selection(
             bpy.context, 0.75, (0, 1, 0), -0.5,
+            Vector((0.25, 0.25, 0.0)), Vector((0.75, 0.25, 0.75)),
+            Vector((1, 0, 0)), Vector((0, 0, 1)),
         )
 
         self.assertEqual(props.weld_mode, 'CORRIDOR',

@@ -181,9 +181,10 @@ Hold shift on first click to start with a line (allows rotated cube cuts).
 
 Hold ctrl to lock the axis, allowing you to move the cursor off a given face while keeping the same draw plane.
 
-After a cube cut, WELD can do 2 things:
+After a cube cut, WELD can do 3 things:
 1) When the cube cut has depth but intersects with one plane, WELD creates a corridor with a closed end to the depth of the cube cut
-2) The the cube cut spans across multiple faces, WELD joins the holes into a corridor with open ends
+2) When the cube cut spans across multiple faces, WELD joins the holes into a corridor with open ends
+3) When the cube cut spans across multiple faces with a 'blank' side, WELD creates a plane folded onto the cut geometry
 
 #### Box Builder
 

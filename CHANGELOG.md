@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 ## 1.4.6
+- WELD folded plane
 - Box build with 0 height and abs(depth) > 0 creates a plane (not a thin box)
 - Undoing does not clear previously selected image
 - Entering vertex paint enables face orientation (and leaving vertex paint mode returns to the previous value)

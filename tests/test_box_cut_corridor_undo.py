@@ -115,6 +115,8 @@ class BoxCutDualCorridorTest(AnvilTestCase):
         # First corridor weld
         set_weld_from_edge_selection(
             bpy.context, 0.75, (0, 1, 0), -0.5,
+            Vector((0.25, 0.25, 0.0)), Vector((0.75, 0.25, 0.75)),
+            Vector((1, 0, 0)), Vector((0, 0, 1)),
         )
         with bpy.context.temp_override(**ctx):
             bpy.ops.leveldesign.context_weld()
@@ -145,6 +147,8 @@ class BoxCutDualCorridorTest(AnvilTestCase):
         # Second corridor weld
         set_weld_from_edge_selection(
             bpy.context, 0.25, (-0.0, 1.0, -0.0), 1.25,
+            Vector((0.25, 1.0, 0.0)), Vector((0.75, 1.0, 0.25)),
+            Vector((1, 0, 0)), Vector((0, 0, 1)),
         )
         with bpy.context.temp_override(**ctx):
             result = bpy.ops.leveldesign.context_weld()

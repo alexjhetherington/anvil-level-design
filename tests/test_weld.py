@@ -1,5 +1,6 @@
 import bmesh
 import bpy
+from mathutils import Vector
 
 from .base_test import AnvilTestCase
 from .helpers import create_textured_cube, _get_context_override
@@ -74,7 +75,9 @@ class WeldUndoStackTest(AnvilTestCase):
 
         # Simulate cube cut setting the weld state
         from ..operators.weld import set_weld_from_edge_selection
-        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5)
+        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5,
+                                         Vector((0, 0, 0)), Vector((1, 0, 1)),
+                                         Vector((1, 0, 0)), Vector((0, 0, 1)))
 
         yield 0.5
 

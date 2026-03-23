@@ -632,6 +632,7 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
             ('BRIDGE', "Bridge Edge Loops", "Bridge two edge loops"),
             ('CORRIDOR', "Corridor", "Create face and extrude corridor"),
             ('INVERT', "Invert", "Flip normals on the mesh"),
+            ('FOLDED_PLANE', "Folded Plane", "Fill faces on cuboid side planes"),
         ],
         default='NONE',
     )

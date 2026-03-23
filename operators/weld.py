@@ -19,7 +19,7 @@ import bpy
 import bmesh
 from mathutils import Vector
 
-from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer
+from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer, compute_normal_from_verts
 
 from .texture_apply import set_uv_from_other_face
 
@@ -32,6 +32,14 @@ _DY_LAYER = "_aw_dy"        # float on verts — direction Y
 _DZ_LAYER = "_aw_dz"        # float on verts — direction Z
 _BPO_LAYER = "_aw_bpo"      # float on verts — back plane offset
 _FACE_LAYER = "_aw_face"    # int on faces — 1 = box face for INVERT
+
+# Cuboid params layers (FOLDED_PLANE only, all floats on vert 0, object local space)
+_CUBOID_LAYERS = [
+    "_aw_cox", "_aw_coy", "_aw_coz",   # cuboid origin
+    "_aw_lxx", "_aw_lxy", "_aw_lxz",   # cuboid local_x
+    "_aw_lyx", "_aw_lyy", "_aw_lyz",   # cuboid local_y
+    "_aw_cdx", "_aw_cdy",              # cuboid dx, dy
+]
 
 # Mesh custom property prefix (object mode only)
 _AW = "_aw_"
@@ -46,16 +54,16 @@ _weld_op_running = False
 _weld_just_stored = False
 
 # Mode ↔ int mapping for the BMesh int layer
-_MODE_TO_STR = {0: 'NONE', 1: 'BRIDGE', 2: 'CORRIDOR', 3: 'INVERT'}
-_STR_TO_MODE = {'NONE': 0, 'BRIDGE': 1, 'CORRIDOR': 2, 'INVERT': 3}
+_MODE_TO_STR = {0: 'NONE', 1: 'BRIDGE', 2: 'CORRIDOR', 3: 'INVERT', 4: 'FOLDED_PLANE'}
+_STR_TO_MODE = {'NONE': 0, 'BRIDGE': 1, 'CORRIDOR': 2, 'INVERT': 3, 'FOLDED_PLANE': 4}
 
 
 # ---------------------------------------------------------------------------
 # BMesh layer helpers (edit mode)
 # ---------------------------------------------------------------------------
 
-def _set_weld_on_bmesh(bm, mode, depth=0.0, direction=(0.0, 0.0, 0.0),
-                       back_plane_offset=0.0, box_faces=None):
+def _set_weld_on_bmesh(bm, mode, depth, direction, back_plane_offset,
+                       box_faces, cuboid_params):
     """Store weld state in BMesh custom data layers."""
     # Collect indices from saved refs BEFORE creating layers, because
     # adding a new layer can invalidate existing BMFace/BMEdge pointers.
@@ -85,15 +93,34 @@ def _set_weld_on_bmesh(bm, mode, depth=0.0, direction=(0.0, 0.0, 0.0),
         for f in bm.faces:
             f[face_layer] = 1 if f.index in box_indices else 0
 
+    # Store cuboid params (FOLDED_PLANE mode, object local space)
+    if cuboid_params is not None:
+        origin, local_x, local_y, cdx, cdy = cuboid_params
+        values = [
+            origin[0], origin[1], origin[2],
+            local_x[0], local_x[1], local_x[2],
+            local_y[0], local_y[1], local_y[2],
+            cdx, cdy,
+        ]
+        cuboid_layers = []
+        for name in _CUBOID_LAYERS:
+            layer = bm.verts.layers.float.get(name) or bm.verts.layers.float.new(name)
+            cuboid_layers.append(layer)
+        bm.verts.ensure_lookup_table()
+        v0 = bm.verts[0]
+        for layer, val in zip(cuboid_layers, values):
+            v0[layer] = val
+
 
 def _get_weld_from_bmesh(bm):
     """Read weld parameters from BMesh layers.
 
-    Returns (mode_str, depth, direction_tuple, back_plane_offset).
+    Returns (mode_str, depth, direction_tuple, back_plane_offset, cuboid_params).
+    cuboid_params is (origin, local_x, local_y, cdx, cdy) or None.
     """
     mode_layer = bm.verts.layers.int.get(_MODE_LAYER)
     if mode_layer is None:
-        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0
+        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0, None
 
     bm.verts.ensure_lookup_table()
     v0 = bm.verts[0]
@@ -113,7 +140,24 @@ def _get_weld_from_bmesh(bm):
     )
     bpo = v0[bpo_layer] if bpo_layer is not None else 0.0
 
-    return mode, depth, direction, bpo
+    # Read cuboid params (FOLDED_PLANE mode)
+    cuboid_params = None
+    if mode == 'FOLDED_PLANE':
+        first_layer = bm.verts.layers.float.get(_CUBOID_LAYERS[0])
+        if first_layer is not None:
+            values = []
+            for name in _CUBOID_LAYERS:
+                layer = bm.verts.layers.float.get(name)
+                values.append(v0[layer] if layer is not None else 0.0)
+            cuboid_params = (
+                Vector((values[0], values[1], values[2])),   # origin
+                Vector((values[3], values[4], values[5])),   # local_x
+                Vector((values[6], values[7], values[8])),   # local_y
+                values[9],                                    # cdx
+                values[10],                                   # cdy
+            )
+
+    return mode, depth, direction, bpo, cuboid_params
 
 
 def clear_weld_on_bmesh(bm):
@@ -124,6 +168,10 @@ def clear_weld_on_bmesh(bm):
         v0 = bm.verts[0]
         v0[mode_layer] = 0
         for name in (_DEPTH_LAYER, _DX_LAYER, _DY_LAYER, _DZ_LAYER, _BPO_LAYER):
+            layer = bm.verts.layers.float.get(name)
+            if layer is not None:
+                v0[layer] = 0.0
+        for name in _CUBOID_LAYERS:
             layer = bm.verts.layers.float.get(name)
             if layer is not None:
                 v0[layer] = 0.0
@@ -205,10 +253,42 @@ def _count_edge_groups(bm):
 # Mode derivation
 # ---------------------------------------------------------------------------
 
-def _derive_weld_mode(bm, depth):
+_FOLDED_EPSILON = 1e-4
+
+
+def _check_folded_plane(selected_verts, cuboid_params):
+    """Check if at least 2 selected vertices lie on any single depth edge.
+
+    cuboid_params: (origin, local_x, local_y, cdx, cdy) in object local space.
+    Depth edges are at the 4 corners of the cuboid rectangle, running along the
+    depth direction (perpendicular to both local_x and local_y).
+    """
+    origin, local_x, local_y, cdx, cdy = cuboid_params
+    corners = [
+        origin,
+        origin + local_x * cdx,
+        origin + local_x * cdx + local_y * cdy,
+        origin + local_y * cdy,
+    ]
+    for ci, corner in enumerate(corners):
+        count = 0
+        for v in selected_verts:
+            offset = v.co - corner
+            along_x = offset.dot(local_x)
+            along_y = offset.dot(local_y)
+            in_plane_vec = local_x * along_x + local_y * along_y
+            if in_plane_vec.length < _FOLDED_EPSILON:
+                count += 1
+        if count >= 2:
+            return True
+    return False
+
+
+def _derive_weld_mode(bm, depth, cuboid_params):
     """Derive the weld mode from the current edge selection and depth.
 
-    Returns (mode, depth) tuple where mode is 'BRIDGE', 'CORRIDOR', or 'NONE'.
+    Returns (mode, depth) tuple where mode is 'BRIDGE', 'CORRIDOR',
+    'FOLDED_PLANE', or 'NONE'.
     """
     groups = _count_edge_groups(bm)
 
@@ -218,6 +298,9 @@ def _derive_weld_mode(bm, depth):
         selected_verts = list({v for e in bm.edges if e.select for v in e.verts})
         if abs(depth) > 0 and are_verts_coplanar(selected_verts):
             return 'CORRIDOR', depth
+        if cuboid_params is not None:
+            if _check_folded_plane(selected_verts, cuboid_params):
+                return 'FOLDED_PLANE', depth
         return 'NONE', 0.0
     return 'NONE', 0.0
 
@@ -226,10 +309,12 @@ def _derive_weld_mode(bm, depth):
 # Public API — setting weld state
 # ---------------------------------------------------------------------------
 
-def set_weld_from_edge_selection(context, depth, direction, back_plane_offset):
+def set_weld_from_edge_selection(context, depth, direction, back_plane_offset,
+                                 first_vertex, second_vertex, local_x, local_y):
     """Analyze current edge selection and store weld state in BMesh layers.
 
     Called from cube_cut after successful execution.
+    first_vertex, second_vertex, local_x, local_y are in world space.
     """
     global _weld_just_stored
 
@@ -240,10 +325,40 @@ def set_weld_from_edge_selection(context, depth, direction, back_plane_offset):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    mode, effective_depth = _derive_weld_mode(bm, depth)
+    # Transform cuboid params to object local space for detection and storage
+    w2l = obj.matrix_world.inverted()
+    w2l_rot = w2l.to_3x3()
+    local_origin = w2l @ first_vertex
+    local_lx = (w2l_rot @ Vector(local_x)).normalized()
+    local_ly = (w2l_rot @ Vector(local_y)).normalized()
+
+    diff_world = Vector(second_vertex) - Vector(first_vertex)
+    cdx = abs(diff_world.dot(Vector(local_x)))
+    cdy = abs(diff_world.dot(Vector(local_y)))
+
+    # Flip axes if needed so dx/dy are positive
+    local_diff = (w2l @ Vector(second_vertex)) - local_origin
+    if local_diff.dot(local_lx) < 0:
+        local_lx = -local_lx
+    if local_diff.dot(local_ly) < 0:
+        local_ly = -local_ly
+
+    # Scale dx/dy to local space
+    scale_x = (w2l_rot @ Vector(local_x)).length
+    scale_y = (w2l_rot @ Vector(local_y)).length
+    local_cdx = cdx * scale_x
+    local_cdy = cdy * scale_y
+
+    cuboid_params_local = (local_origin, local_lx, local_ly, local_cdx, local_cdy)
+    debug_log(f"[Weld] Cuboid local: origin={local_origin}, lx={local_lx}, ly={local_ly}, "
+              f"cdx={local_cdx:.4f}, cdy={local_cdy:.4f}")
+
+    mode, effective_depth = _derive_weld_mode(bm, depth, cuboid_params_local)
     dir_tuple = tuple(direction)
 
-    _set_weld_on_bmesh(bm, mode, effective_depth, dir_tuple, back_plane_offset)
+    store_cuboid = cuboid_params_local if mode == 'FOLDED_PLANE' else None
+    _set_weld_on_bmesh(bm, mode, effective_depth, dir_tuple, back_plane_offset,
+                       None, store_cuboid)
     _weld_just_stored = True
     bmesh.update_edit_mesh(me)
 
@@ -290,7 +405,7 @@ def set_weld_from_box_builder(context, new_face_vert_positions):
     else:
         mode = 'NONE'
 
-    _set_weld_on_bmesh(bm, mode, box_faces=box_faces)
+    _set_weld_on_bmesh(bm, mode, 0.0, (0.0, 0.0, 0.0), 0.0, box_faces, None)
     _weld_just_stored = True
     bmesh.update_edit_mesh(me)
 
@@ -336,7 +451,7 @@ def sync_weld_props(context, bm):
 
     if bm is not None:
         # Edit mode: read from BMesh layers
-        mode, depth, direction, bpo = _get_weld_from_bmesh(bm)
+        mode, depth, direction, bpo, _cuboid = _get_weld_from_bmesh(bm)
 
         if mode == 'NONE':
             if props.weld_mode != 'NONE':
@@ -376,6 +491,8 @@ def get_weld_display_name(weld_mode):
         return "Corridor"
     elif weld_mode == 'INVERT':
         return "Invert"
+    elif weld_mode == 'FOLDED_PLANE':
+        return "Folded Plane"
     return "None"
 
 
@@ -482,8 +599,8 @@ class MESH_OT_context_weld(bpy.types.Operator):
                 context.active_object.type == 'MESH'):
             return {'CANCELLED'}
 
-        # BRIDGE and CORRIDOR require edit mode; INVERT works from object mode too
-        if weld_mode in ('BRIDGE', 'CORRIDOR') and context.mode != 'EDIT_MESH':
+        # BRIDGE, CORRIDOR and FOLDED_PLANE require edit mode; INVERT works from object mode too
+        if weld_mode in ('BRIDGE', 'CORRIDOR', 'FOLDED_PLANE') and context.mode != 'EDIT_MESH':
             return {'CANCELLED'}
 
         # Read marked box faces from BMesh layers for INVERT in edit mode
@@ -504,6 +621,13 @@ class MESH_OT_context_weld(bpy.types.Operator):
                 )
             elif weld_mode == 'INVERT':
                 return self._execute_invert(context, invert_box_faces)
+            elif weld_mode == 'FOLDED_PLANE':
+                bm = bmesh.from_edit_mesh(context.active_object.data)
+                _mode, _depth, _dir, _bpo, cuboid_params = _get_weld_from_bmesh(bm)
+                if cuboid_params is None:
+                    self.report({'ERROR'}, "Missing cuboid parameters")
+                    return {'CANCELLED'}
+                return self._execute_folded_plane(context, cuboid_params)
         finally:
             _weld_op_running = False
 
@@ -742,6 +866,180 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         context.scene.level_design_props.weld_mode = 'NONE'
         self.report({'INFO'}, f"Corridor created (depth: {depth:.3f})")
+        return {'FINISHED'}
+
+
+    def _execute_folded_plane(self, context, cuboid_params):
+        """Create faces on cuboid side planes from the selected boundary edges."""
+        debug_log("[FoldedPlane] Execute folded plane weld")
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        origin, local_x, local_y, cdx, cdy = cuboid_params
+        local_z = local_x.cross(local_y).normalized()
+
+        # Collect selected boundary edges and their vertices
+        selected_edges = [e for e in bm.edges if e.select]
+        selected_verts = list({v for e in selected_edges for v in e.verts})
+
+        if not selected_edges:
+            self.report({'ERROR'}, "No edges selected")
+            return {'CANCELLED'}
+
+        # Step 1: Find vertices on each depth edge and create connecting edges
+        corners = [
+            origin,
+            origin + local_x * cdx,
+            origin + local_x * cdx + local_y * cdy,
+            origin + local_y * cdy,
+        ]
+
+        depth_edge_verts = {}  # corner_idx -> list of BMVerts sorted along local_z
+        for ci, corner in enumerate(corners):
+            verts_on_edge = []
+            for v in selected_verts:
+                offset = v.co - corner
+                along_x = offset.dot(local_x)
+                along_y = offset.dot(local_y)
+                in_plane_vec = local_x * along_x + local_y * along_y
+                if in_plane_vec.length < _FOLDED_EPSILON:
+                    verts_on_edge.append(v)
+            if len(verts_on_edge) >= 2:
+                verts_on_edge.sort(key=lambda v: (v.co - corner).dot(local_z))
+                depth_edge_verts[ci] = verts_on_edge
+
+        debug_log(f"[FoldedPlane] Found {len(depth_edge_verts)} depth edges with vertices")
+
+        new_edges = []
+        for ci, verts in depth_edge_verts.items():
+            for i in range(len(verts) - 1):
+                v1, v2 = verts[i], verts[i + 1]
+                existing = None
+                for e in v1.link_edges:
+                    if e.other_vert(v1) == v2:
+                        existing = e
+                        break
+                if existing is None:
+                    edge = bm.edges.new((v1, v2))
+                    new_edges.append(edge)
+                    debug_log(f"[FoldedPlane] Created depth edge: {v1.co} -> {v2.co}")
+                else:
+                    new_edges.append(existing)
+
+        # Step 2: Create faces on each cuboid side face (not front/back)
+        # Side faces are: left (x=0), right (x=cdx), bottom (y=0), top (y=cdy)
+        side_faces_def = [
+            (local_x, 0.0, local_x.copy()),        # left: dot(local_x)=0, inward = +local_x
+            (local_x, cdx, -local_x.copy()),        # right: dot(local_x)=cdx, inward = -local_x
+            (local_y, 0.0, local_y.copy()),         # bottom: dot(local_y)=0, inward = +local_y
+            (local_y, cdy, -local_y.copy()),        # top: dot(local_y)=cdy, inward = -local_y
+        ]
+
+        all_relevant_edges = set(selected_edges) | set(new_edges)
+        created_faces = []
+
+        for axis, offset_val, inward_normal in side_faces_def:
+            # Find edges on this plane
+            face_edges = []
+            for e in all_relevant_edges:
+                v0_offset = (e.verts[0].co - origin).dot(axis)
+                v1_offset = (e.verts[1].co - origin).dot(axis)
+                if (abs(v0_offset - offset_val) < _FOLDED_EPSILON and
+                        abs(v1_offset - offset_val) < _FOLDED_EPSILON):
+                    face_edges.append(e)
+
+            if len(face_edges) < 3:
+                continue
+
+            # Trace edge loop to get vertex order
+            vert_adj = {}
+            for e in face_edges:
+                v0, v1 = e.verts
+                vert_adj.setdefault(v0, []).append(v1)
+                vert_adj.setdefault(v1, []).append(v0)
+
+            # Start from any vertex and trace the loop
+            start_v = face_edges[0].verts[0]
+            polygon = [start_v]
+            visited = {start_v}
+            current = start_v
+
+            while True:
+                neighbors = vert_adj.get(current, [])
+                next_v = None
+                for n in neighbors:
+                    if n not in visited:
+                        next_v = n
+                        break
+                if next_v is None:
+                    break
+                polygon.append(next_v)
+                visited.add(next_v)
+                current = next_v
+
+            if len(polygon) < 3:
+                continue
+
+            # Check winding: compute face normal and compare with inward_normal
+            poly_normal = compute_normal_from_verts([v.co for v in polygon])
+            if poly_normal is not None and poly_normal.dot(inward_normal) < 0:
+                polygon.reverse()
+
+            try:
+                new_face = bm.faces.new(polygon)
+                created_faces.append(new_face)
+                debug_log(f"[FoldedPlane] Created face with {len(polygon)} verts, "
+                          f"normal target={inward_normal}")
+            except ValueError as e:
+                debug_log(f"[FoldedPlane] Failed to create face: {e}")
+
+        debug_log(f"[FoldedPlane] Created {len(created_faces)} faces total")
+
+        # Step 3: Triangulate faces with > 4 edges, then join to quads
+        faces_to_tri = [f for f in created_faces if f.is_valid and len(f.verts) > 4]
+        if faces_to_tri:
+            tri_result = bmesh.ops.triangulate(bm, faces=faces_to_tri)
+            tri_faces = tri_result.get('faces', [])
+            # Collect all triangle faces (deduplicated)
+            tri_set = set()
+            for f in tri_faces:
+                if f.is_valid:
+                    tri_set.add(f)
+            for f in created_faces:
+                if f.is_valid and len(f.verts) == 3:
+                    tri_set.add(f)
+            all_tris = list(tri_set)
+            if all_tris:
+                bmesh.ops.join_triangles(
+                    bm, faces=all_tris,
+                    cmp_seam=False, cmp_sharp=False, cmp_uvs=False,
+                    cmp_vcols=False, cmp_materials=False,
+                    angle_face_threshold=3.14, angle_shape_threshold=3.14,
+                )
+
+        bm.normal_update()
+
+        # Clear BMesh weld layers
+        clear_weld_on_bmesh(bm)
+
+        # Deselect everything and switch to face select mode
+        for f in bm.faces:
+            f.select = False
+        for e in bm.edges:
+            e.select = False
+        for v in bm.verts:
+            v.select = False
+        bm.select_flush(False)
+        context.tool_settings.mesh_select_mode = (False, False, True)
+
+        bmesh.update_edit_mesh(me)
+
+        context.scene.level_design_props.weld_mode = 'NONE'
+        self.report({'INFO'}, "Folded plane weld completed")
         return {'FINISHED'}
 
 

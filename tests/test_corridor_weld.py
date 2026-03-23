@@ -105,7 +105,10 @@ class CorridorWeldVerticalTest(AnvilTestCase):
 
         # Set up weld state (simulating what the cube cut operator does)
         # back_plane_offset = 0.5 (back plane at y=0.5 projected onto (0,1,0))
-        set_weld_from_edge_selection(bpy.context, 0.75, (0, 1, 0), 0.5)
+        set_weld_from_edge_selection(bpy.context, 0.75, (0, 1, 0), 0.5,
+                                     Vector((0.25, -0.25, 0.25)),
+                                     Vector((0.75, -0.25, 0.75)),
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'CORRIDOR',
@@ -277,7 +280,10 @@ class CorridorWeldSlopedTest(AnvilTestCase):
 
         # Set up weld state
         # back_plane_offset = 1.0 (back plane at y=1.0 projected onto (0,1,0))
-        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0)
+        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0,
+                                     Vector((0.25, 0.0, 0.25)),
+                                     Vector((0.75, 0.0, 0.75)),
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
 
         props = bpy.context.scene.level_design_props
         self.assertEqual(props.weld_mode, 'CORRIDOR',

@@ -90,6 +90,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
             debug_log(f"[CubeCut]   back_plane_offset={back_plane_offset:.4f} (back_point dot extrude_dir)")
             set_weld_from_edge_selection(
                 context, abs(depth), extrude_dir, back_plane_offset,
+                first_vertex, second_vertex, local_x, local_y,
             )
 
         return result

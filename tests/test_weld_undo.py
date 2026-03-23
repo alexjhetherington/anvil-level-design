@@ -60,7 +60,9 @@ class CorridorWeldUndoTest(AnvilTestCase):
         bmesh.update_edit_mesh(obj.data)
 
         # Set weld state (stored in BMesh layers)
-        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5)
+        set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5,
+                                     Vector((0, 0, 0)), Vector((1, 0, 1)),
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
 
         yield 0.5
 
@@ -165,7 +167,9 @@ class BridgeWeldUndoTest(AnvilTestCase):
         bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data)
 
-        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0)
+        set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0,
+                                     Vector((0, 0, 0)), Vector((1, 0, 1)),
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
 
         yield 0.5
 
