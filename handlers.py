@@ -655,9 +655,11 @@ _last_file_browser_path = None
 # Updated by: file browser selection, user clicking a face
 # Used by: Alt+Click apply, UI panel preview
 _active_image = None
-# The previously active image, shown as a disabled preview when no texture is selected.
-# Updated whenever a new image is selected from the file browser.
-_previous_image = None
+# The previously active image name and filepath, shown as a disabled preview when
+# no texture is selected. Stored as strings (not a reference) so they survive undo/redo.
+# The filepath allows re-loading the image if undo removes it from bpy.data.images.
+_previous_image_name = None
+_previous_image_filepath = None
 # Specifically for the case where faces start as selected e.g. initial cube on file creation.
 # Guard flag: when True, depsgraph should not overwrite _active_image
 # (set by apply_texture_from_file_browser which runs in a timer context
@@ -684,17 +686,18 @@ def get_active_image():
 def get_previous_image():
     """Get the previously active image for display when no texture is selected.
 
-    Returns None if the stored reference has been invalidated (e.g. by undo).
+    Looks up the image by name each time so the reference survives undo/redo.
+    If undo removed the image from bpy.data.images, re-loads it from the filepath.
     """
-    global _previous_image
-    if _previous_image is None:
+    if _previous_image_name is None:
         return None
-    try:
-        _previous_image.name
-        return _previous_image
-    except ReferenceError:
-        _previous_image = None
-        return None
+    img = bpy.data.images.get(_previous_image_name)
+    if img is None and _previous_image_filepath:
+        try:
+            img = bpy.data.images.load(_previous_image_filepath, check_existing=True)
+        except RuntimeError:
+            pass
+    return img
 
 
 def set_active_image(image):
@@ -714,8 +717,14 @@ def set_active_image(image):
 
 def set_previous_image(image):
     """Set the previous image for display when no texture is selected."""
-    global _previous_image
-    _previous_image = image
+    global _previous_image_name, _previous_image_filepath
+    if image is not None:
+        _previous_image_name = image.name
+        _previous_image_filepath = image.filepath_from_user()
+    else:
+        _previous_image_name = None
+        _previous_image_filepath = None
+
 
 
 def cache_single_face(face, bm, ppm=None, me=None):
@@ -1891,8 +1900,15 @@ def on_undo_post(scene):
     # Refresh UI panels immediately
     try:
         context = bpy.context
+        saved_prev_name = _previous_image_name
+        saved_prev_path = _previous_image_filepath
         update_ui_from_selection(context)
         update_active_image_from_face(context)
+        # Only restore previous image if undo left no active face;
+        # if a face is now selected, let the normal update take effect.
+        if _active_image is None:
+            _previous_image_name = saved_prev_name
+            _previous_image_filepath = saved_prev_path
         redraw_ui_panels(context)
     except Exception:
         pass
@@ -1934,8 +1950,13 @@ def on_redo_post(scene):
     # Refresh UI panels immediately
     try:
         context = bpy.context
+        saved_prev_name = _previous_image_name
+        saved_prev_path = _previous_image_filepath
         update_ui_from_selection(context)
         update_active_image_from_face(context)
+        if _active_image is None:
+            _previous_image_name = saved_prev_name
+            _previous_image_filepath = saved_prev_path
         redraw_ui_panels(context)
     except Exception:
         pass

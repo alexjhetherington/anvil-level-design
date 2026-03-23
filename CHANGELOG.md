@@ -2,6 +2,7 @@
 
 ## 1.4.6
 - Box build with 0 height and abs(depth) > 0 creates a plane (not a thin box)
+- Undoing does not clear previously selected image
 
 ## 1.4.5
 - Fix various bevel UV issues
