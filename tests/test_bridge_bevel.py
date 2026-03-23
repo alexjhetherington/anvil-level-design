@@ -33,7 +33,7 @@ def _select_edges_by_filter(bm, me, edge_filter):
 class BridgeBevelCorridorTest(AnvilTestCase):
     """Create two planes with holes, bridge them, then bevel the top corridor edges."""
 
-    def test_bridge_and_bevel_corridor(self):
+    def test_bridge_and_bevel_corridor_3_segments(self):
         # 1. Create two vertical planes facing each other, 2 units apart
         #    plane_a at y=0 facing -Y, plane_b at y=2 facing +Y
         plane_a = create_vertical_plane("corridor_a")
@@ -519,7 +519,7 @@ class BridgeBevelCorridorTest(AnvilTestCase):
             print(f"FACE {key}: scale_u={t['scale_u']:.4f} scale_v={t['scale_v']:.4f} "
                   f"rot={t['rotation']:.2f} ox={t['offset_x']:.2f} oy={t['offset_y']:.2f}")
 
-    def test_bridge_and_bevel_corridor_interactive(self):
+    def test_bridge_and_bevel_corridor_1_segment_interactive(self):
         """Same as 1-segment test but uses interactive Ctrl+B bevel modal."""
         # 1. Create two vertical planes facing each other, 2 units apart
         plane_a = create_vertical_plane("corridor_int_a")

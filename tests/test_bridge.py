@@ -211,7 +211,7 @@ class BridgeUndoRedoTest(AnvilTestCase):
         bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data)
 
-    def test_undo_and_rebridge(self):
+    def test_bridge_undo_and_rebridge_preserves_uvs(self):
         """Replicate the bug: bridge → undo → bridge again → UVs stretched.
 
         Real-world workflow:

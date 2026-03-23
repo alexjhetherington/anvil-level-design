@@ -20,7 +20,7 @@ def _undo_ctx():
 class CorridorWeldUndoTest(AnvilTestCase):
     """Test corridor weld undo: weld → undo → verify mode → re-weld → verify geometry."""
 
-    def test_corridor_undo_and_reweld(self):
+    def test_corridor_weld_undo_and_reweld(self):
         """Corridor: weld → undo → verify CORRIDOR → re-weld → verify geometry.
 
         Uses operator-based geometry (delete face) so the undo system properly
@@ -112,7 +112,7 @@ class CorridorWeldUndoTest(AnvilTestCase):
 class BridgeWeldUndoTest(AnvilTestCase):
     """Test bridge weld undo: weld → undo → verify mode → re-weld → verify geometry."""
 
-    def test_bridge_undo_and_reweld(self):
+    def test_bridge_weld_undo_and_reweld(self):
         """Bridge: weld → undo → verify BRIDGE → re-weld → verify 6 faces."""
         # Create two planes and join them via operators
         plane_a = create_vertical_plane("bridge_a")
@@ -224,7 +224,7 @@ class BridgeWeldUndoTest(AnvilTestCase):
 class InvertWeldUndoTest(AnvilTestCase):
     """Test invert weld undo: weld → undo → verify mode → re-weld → verify normals."""
 
-    def test_invert_undo_and_reweld(self):
+    def test_invert_weld_undo_and_reweld(self):
         """Invert: weld → undo → verify INVERT → re-weld → verify normals flipped."""
         mesh = bpy.data.meshes.new("invert_undo")
         obj = bpy.data.objects.new("invert_undo", mesh)

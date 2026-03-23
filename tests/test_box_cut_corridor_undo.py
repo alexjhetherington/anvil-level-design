@@ -62,7 +62,7 @@ _EXPECTED = {
 class BoxCutDualCorridorTest(AnvilTestCase):
     """Build box → invert → two opposing corridors, assert all UVs."""
 
-    def test_dual_corridor_uvs(self):
+    def test_opposing_corridors_uvs(self):
         """Build two opposing corridors and verify every face's UV transform."""
         image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
         set_active_image(image)

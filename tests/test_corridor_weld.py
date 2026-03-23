@@ -61,7 +61,7 @@ def _face_verts_sorted(face):
 class CorridorWeldVerticalTest(AnvilTestCase):
     """Test corridor weld after cube cut on a vertical plane."""
 
-    def test_corridor_on_vertical_plane(self):
+    def test_corridor_weld_on_vertical_plane(self):
         """Cube cut a hole in a textured vertical plane, then corridor weld.
 
         The vertical plane faces -Y (winding order gives -Y normal).
@@ -234,7 +234,7 @@ class CorridorWeldSlopedTest(AnvilTestCase):
     corridor even though the face normal is diagonal.
     """
 
-    def test_corridor_on_sloped_plane(self):
+    def test_corridor_weld_on_sloped_plane(self):
         """Cube cut a hole in a textured 45 deg sloped plane, then corridor weld.
 
         The sloped plane goes from (0,0,0)-(1,0,0) at the bottom to

@@ -23,7 +23,7 @@ def _face_key(face):
 class BoxBuilderTest(AnvilTestCase):
     """Test box builder geometry creation and UV mapping."""
 
-    def test_previous_texture(self):
+    def test_box_builder_previous_texture(self):
         """Box builder uses the previously selected texture when no face is active."""
         # Load the test image and seed it as the active image
         image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
@@ -94,7 +94,7 @@ class BoxBuilderTest(AnvilTestCase):
                 t['offset_y'], off_y, places=3,
                 msg=f"Face {key} offset_y={t['offset_y']}")
 
-    def test_file_browser_texture_apply(self):
+    def test_box_builder_file_browser_texture_apply(self):
         """Applying a texture via file browser route to a blank box."""
         # Create an empty mesh object and enter edit mode
         mesh = bpy.data.meshes.new("bb_fb_apply")
@@ -187,7 +187,7 @@ class BoxBuilderTest(AnvilTestCase):
                 t['offset_y'], off_y, places=3,
                 msg=f"Face {key} offset_y={t['offset_y']}")
 
-    def test_active_face_texture(self):
+    def test_box_builder_active_face_texture(self):
         """Box builder copies texture from the actively selected face."""
         # Create a vertical plane (textured with dev_orange_wall.png)
         obj = create_vertical_plane("bb_active_face")

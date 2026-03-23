@@ -19,7 +19,7 @@ def _vert_key(v):
 class BoxCutCorridorTest(AnvilTestCase):
     """Integration test: box build → weld invert → cube cut outward → weld corridor."""
 
-    def test_box_invert_cut_corridor(self):
+    def test_box_invert_cut_corridor_weld(self):
         """Build a cube, invert normals, cube cut wall outward, corridor weld.
 
         1. Box builder creates a 1×1×1 cube at (0,0,0)-(1,1,1).

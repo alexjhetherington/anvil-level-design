@@ -95,7 +95,7 @@ def _create_two_face_plane(name, source_scale_u, source_scale_v,
 class TextureApplyTest(AnvilTestCase):
     """Test set_uv_from_other_face UV transfer logic."""
 
-    def test_apply_from_adjacent_face(self):
+    def test_texture_apply_from_adjacent_face(self):
         """Applying from an adjacent face should transfer scale and rotation."""
         obj = _create_two_face_plane("apply_adjacent", 2.5, 1.5, 45.0, 0.1, 0.1)
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
@@ -133,7 +133,7 @@ class TextureApplyTest(AnvilTestCase):
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
 
-    def test_apply_different_params(self):
+    def test_texture_apply_different_params(self):
         """Applying from an adjacent face with different scale/rotation/offset."""
         obj = _create_two_face_plane("apply_params", 3.0, 2.0, 30.0, 0.25, 0.5)
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
@@ -172,7 +172,7 @@ class TextureApplyTest(AnvilTestCase):
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
 
-    def test_apply_cross_object(self):
+    def test_texture_apply_cross_object(self):
         """Cross-object UV transfer while source object is in edit mode."""
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
         mat = _get_material()

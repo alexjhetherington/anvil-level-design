@@ -149,7 +149,7 @@ class UVExtendKeyboardTest(_UVExtendBase):
     handler detects it via window.modal_operators.
     """
 
-    def test_extend_up(self):
+    def test_uv_extend_up(self):
         obj = _setup_plane_and_select_edge(
             "kb_extend_up",
             vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
@@ -162,7 +162,7 @@ class UVExtendKeyboardTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 0.0, 0.0, 0.0)
 
-    def test_extend_down(self):
+    def test_uv_extend_down(self):
         obj = _setup_plane_and_select_edge(
             "kb_extend_down",
             vert_filter=lambda v: abs(v.co.z) < 1e-5,
@@ -175,7 +175,7 @@ class UVExtendKeyboardTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 180.0, 0.0, 0.0)
 
-    def test_extend_left(self):
+    def test_uv_extend_left(self):
         obj = _setup_plane_and_select_edge(
             "kb_extend_left",
             vert_filter=lambda v: abs(v.co.x) < 1e-5,
@@ -188,7 +188,7 @@ class UVExtendKeyboardTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 90.0, 0.0, 0.0)
 
-    def test_extend_right(self):
+    def test_uv_extend_right(self):
         obj = _setup_plane_and_select_edge(
             "kb_extend_right",
             vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,
@@ -263,7 +263,7 @@ class UVExtendToolTest(_UVExtendBase):
         # Yield to let Blender process depsgraph updates / handler callbacks
         yield 0.5
 
-    def test_extend_up(self):
+    def test_uv_extend_up(self):
         obj = _setup_plane_and_select_edge(
             "tool_extend_up",
             vert_filter=lambda v: abs(v.co.z - 1.0) < 1e-5,
@@ -276,7 +276,7 @@ class UVExtendToolTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 0.0, 0.0, 0.0)
 
-    def test_extend_down(self):
+    def test_uv_extend_down(self):
         obj = _setup_plane_and_select_edge(
             "tool_extend_down",
             vert_filter=lambda v: abs(v.co.z) < 1e-5,
@@ -289,7 +289,7 @@ class UVExtendToolTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 180.0, 0.0, 0.0)
 
-    def test_extend_left(self):
+    def test_uv_extend_left(self):
         obj = _setup_plane_and_select_edge(
             "tool_extend_left",
             vert_filter=lambda v: abs(v.co.x) < 1e-5,
@@ -302,7 +302,7 @@ class UVExtendToolTest(_UVExtendBase):
         self._assert_transform(orig2, 0.5, 0.5, 0.0, 0.0, 0.0)
         self._assert_transform(new2, 0.5, 0.5, 90.0, 0.0, 0.0)
 
-    def test_extend_right(self):
+    def test_uv_extend_right(self):
         obj = _setup_plane_and_select_edge(
             "tool_extend_right",
             vert_filter=lambda v: abs(v.co.x - 1.0) < 1e-5,

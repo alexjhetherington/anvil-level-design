@@ -19,7 +19,7 @@ def _face_key(face):
 class CubeCutTest(AnvilTestCase):
     """Test cube cut geometry and UV preservation."""
 
-    def test_through_hole(self):
+    def test_cube_cut_through_hole(self):
         """Cut a hole through a textured cube and verify UVs on remaining faces."""
         obj = create_textured_cube("cc_cube", 1.0, 1.0, face_aligned=True)
 
@@ -156,7 +156,7 @@ class CubeCutTest(AnvilTestCase):
             bpy.ops.object.mode_set(mode='OBJECT')
         obj.data.update()
 
-    def test_through_hole_bridge(self):
+    def test_cube_cut_through_hole_then_bridge(self):
         """Cut a through-hole then bridge the two openings, verify bridged face UVs."""
         obj = create_textured_cube("cc_bridge", 1.0, 1.0, face_aligned=True)
 
@@ -256,7 +256,7 @@ class CubeCutTest(AnvilTestCase):
         self.assertEqual(found_bridged, 4,
                          f"Should find 4 bridged faces, found {found_bridged}")
 
-    def test_edge_aligned_hole(self):
+    def test_cube_cut_edge_aligned_hole(self):
         """Cut a hole where the top of the cut aligns with the top of the cube."""
         obj = create_textured_cube("cc_cube_edge", 1.0, 1.0, face_aligned=True)
 
