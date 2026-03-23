@@ -54,14 +54,29 @@ _force_auto_hotspot = False
 
 # Face orientation overlay tracking for vertex paint / sculpt modes
 _last_tracked_mode = None
-_saved_face_orientation = None  # bool: the state before we forced it on, or None if not saved
 _FACE_ORIENTATION_MODES = {'PAINT_VERTEX', 'SCULPT'}
 _face_orientation_msgbus_owner = object()
 
 
+def _get_saved_face_orientation():
+    """Read persisted face orientation state. Returns bool or None."""
+    val = bpy.context.scene.level_design_props.saved_face_orientation
+    if val == -1:
+        return None
+    return bool(val)
+
+
+def _set_saved_face_orientation(value):
+    """Write persisted face orientation state. Accepts bool or None."""
+    if value is None:
+        bpy.context.scene.level_design_props.saved_face_orientation = -1
+    else:
+        bpy.context.scene.level_design_props.saved_face_orientation = int(value)
+
+
 def _on_object_mode_changed():
     """Msgbus callback when object mode changes. Toggles face orientation overlay."""
-    global _last_tracked_mode, _saved_face_orientation
+    global _last_tracked_mode
     try:
         if not is_level_design_workspace():
             return
@@ -72,28 +87,29 @@ def _on_object_mode_changed():
         now_in = current_mode in _FACE_ORIENTATION_MODES
         _last_tracked_mode = current_mode
         debug_log(f"[FaceOrientation] Mode changed: was_in={was_in} now_in={now_in}")
+        saved = _get_saved_face_orientation()
         if now_in and not was_in:
             for window in bpy.context.window_manager.windows:
                 for area in window.screen.areas:
                     if area.type == 'VIEW_3D':
                         for space in area.spaces:
                             if space.type == 'VIEW_3D':
-                                if _saved_face_orientation is None:
-                                    _saved_face_orientation = space.overlay.show_face_orientation
+                                if saved is None:
+                                    _set_saved_face_orientation(space.overlay.show_face_orientation)
                                 space.overlay.show_face_orientation = True
                         area.tag_redraw()
-            debug_log(f"[FaceOrientation] Enabled (saved={_saved_face_orientation})")
+            debug_log(f"[FaceOrientation] Enabled (saved={_get_saved_face_orientation()})")
         elif was_in and not now_in:
-            if _saved_face_orientation is not None:
+            if saved is not None:
                 for window in bpy.context.window_manager.windows:
                     for area in window.screen.areas:
                         if area.type == 'VIEW_3D':
                             for space in area.spaces:
                                 if space.type == 'VIEW_3D':
-                                    space.overlay.show_face_orientation = _saved_face_orientation
+                                    space.overlay.show_face_orientation = saved
                             area.tag_redraw()
-                debug_log(f"[FaceOrientation] Restored (was={_saved_face_orientation})")
-                _saved_face_orientation = None
+                debug_log(f"[FaceOrientation] Restored (was={saved})")
+                _set_saved_face_orientation(None)
     except Exception:
         pass
 
@@ -2091,7 +2107,7 @@ def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
     global _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph
     global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
-    global _last_tracked_mode, _saved_face_orientation
+    global _last_tracked_mode
 
     # Set up workspaces and scene settings for new (unsaved) files
     reset_specialized_template_flag()
@@ -2112,9 +2128,11 @@ def on_load_post(dummy):
     _last_file_browser_path = None
     # Allow first depsgraph update to set active image from selected face
     _file_loaded_into_edit_depsgraph = True
-    # Reset face orientation tracking
-    _last_tracked_mode = None
-    _saved_face_orientation = None
+    # Restore face orientation mode tracking so transitions are detected after load
+    if _get_saved_face_orientation() is not None:
+        _last_tracked_mode = bpy.context.mode
+    else:
+        _last_tracked_mode = None
     # Use a timer to ensure all UI is ready
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
     # Restart the file browser watcher
@@ -2417,21 +2435,22 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode, _saved_face_orientation
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode
 
     # Clear face orientation msgbus subscription and restore state
     bpy.msgbus.clear_by_owner(_face_orientation_msgbus_owner)
-    if _saved_face_orientation is not None:
+    saved = _get_saved_face_orientation()
+    if saved is not None:
         try:
             for window in bpy.context.window_manager.windows:
                 for area in window.screen.areas:
                     if area.type == 'VIEW_3D':
                         for space in area.spaces:
                             if space.type == 'VIEW_3D':
-                                space.overlay.show_face_orientation = _saved_face_orientation
+                                space.overlay.show_face_orientation = saved
         except Exception:
             pass
-        _saved_face_orientation = None
+        _set_saved_face_orientation(None)
     _last_tracked_mode = None
 
     # Clear msgbus subscriptions

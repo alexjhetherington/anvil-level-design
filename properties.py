@@ -482,6 +482,13 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
+    # Face orientation overlay state saved before forcing it on in vertex paint/sculpt.
+    # -1 = not saved, 0 = was off, 1 = was on
+    saved_face_orientation: IntProperty(
+        name="Saved Face Orientation",
+        default=-1,
+    )
+
     # === Default Material Settings ===
     default_interpolation: EnumProperty(
         name="Default Interpolation",
