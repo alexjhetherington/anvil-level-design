@@ -74,7 +74,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         success, msg = execute_box_builder_object_mode(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            ppm, False,
+            ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(success, msg)
 
@@ -107,7 +107,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
 
@@ -136,7 +136,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
 
@@ -164,7 +164,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), -1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
 
@@ -190,7 +190,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
 
@@ -225,7 +225,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
         face_verts = result[2] if len(result) > 2 else []
@@ -284,7 +284,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
         face_verts = result[2] if len(result) > 2 else []

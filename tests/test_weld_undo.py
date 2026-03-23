@@ -247,7 +247,7 @@ class InvertWeldUndoTest(AnvilTestCase):
         result = execute_box_builder(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(result[0], result[1])
 

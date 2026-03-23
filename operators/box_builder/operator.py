@@ -148,22 +148,18 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
                         local_x, local_y, local_z):
         rv3d = context.region_data
         view_forward = rv3d.view_rotation @ Vector((0, 0, -1))
-        geometric_normal = local_x.cross(local_y)
-        dot = geometric_normal.dot(view_forward)
-        reverse_plane_normal = dot > 0
 
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
-
-        is_box = abs(depth) > 1e-5
 
         if context.mode == 'OBJECT':
             result = geometry.execute_box_builder_object_mode(
                 first_vertex, second_vertex, depth,
                 local_x, local_y, local_z,
-                ppm, reverse_plane_normal
+                ppm, view_forward
             )
-            if result[0] and is_box:
+            is_box = result[0] and result[1] == "Box object created"
+            if is_box:
                 set_weld_from_box_builder_object_mode(context.active_object)
                 props.weld_mode = 'INVERT'
             return result
@@ -172,10 +168,11 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
         result = geometry.execute_box_builder(
             first_vertex, second_vertex, depth,
             local_x, local_y, local_z,
-            obj, ppm, reverse_plane_normal
+            obj, ppm, view_forward
         )
 
-        if result[0] and is_box:
+        is_box = result[0] and result[1] == "Box created"
+        if is_box:
             new_face_verts = result[2] if len(result) > 2 else []
             set_weld_from_box_builder(context, new_face_verts)
 

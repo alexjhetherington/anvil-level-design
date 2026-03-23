@@ -50,7 +50,7 @@ class BoxBuilderTest(AnvilTestCase):
             Vector((1, 0, 0)),
             Vector((0, 0, 1)),
             Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
 
         self.assertTrue(success, msg)
@@ -118,7 +118,7 @@ class BoxBuilderTest(AnvilTestCase):
             Vector((1, 0, 0)),
             Vector((0, 0, 1)),
             Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
         self.assertTrue(success, msg)
 
@@ -216,7 +216,7 @@ class BoxBuilderTest(AnvilTestCase):
             Vector((1, 0, 0)),
             Vector((0, 0, 1)),
             Vector((0, 1, 0)),
-            obj, ppm, False,
+            obj, ppm, Vector((0, -1, 0)),
         )
 
         self.assertTrue(success, msg)

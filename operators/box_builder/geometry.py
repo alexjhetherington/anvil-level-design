@@ -14,7 +14,7 @@ from ...utils import find_material_with_image, create_material_with_image, face_
 
 
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
-                        obj, ppm, reverse_plane_normal):
+                        obj, ppm, view_forward):
     """
     Create a box mesh from the modal draw parameters.
 
@@ -27,7 +27,7 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         local_z: Rectangle's local Z axis (depth direction)
         obj: The active mesh object
         ppm: Pixels per meter setting
-        reverse_plane_normal: If True, zero-depth plane faces -lz instead of +lz
+        view_forward: Camera forward direction (world space), used for plane normal orientation
 
     Returns:
         tuple: (success: bool, message: str)
@@ -59,7 +59,7 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     # Track axis flips for winding correction
     flip_count = 0
     # Detect left-handed axis system (e.g. TOP, BACK, RIGHT ortho views).
-    # Only affects boxes; planes already handle view-facing via reverse_plane_normal.
+    # Only affects boxes; planes handle view-facing via view_forward.
     left_handed = lx.cross(ly).dot(lz) < 0
     if dx < 0:
         dx = -dx
@@ -70,6 +70,9 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         ly = -ly
         flip_count += 1
 
+    # Transform view_forward to object local space for plane normal orientation
+    local_view_forward = (rot @ view_forward).normalized()
+
     # Find active selected face for material/UV source (before creating new geometry)
     source_face = None
     uv_layer = get_render_active_uv_layer(bm, me)
@@ -79,10 +82,17 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         source_face = bm.faces.active
 
     is_zero_depth = abs(local_depth) < 1e-5
+    is_zero_dx = dx < 1e-5
+    is_zero_dy = dy < 1e-5
+    is_plane = is_zero_depth or is_zero_dx or is_zero_dy
 
-    if is_zero_depth:
-        new_faces = _create_plane(bm, local_first, dx, dy, local_depth,
-                                  lx, ly, lz, flip_count, reverse_plane_normal)
+    if is_plane:
+        if is_zero_dx and not is_zero_depth:
+            new_faces = _create_plane(bm, local_first, ly, dy, lz, local_depth, local_view_forward)
+        elif is_zero_dy and not is_zero_depth:
+            new_faces = _create_plane(bm, local_first, lx, dx, lz, local_depth, local_view_forward)
+        else:
+            new_faces = _create_plane(bm, local_first, lx, dx, ly, dy, local_view_forward)
     else:
         box_flip_count = flip_count + (1 if left_handed else 0)
         new_faces = _create_box(bm, local_first, dx, dy, local_depth,
@@ -127,7 +137,7 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
 
     bmesh.update_edit_mesh(me)
 
-    if is_zero_depth:
+    if is_plane:
         return (True, "Plane created", new_face_vert_positions)
     return (True, "Box created", new_face_vert_positions)
 
@@ -185,31 +195,37 @@ def _create_box(bm, origin, dx, dy, depth, lx, ly, lz, flip_count):
     return faces
 
 
-def _create_plane(bm, origin, dx, dy, depth, lx, ly, lz, flip_count, reverse_plane_normal):
-    """Create a single-plane (4-vert) face for zero-depth case.
+def _create_plane(bm, origin, axis1, dim1, axis2, dim2, local_view_forward):
+    """Create a single quad plane facing toward the camera.
 
-    The plane faces toward the camera. The caller determines whether +lz or -lz
-    points toward the camera and sets reverse_plane_normal accordingly.
+    The plane spans axis1*dim1 and axis2*dim2 from origin.
+    Normal is oriented to face the camera (opposite local_view_forward).
+
+    Args:
+        bm: BMesh instance
+        origin: Plane corner position (object-local space)
+        axis1: First spanning axis (normalized, object-local)
+        dim1: Extent along axis1 (signed)
+        axis2: Second spanning axis (normalized, object-local)
+        dim2: Extent along axis2 (signed)
+        local_view_forward: Camera forward direction (object-local space)
 
     Returns:
         list: List containing the single new BMFace
     """
     v0 = bm.verts.new(origin)
-    v1 = bm.verts.new(origin + lx * dx)
-    v2 = bm.verts.new(origin + lx * dx + ly * dy)
-    v3 = bm.verts.new(origin + ly * dy)
+    v1 = bm.verts.new(origin + axis1 * dim1)
+    v2 = bm.verts.new(origin + axis1 * dim1 + axis2 * dim2)
+    v3 = bm.verts.new(origin + axis2 * dim2)
 
-    # Default winding [v0, v1, v2, v3] produces normal in +lz direction.
-    # If reverse_plane_normal is True, lz points away from camera so we reverse
-    # to get -lz (toward camera). Otherwise +lz already faces the camera.
-    if reverse_plane_normal:
-        winding = [v0, v3, v2, v1]  # Normal in -lz
+    # Default winding [v0, v1, v2, v3] produces normal along (axis1*dim1) x (axis2*dim2).
+    # We want the normal to face the camera (opposite to local_view_forward).
+    geometric_normal = (axis1 * dim1).cross(axis2 * dim2)
+
+    if geometric_normal.dot(local_view_forward) > 0:
+        winding = [v0, v3, v2, v1]  # Reverse to face camera
     else:
-        winding = [v0, v1, v2, v3]  # Normal in +lz
-
-    # Odd number of axis flips reverses winding
-    if flip_count % 2 == 1:
-        winding = list(reversed(winding))
+        winding = [v0, v1, v2, v3]  # Already faces camera
 
     try:
         f = bm.faces.new(winding)
@@ -277,7 +293,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
 
 def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
                                     local_x, local_y, local_z,
-                                    ppm, reverse_plane_normal):
+                                    ppm, view_forward):
     """Create a new object with box geometry in object mode.
 
     Object origin is placed at first_vertex; geometry is built relative to it.
@@ -290,7 +306,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         local_y: Rectangle's local Y axis
         local_z: Rectangle's local Z axis (depth direction)
         ppm: Pixels per meter setting
-        reverse_plane_normal: If True, zero-depth plane faces -lz instead of +lz
+        view_forward: Camera forward direction (world space), used for plane normal orientation
 
     Returns:
         tuple: (success: bool, message: str)
@@ -306,7 +322,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
     lz = local_z.copy()
 
     # Detect left-handed axis system (e.g. TOP, BACK, RIGHT ortho views).
-    # Only affects boxes; planes already handle view-facing via reverse_plane_normal.
+    # Only affects boxes; planes handle view-facing via view_forward.
     left_handed = lx.cross(ly).dot(lz) < 0
     if dx < 0:
         dx = -dx
@@ -318,14 +334,21 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         flip_count += 1
 
     is_zero_depth = abs(depth) < 1e-5
+    is_zero_dx = dx < 1e-5
+    is_zero_dy = dy < 1e-5
+    is_plane = is_zero_depth or is_zero_dx or is_zero_dy
 
     # Build geometry in a new bmesh (origin at 0,0,0)
     bm = bmesh.new()
     origin = Vector((0, 0, 0))
 
-    if is_zero_depth:
-        new_faces = _create_plane(bm, origin, dx, dy, depth,
-                                  lx, ly, lz, flip_count, reverse_plane_normal)
+    if is_plane:
+        if is_zero_dx and not is_zero_depth:
+            new_faces = _create_plane(bm, origin, ly, dy, lz, depth, view_forward)
+        elif is_zero_dy and not is_zero_depth:
+            new_faces = _create_plane(bm, origin, lx, dx, lz, depth, view_forward)
+        else:
+            new_faces = _create_plane(bm, origin, lx, dx, ly, dy, view_forward)
     else:
         box_flip_count = flip_count + (1 if left_handed else 0)
         new_faces = _create_box(bm, origin, dx, dy, depth,
@@ -391,6 +414,6 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         bmesh.update_edit_mesh(me)
         bpy.ops.object.mode_set(mode='OBJECT')
 
-    if is_zero_depth:
+    if is_plane:
         return (True, "Plane object created")
     return (True, "Box object created")
