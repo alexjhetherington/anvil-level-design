@@ -284,7 +284,7 @@ For a more convenient experience I recommend you consider adjusting the followin
 * You are unable to set addon keymaps for modal internal hotkeys i.e. 'exit walk view.' For this reason, Anvil manually adjusts user keymaps when required. I aim to do this in a way that does not destroy your existing keymaps.
 * Anvil manages materials for you based on image file names. If you rename an image file or rename a material you may run into issues.
 * The way we run initial addon setup is edge case city. See comments in code.
-* It's not feasible to have paint mode respect backface culling due to the complexity of brush operators. It means you must be 'inside' a room to paint faces you can see, or hide backfaces. Which is additionally annoying (above needing to select them in the first place given we select backface culling) because you cannot select / hide faces in painting modes. I am currently considering forcing face orientation to be on in vertex paint mode, and switching it to the user default when leaving vertex paint mode. Or maybe adding a "hide all hidden-anyway-because-they-are-not-facing-you" faces button 
+* It's not feasible to have paint mode respect backface culling due to the complexity of brush operators. It means you must be 'inside' a room to paint faces you can see, or hide backfaces. Which is additionally annoying (above needing to select them in the first place given we ignore them due to backface culling) because you cannot select / hide faces in painting modes. I'm currently experimenting with forcing face orientation to be on in vertex paint mode. Or maybe adding a "hide all hidden-anyway-because-they-are-not-facing-you" faces button 
 
 ### GLTF / Godot Material Limitations
 

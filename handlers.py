@@ -52,6 +52,67 @@ from .workspace import setup_addon_workspaces, subscribe_splash_watcher, reset_s
 _auto_hotspot_pending = False
 _force_auto_hotspot = False
 
+# Face orientation overlay tracking for vertex paint / sculpt modes
+_last_tracked_mode = None
+_saved_face_orientation = None  # bool: the state before we forced it on, or None if not saved
+_FACE_ORIENTATION_MODES = {'PAINT_VERTEX', 'SCULPT'}
+_face_orientation_msgbus_owner = object()
+
+
+def _on_object_mode_changed():
+    """Msgbus callback when object mode changes. Toggles face orientation overlay."""
+    global _last_tracked_mode, _saved_face_orientation
+    try:
+        if not is_level_design_workspace():
+            return
+        current_mode = bpy.context.mode
+        if current_mode == _last_tracked_mode:
+            return
+        was_in = _last_tracked_mode in _FACE_ORIENTATION_MODES if _last_tracked_mode else False
+        now_in = current_mode in _FACE_ORIENTATION_MODES
+        _last_tracked_mode = current_mode
+        debug_log(f"[FaceOrientation] Mode changed: was_in={was_in} now_in={now_in}")
+        if now_in and not was_in:
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        for space in area.spaces:
+                            if space.type == 'VIEW_3D':
+                                if _saved_face_orientation is None:
+                                    _saved_face_orientation = space.overlay.show_face_orientation
+                                space.overlay.show_face_orientation = True
+                        area.tag_redraw()
+            debug_log(f"[FaceOrientation] Enabled (saved={_saved_face_orientation})")
+        elif was_in and not now_in:
+            if _saved_face_orientation is not None:
+                for window in bpy.context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            for space in area.spaces:
+                                if space.type == 'VIEW_3D':
+                                    space.overlay.show_face_orientation = _saved_face_orientation
+                            area.tag_redraw()
+                debug_log(f"[FaceOrientation] Restored (was={_saved_face_orientation})")
+                _saved_face_orientation = None
+    except Exception:
+        pass
+
+
+def _subscribe_object_mode():
+    """Subscribe to object mode changes via msgbus."""
+    try:
+        bpy.msgbus.subscribe_rna(
+            key=(bpy.types.Object, "mode"),
+            owner=_face_orientation_msgbus_owner,
+            args=(),
+            notify=_on_object_mode_changed,
+            options={'PERSISTENT'},
+        )
+        debug_log("[FaceOrientation] Subscribed to object mode changes")
+    except Exception as e:
+        print(f"Anvil Level Design: Failed to subscribe to object mode changes: {e}", flush=True)
+
+
 # Msgbus subscription owner for unit setting changes
 _msgbus_owner = object()
 
@@ -2030,6 +2091,7 @@ def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
     global _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph
     global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
+    global _last_tracked_mode, _saved_face_orientation
 
     # Set up workspaces and scene settings for new (unsaved) files
     reset_specialized_template_flag()
@@ -2050,14 +2112,18 @@ def on_load_post(dummy):
     _last_file_browser_path = None
     # Allow first depsgraph update to set active image from selected face
     _file_loaded_into_edit_depsgraph = True
+    # Reset face orientation tracking
+    _last_tracked_mode = None
+    _saved_face_orientation = None
     # Use a timer to ensure all UI is ready
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
     # Restart the file browser watcher
     bpy.app.timers.register(start_file_browser_watcher, first_interval=0.2)
     # Disable correct_uv for slide operations
     bpy.app.timers.register(disable_correct_uv_slide, first_interval=0.1)
-    # Re-subscribe to unit settings (msgbus subscriptions are lost on file load)
+    # Re-subscribe to msgbus (subscriptions are lost on file load)
     bpy.app.timers.register(_subscribe_unit_settings, first_interval=0.1)
+    bpy.app.timers.register(_subscribe_object_mode, first_interval=0.1)
     # Clear the file loaded flag after 1 second (fallback if depsgraph doesn't fire)
     bpy.app.timers.register(_clear_file_loaded_flag, first_interval=1.0)
     # Migrate legacy per-object UV lock to per-UV-map settings
@@ -2306,6 +2372,9 @@ def _subscribe_unit_settings():
 def register():
     bpy.utils.register_class(LEVELDESIGN_OT_force_apply_texture)
 
+    # Subscribe to object mode changes for face orientation overlay
+    _subscribe_object_mode()
+
     if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     if on_load_post not in bpy.app.handlers.load_post:
@@ -2348,7 +2417,22 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode, _saved_face_orientation
+
+    # Clear face orientation msgbus subscription and restore state
+    bpy.msgbus.clear_by_owner(_face_orientation_msgbus_owner)
+    if _saved_face_orientation is not None:
+        try:
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        for space in area.spaces:
+                            if space.type == 'VIEW_3D':
+                                space.overlay.show_face_orientation = _saved_face_orientation
+        except Exception:
+            pass
+        _saved_face_orientation = None
+    _last_tracked_mode = None
 
     # Clear msgbus subscriptions
     bpy.msgbus.clear_by_owner(_msgbus_owner)
