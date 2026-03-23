@@ -241,7 +241,7 @@ def _apply_auto_hotspots():
     bpy.app.timers.register(_apply_auto_hotspots_deferred, first_interval=0.1)
 
 
-def _get_best_neighbor_face(face, excluded_faces, id_layer):
+def _get_best_neighbor_face(face, excluded_faces, id_layer, allow_fallback=True):
     """Find the best neighboring face to use as UV source.
 
     Priority 1: Prefer neighbors facing a similar direction (positive normal dot product).
@@ -251,7 +251,7 @@ def _get_best_neighbor_face(face, excluded_faces, id_layer):
                  (i.e. the face this one was most likely split from).
 
     Falls back to negative-dot-product neighbors (with sideways scoring) if
-    no similar-facing neighbor exists.
+    no similar-facing neighbor exists and allow_fallback is True.
     """
     best_similar = None
     best_similar_score = -1
@@ -293,7 +293,9 @@ def _get_best_neighbor_face(face, excluded_faces, id_layer):
                     best_fallback_score = sideways_score
                     best_fallback = linked_face
 
-    return best_similar if best_similar else best_fallback
+    if best_similar:
+        return best_similar
+    return best_fallback if allow_fallback else None
 
 
 def _project_new_faces(context, bm):
@@ -561,6 +563,12 @@ def _project_new_faces(context, bm):
     projected_count = len(coplanar_reproject)
     remaining = sorted(affected,
                        key=lambda f: f.calc_center_median().length_squared)
+    # Two-phase wavefront: first only use similar-direction sources (positive
+    # dot product), then allow fallback sources.  This prevents interior faces
+    # (e.g. middle bevel segments) from picking a perpendicular end-cap as
+    # source when a better source would become available after an outer
+    # segment is projected from an adjacent wall/floor.
+    allow_fallback = False
     made_progress = True
     while made_progress:
         made_progress = False
@@ -569,7 +577,8 @@ def _project_new_faces(context, bm):
             if face.calc_area() < 1e-8:
                 continue
 
-            source_face = _get_best_neighbor_face(face, excluded, id_layer)
+            source_face = _get_best_neighbor_face(face, excluded, id_layer,
+                                                  allow_fallback)
 
             if not source_face:
                 still_remaining.append(face)
@@ -601,6 +610,10 @@ def _project_new_faces(context, bm):
             made_progress = True
 
         remaining = still_remaining
+        # If no progress was made without fallbacks, enable them and retry
+        if not made_progress and remaining and not allow_fallback:
+            allow_fallback = True
+            made_progress = True
 
     if projected_count > 0:
         bmesh.update_edit_mesh(me)

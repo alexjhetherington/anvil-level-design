@@ -267,7 +267,7 @@ class BridgeBevelCorridorTest(AnvilTestCase):
             bmesh.update_edit_mesh(obj.data)
 
         if errors:
-            self.fail(f"{len(failed_faces)} face(s) with wrong UVs:\n"
+            self.fail(f"[2-edge] {len(failed_faces)} face(s) with wrong UVs:\n"
                       + "\n".join(errors))
 
     def test_bridge_and_bevel_corridor_1_segment(self):
@@ -898,6 +898,19 @@ class BridgeBevelCorridorTest(AnvilTestCase):
         )
         assert count == 1, f"Expected 1 top-right corridor edge, got {count}"
 
+    def _select_single_bottom_edge(self, obj):
+        """Select only the LEFT bottom corridor edge (x=0.25, z=0.25)."""
+        bm = bmesh.from_edit_mesh(obj.data)
+        count = _select_edges_by_filter(
+            bm, obj.data,
+            edge_filter=lambda e: (
+                all(abs(v.co.z - 0.25) < 0.05 for v in e.verts)
+                and all(abs(v.co.x - 0.25) < 0.05 for v in e.verts)
+                and abs(e.verts[0].co.y - e.verts[1].co.y) > 0.1
+            ),
+        )
+        assert count == 1, f"Expected 1 bottom-left corridor edge, got {count}"
+
     def _dump_face_transforms(self, obj):
         """Print face transforms for visual inspection."""
         bm = bmesh.from_edit_mesh(obj.data)
@@ -1018,5 +1031,26 @@ class BridgeBevelCorridorTest(AnvilTestCase):
             bmesh.update_edit_mesh(obj.data)
 
         if errors:
-            self.fail(f"{len(failed_faces)} face(s) with wrong UVs:\n"
+            self.fail(f"[1-edge] {len(failed_faces)} face(s) with wrong UVs:\n"
                       + "\n".join(errors))
+
+    def test_single_edge_bevel_3_segments_noninteractive(self):
+        """Non-interactive bevel of ONE corridor edge (bottom), 3 segments.
+
+        Generates reference transforms for the interactive 3-segment test.
+        """
+        obj, ctx = self._setup_corridor("1e3s_api")
+        yield 0.5
+        self._select_single_bottom_edge(obj)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.bevel(
+                offset=0.1,
+                offset_pct=0,
+                segments=3,
+                affect='EDGES',
+            )
+
+        yield 0.5
+        self._dump_face_transforms(obj)
+
