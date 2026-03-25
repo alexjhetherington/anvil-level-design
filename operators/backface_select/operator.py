@@ -536,6 +536,53 @@ def _matrices_equal(a, b, epsilon=1e-4):
     return True
 
 
+# Screen-space pixel threshold for clicking non-mesh objects
+_OBJECT_PICK_THRESHOLD_PX = 20
+
+
+def _find_non_mesh_object_at_cursor(context, region, rv3d, mouse_2d, ray_origin, view_vector):
+    """Find the nearest visible non-mesh object whose origin is close to the cursor.
+
+    Projects each non-mesh object's world origin to screen space and picks the
+    closest one within _OBJECT_PICK_THRESHOLD_PX.
+
+    Returns (object, depth) or (None, float('inf')).
+    Depth is distance along the view ray from the camera.
+    """
+    best_obj = None
+    best_screen_dist = float('inf')
+    best_depth = float('inf')
+
+    for obj in context.view_layer.objects:
+        if obj.type == 'MESH':
+            continue
+        if obj.hide_get():
+            continue
+        if not obj.visible_get():
+            continue
+
+        screen_co = view3d_utils.location_3d_to_region_2d(region, rv3d, obj.matrix_world.translation)
+        if screen_co is None:
+            continue
+
+        screen_dist = (mouse_2d - screen_co).length
+        if screen_dist > _OBJECT_PICK_THRESHOLD_PX:
+            continue
+
+        # Compute depth along the view ray
+        to_obj = obj.matrix_world.translation - ray_origin
+        depth = to_obj.dot(view_vector)
+        if depth < 0:
+            continue
+
+        if screen_dist < best_screen_dist:
+            best_screen_dist = screen_dist
+            best_obj = obj
+            best_depth = depth
+
+    return best_obj, best_depth
+
+
 class LEVELDESIGN_OT_backface_object_select(Operator):
     """Select objects through backface-culled faces"""
     bl_idname = "leveldesign.backface_object_select"
@@ -559,6 +606,7 @@ class LEVELDESIGN_OT_backface_object_select(Operator):
             return {'PASS_THROUGH'}
 
         coord = (event.mouse_region_x, event.mouse_region_y)
+        mouse_2d = Vector((float(coord[0]), float(coord[1])))
         view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
         ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
 
@@ -567,12 +615,28 @@ class LEVELDESIGN_OT_backface_object_select(Operator):
             depsgraph, context.scene, ray_origin, view_vector, max_iterations=64
         )
 
-        if not hit:
+        # Also check for non-mesh objects (lights, cameras, empties, etc.)
+        non_mesh_obj, non_mesh_depth = _find_non_mesh_object_at_cursor(
+            context, region, rv3d, mouse_2d, ray_origin, view_vector
+        )
+
+        # Decide which hit wins
+        select_obj = None
+        if hit and non_mesh_obj is not None:
+            mesh_depth = (location - ray_origin).dot(view_vector)
+            if non_mesh_depth < mesh_depth:
+                select_obj = non_mesh_obj
+            else:
+                select_obj = _resolve_select_target(depsgraph, obj, matrix)
+        elif hit:
+            select_obj = _resolve_select_target(depsgraph, obj, matrix)
+        elif non_mesh_obj is not None:
+            select_obj = non_mesh_obj
+
+        if select_obj is None:
             if not self.extend:
                 bpy.ops.object.select_all(action='DESELECT')
             return {'FINISHED'}
-
-        select_obj = _resolve_select_target(depsgraph, obj, matrix)
 
         if not self.extend:
             bpy.ops.object.select_all(action='DESELECT')

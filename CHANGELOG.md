@@ -7,6 +7,7 @@
 - Undoing does not clear previously selected image
 - Entering vertex paint enables face orientation (and leaving vertex paint mode returns to the previous value)
 - Fix cube cut triangulation UV issue
+- Backface respecting selection can select non mesh objects
 
 ## 1.4.5
 - Fix various bevel UV issues
