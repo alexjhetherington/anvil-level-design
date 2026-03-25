@@ -6,6 +6,7 @@
 - Box build with 0 height and abs(depth) > 0 creates a plane (not a thin box)
 - Undoing does not clear previously selected image
 - Entering vertex paint enables face orientation (and leaving vertex paint mode returns to the previous value)
+- Fix cube cut triangulation UV issue
 
 ## 1.4.5
 - Fix various bevel UV issues

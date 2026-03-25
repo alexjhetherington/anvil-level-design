@@ -563,6 +563,22 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     if faces_to_quadrilate:
         debug_log(f"[CubeCut] === STEP 6: Quadrilating {len(faces_to_quadrilate)} n-gon faces ===")
         bm.normal_update()
+
+        # Capture UV projections and vertex sets before triangulation destroys the n-gons.
+        # After join_triangles, a resulting face may span two original n-gons
+        # (e.g. merging triangles across a shared edge). We re-project its UVs
+        # from the original n-gon whose vertices contain all of the result's vertices.
+        uv_layer = bm.loops.layers.uv.active
+        all_layers = get_all_uv_layers(bm, me)
+        ngon_uv_data = []  # list of (vert_set, {layer_name: proj}, material_index)
+        for face in faces_to_quadrilate:
+            projections = {}
+            for layer in all_layers:
+                proj = compute_uv_projection_from_face(face, layer)
+                if proj is not None:
+                    projections[layer.name] = proj
+            ngon_uv_data.append((set(face.verts), projections, face.material_index))
+
         # Triangulate the n-gons first
         result = bmesh.ops.triangulate(bm, faces=faces_to_quadrilate)
         new_tris = result['faces']
@@ -577,6 +593,36 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
                 angle_shape_threshold=3.14159  # ~180 degrees - allow any shape
             )
             debug_log(f"[CubeCut] Joined triangles into quads where possible")
+
+        # Re-project UVs on faces whose vertices span multiple original n-gons.
+        # Collect all faces that now exist in the n-gon vertex regions.
+        # A face is a "result" of step 6 if all its verts belong to the union
+        # of n-gon vert sets. Among those, only fix faces that span multiple
+        # original n-gons (cross-boundary joins).
+        all_ngon_verts = set()
+        for ngon_verts, _, _ in ngon_uv_data:
+            all_ngon_verts |= ngon_verts
+
+        for face in bm.faces:
+            if not face.is_valid:
+                continue
+            face_verts = set(face.verts)
+            if not face_verts <= all_ngon_verts:
+                continue  # Has verts outside all n-gons, not a step 6 result
+            # Find which original n-gon(s) contain this face's vertices
+            containing = [data for data in ngon_uv_data if face_verts <= data[0]]
+            if len(containing) >= 1:
+                continue  # Entirely within one n-gon, UVs are fine
+            # Face spans multiple n-gons - use the first n-gon with overlap
+            for ngon_verts, projections, mat_idx in ngon_uv_data:
+                if face_verts & ngon_verts:
+                    for layer_name, proj in projections.items():
+                        layer = bm.loops.layers.uv.get(layer_name)
+                        if layer is not None:
+                            u_axis, v_axis, origin_uv, origin_pos, source_normal = proj
+                            apply_uv_projection_to_face(face, layer, u_axis, v_axis, origin_uv, origin_pos, source_normal)
+                    debug_log(f"[CubeCut] Re-projected UVs on cross-boundary face with {len(face.verts)} verts")
+                    break
 
     # === STEP 7: Cleanup ===
     # Remove loose edges (edges not connected to any face)

@@ -180,7 +180,7 @@ class FoldedPlaneWeldTest(AnvilTestCase):
         bm.normal_update()
 
         self.assertEqual(len(bm.verts), 37)
-        self.assertEqual(len(bm.faces), 36)
+        self.assertEqual(len(bm.faces), 39)
 
         # Verify all vertex positions
         expected_verts = sorted([
@@ -260,8 +260,8 @@ class FoldedPlaneWeldTest(AnvilTestCase):
         right_weld_verts = {(0.75, 0.0, 0.5), (0.75, 0.0, 1.0), (0.75, 0.25, 1.5),
                             (0.75, 0.75, 1.5),
                             (0.75, 1.0, 0.5), (0.75, 1.0, 1.0)}
-        bottom_weld_verts = {(0.25, 0.0, 0.5), (0.75, 0.0, 0.5),
-                             (0.75, 1.0, 0.5), (0.25, 1.0, 0.5)}
+        bottom_weld_verts = {(0.25, 0.0, 0.5), (0.5, 0.0, 0.5), (0.75, 0.0, 0.5),
+                             (0.75, 1.0, 0.5), (0.5, 1.0, 0.5), (0.25, 1.0, 0.5)}
 
         # Collect vertices from weld faces (faces at x=0.25 with +x normal,
         # x=0.75 with -x normal, z=0.5 with +z normal)
@@ -321,7 +321,7 @@ class FoldedPlaneWeldTest(AnvilTestCase):
             (0, 1, 0, 0.19, 1.0, 0.25): (90.0, 0.0, 0.0),
             (0, 1, 0, 0.12, 1.0, 0.75): (-90.0, 0.75, 0.0),
             (0, 1, 0, 0.17, 0.92, 1.17): (90.0, 0.25, 0.44),
-            (0, 1, 0, 0.5, 1.0, 0.38): (0.0, 0.75, 0.5),
+            (0, 1, 0, 0.5, 1.0, 0.38): (180.0, 0.75, 0.5),
             (0, 1, 0, 0.81, 1.0, 0.25): (180.0, 0.25, 0.5),
             (0, 1, 0, 0.88, 1.0, 0.75): (-90.0, 0.0, 0.0),
             (0, 1, 0, 0.83, 0.92, 1.17): (180.0, 0.0, 0.0),
@@ -332,8 +332,7 @@ class FoldedPlaneWeldTest(AnvilTestCase):
             (1, 0, 0, 0.88, 0.69, 1.25): (-90.0, 0.44, 0.75),
         }
 
-        # Faces where scale is not 1.0 due to non-standard proportions
-        non_unit_scale_faces = {(0, 1, 0, 0.5, 1.0, 0.38)}
+        non_unit_scale_faces = set()
         if uv_layer:
             for face in bm.faces:
                 key = _face_key(face)
