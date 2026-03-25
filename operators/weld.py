@@ -40,6 +40,7 @@ _CUBOID_LAYERS = [
     "_aw_lyx", "_aw_lyy", "_aw_lyz",   # cuboid local_y
     "_aw_cdx", "_aw_cdy",              # cuboid dx, dy
 ]
+_COPLANAR_LAYER = "_aw_copl"  # int on verts — bitmask of blocked side planes
 
 # Mesh custom property prefix (object mode only)
 _AW = "_aw_"
@@ -63,7 +64,7 @@ _STR_TO_MODE = {'NONE': 0, 'BRIDGE': 1, 'CORRIDOR': 2, 'INVERT': 3, 'FOLDED_PLAN
 # ---------------------------------------------------------------------------
 
 def _set_weld_on_bmesh(bm, mode, depth, direction, back_plane_offset,
-                       box_faces, cuboid_params):
+                       box_faces, cuboid_params, coplanar_blocked):
     """Store weld state in BMesh custom data layers."""
     # Collect indices from saved refs BEFORE creating layers, because
     # adding a new layer can invalidate existing BMFace/BMEdge pointers.
@@ -111,16 +112,25 @@ def _set_weld_on_bmesh(bm, mode, depth, direction, back_plane_offset,
         for layer, val in zip(cuboid_layers, values):
             v0[layer] = val
 
+    # Store coplanar blocked bitmask (FOLDED_PLANE mode)
+    if coplanar_blocked is not None:
+        copl_layer = (bm.verts.layers.int.get(_COPLANAR_LAYER)
+                      or bm.verts.layers.int.new(_COPLANAR_LAYER))
+        bm.verts.ensure_lookup_table()
+        bm.verts[0][copl_layer] = coplanar_blocked
+
 
 def _get_weld_from_bmesh(bm):
     """Read weld parameters from BMesh layers.
 
-    Returns (mode_str, depth, direction_tuple, back_plane_offset, cuboid_params).
+    Returns (mode_str, depth, direction_tuple, back_plane_offset, cuboid_params,
+    coplanar_blocked).
     cuboid_params is (origin, local_x, local_y, cdx, cdy) or None.
+    coplanar_blocked is an int bitmask or 0.
     """
     mode_layer = bm.verts.layers.int.get(_MODE_LAYER)
     if mode_layer is None:
-        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0, None
+        return 'NONE', 0.0, (0.0, 0.0, 0.0), 0.0, None, 0
 
     bm.verts.ensure_lookup_table()
     v0 = bm.verts[0]
@@ -157,7 +167,13 @@ def _get_weld_from_bmesh(bm):
                 values[10],                                   # cdy
             )
 
-    return mode, depth, direction, bpo, cuboid_params
+    # Read coplanar blocked bitmask
+    coplanar_blocked = 0
+    copl_layer = bm.verts.layers.int.get(_COPLANAR_LAYER)
+    if copl_layer is not None:
+        coplanar_blocked = v0[copl_layer]
+
+    return mode, depth, direction, bpo, cuboid_params, coplanar_blocked
 
 
 def clear_weld_on_bmesh(bm):
@@ -256,6 +272,79 @@ def _count_edge_groups(bm):
 _FOLDED_EPSILON = 1e-4
 
 
+def _ranges_overlap(a_min, a_max, b_min, b_max):
+    """Return True if 1D ranges [a_min, a_max] and [b_min, b_max] overlap."""
+    return a_min < b_max + _FOLDED_EPSILON and b_min < a_max + _FOLDED_EPSILON
+
+
+def snapshot_coplanar_sides(bm, cuboid_params):
+    """Snapshot which cuboid side planes have overlapping coplanar mesh faces.
+
+    Must be called BEFORE the cube cut modifies geometry.
+    Returns an int bitmask: bit i set means side i is blocked.
+
+    Side indices match the order in _execute_folded_plane's side_faces_def:
+      0: local_x = 0      (left)
+      1: local_x = cdx    (right)
+      2: local_y = 0      (bottom)
+      3: local_y = cdy    (top)
+    """
+    origin, local_x, local_y, cdx, cdy = cuboid_params
+    local_z = local_x.cross(local_y).normalized()
+
+    # Side definitions: (filter_axis, offset, inward_normal, u_axis, w_axis)
+    side_faces_def = [
+        (local_x, 0.0, local_x, local_y, local_z),
+        (local_x, cdx, -local_x, local_y, local_z),
+        (local_y, 0.0, local_y, local_x, local_z),
+        (local_y, cdy, -local_y, local_x, local_z),
+    ]
+
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
+    blocked = 0
+
+    for side_idx, (filter_axis, offset_val, inward_normal, u_axis, w_axis) in enumerate(side_faces_def):
+        # Compute the cuboid's footprint on this plane in (u, w) space
+        # The cuboid spans [0, u_extent] x [0, w_extent] on each side plane
+        # (u_axis and w_axis are the two remaining axes)
+        u_extent_vec = u_axis * (cdx if u_axis == local_x or u_axis == -local_x else cdy)
+        w_extent = None  # depth extent is unbounded for the snapshot
+
+        # Actually we just need the cuboid u-range on this plane
+        # u_axis is one of local_x or local_y, w_axis is local_z (depth)
+        if abs(u_axis.dot(local_x)) > 0.5:
+            cu_extent = cdx
+        else:
+            cu_extent = cdy
+
+        cuboid_u_min = 0.0
+        cuboid_u_max = cu_extent
+
+        for f in bm.faces:
+            if abs(abs(f.normal.dot(inward_normal)) - 1.0) >= _FOLDED_EPSILON:
+                continue
+            if not all(abs((v.co - origin).dot(filter_axis) - offset_val)
+                       < _FOLDED_EPSILON for v in f.verts):
+                continue
+
+            # Face is coplanar with this side plane — check u-axis overlap
+            face_us = [(v.co - origin).dot(u_axis) for v in f.verts]
+            face_ws = [(v.co - origin).dot(w_axis) for v in f.verts]
+            face_u_min, face_u_max = min(face_us), max(face_us)
+            face_w_min, face_w_max = min(face_ws), max(face_ws)
+
+            # The cuboid extends the full depth along w_axis (local_z),
+            # so only check u-axis overlap
+            if _ranges_overlap(cuboid_u_min, cuboid_u_max, face_u_min, face_u_max):
+                blocked |= (1 << side_idx)
+                debug_log(f"[FoldedPlane] Side {side_idx} blocked by pre-existing "
+                          f"coplanar face (u={face_u_min:.3f}..{face_u_max:.3f})")
+                break
+
+    return blocked
+
+
 def _check_folded_plane(selected_verts, cuboid_params):
     """Check if at least 2 selected vertices lie on any single depth edge.
 
@@ -310,11 +399,13 @@ def _derive_weld_mode(bm, depth, cuboid_params):
 # ---------------------------------------------------------------------------
 
 def set_weld_from_edge_selection(context, depth, direction, back_plane_offset,
-                                 first_vertex, second_vertex, local_x, local_y):
+                                 first_vertex, second_vertex, local_x, local_y,
+                                 coplanar_blocked):
     """Analyze current edge selection and store weld state in BMesh layers.
 
     Called from cube_cut after successful execution.
     first_vertex, second_vertex, local_x, local_y are in world space.
+    coplanar_blocked is an int bitmask from snapshot_coplanar_sides().
     """
     global _weld_just_stored
 
@@ -357,8 +448,9 @@ def set_weld_from_edge_selection(context, depth, direction, back_plane_offset,
     dir_tuple = tuple(direction)
 
     store_cuboid = cuboid_params_local if mode == 'FOLDED_PLANE' else None
+    store_coplanar = coplanar_blocked if mode == 'FOLDED_PLANE' else None
     _set_weld_on_bmesh(bm, mode, effective_depth, dir_tuple, back_plane_offset,
-                       None, store_cuboid)
+                       None, store_cuboid, store_coplanar)
     _weld_just_stored = True
     bmesh.update_edit_mesh(me)
 
@@ -405,7 +497,7 @@ def set_weld_from_box_builder(context, new_face_vert_positions):
     else:
         mode = 'NONE'
 
-    _set_weld_on_bmesh(bm, mode, 0.0, (0.0, 0.0, 0.0), 0.0, box_faces, None)
+    _set_weld_on_bmesh(bm, mode, 0.0, (0.0, 0.0, 0.0), 0.0, box_faces, None, None)
     _weld_just_stored = True
     bmesh.update_edit_mesh(me)
 
@@ -451,7 +543,7 @@ def sync_weld_props(context, bm):
 
     if bm is not None:
         # Edit mode: read from BMesh layers
-        mode, depth, direction, bpo, _cuboid = _get_weld_from_bmesh(bm)
+        mode, depth, direction, bpo, _cuboid, _copl = _get_weld_from_bmesh(bm)
 
         if mode == 'NONE':
             if props.weld_mode != 'NONE':
@@ -623,11 +715,11 @@ class MESH_OT_context_weld(bpy.types.Operator):
                 return self._execute_invert(context, invert_box_faces)
             elif weld_mode == 'FOLDED_PLANE':
                 bm = bmesh.from_edit_mesh(context.active_object.data)
-                _mode, _depth, _dir, _bpo, cuboid_params = _get_weld_from_bmesh(bm)
+                _mode, _depth, _dir, _bpo, cuboid_params, coplanar_blocked = _get_weld_from_bmesh(bm)
                 if cuboid_params is None:
                     self.report({'ERROR'}, "Missing cuboid parameters")
                     return {'CANCELLED'}
-                return self._execute_folded_plane(context, cuboid_params)
+                return self._execute_folded_plane(context, cuboid_params, coplanar_blocked)
         finally:
             _weld_op_running = False
 
@@ -869,7 +961,7 @@ class MESH_OT_context_weld(bpy.types.Operator):
         return {'FINISHED'}
 
 
-    def _execute_folded_plane(self, context, cuboid_params):
+    def _execute_folded_plane(self, context, cuboid_params, coplanar_blocked):
         """Create faces on cuboid side planes from the selected boundary edges."""
         debug_log("[FoldedPlane] Execute folded plane weld")
         obj = context.active_object
@@ -945,13 +1037,19 @@ class MESH_OT_context_weld(bpy.types.Operator):
             all_relevant_verts.update(e.verts)
         created_faces = []
 
-        for filter_axis, offset_val, inward_normal, u_axis, w_axis in side_faces_def:
+        for side_idx, (filter_axis, offset_val, inward_normal, u_axis, w_axis) in enumerate(side_faces_def):
             # Find vertices on this plane
             plane_verts = [v for v in all_relevant_verts
                           if abs((v.co - origin).dot(filter_axis) - offset_val)
                           < _FOLDED_EPSILON]
 
             if len(plane_verts) < 3:
+                continue
+
+            # Skip sides that had overlapping coplanar faces before the cut
+            if coplanar_blocked & (1 << side_idx):
+                debug_log(f"[FoldedPlane] Skipping side {side_idx} (axis={filter_axis}, "
+                          f"offset={offset_val}): blocked by pre-cut coplanar face")
                 continue
 
             # Project to 2D (u, w) on the plane
@@ -990,20 +1088,6 @@ class MESH_OT_context_weld(bpy.types.Operator):
                         polygon.append(v)
             if len(polygon) > 1 and polygon[-1] == polygon[0]:
                 polygon.pop()
-
-            # Remove collinear intermediate vertices to avoid degenerate
-            # triangles during triangulation.
-            cleaned = []
-            n_poly = len(polygon)
-            for i in range(n_poly):
-                prev_v = polygon[(i - 1) % n_poly]
-                curr_v = polygon[i]
-                next_v = polygon[(i + 1) % n_poly]
-                edge_a = (curr_v.co - prev_v.co).normalized()
-                edge_b = (next_v.co - curr_v.co).normalized()
-                if edge_a.cross(edge_b).length > _FOLDED_EPSILON:
-                    cleaned.append(curr_v)
-            polygon = cleaned
 
             if len(polygon) < 3:
                 continue

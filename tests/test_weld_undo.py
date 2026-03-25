@@ -62,7 +62,8 @@ class CorridorWeldUndoTest(AnvilTestCase):
         # Set weld state (stored in BMesh layers)
         set_weld_from_edge_selection(bpy.context, 0.5, (0, 0, -1), -0.5,
                                      Vector((0, 0, 0)), Vector((1, 0, 1)),
-                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)),
+                                     0)
 
         yield 0.5
 
@@ -169,7 +170,8 @@ class BridgeWeldUndoTest(AnvilTestCase):
 
         set_weld_from_edge_selection(bpy.context, 1.0, (0, 1, 0), 1.0,
                                      Vector((0, 0, 0)), Vector((1, 0, 1)),
-                                     Vector((1, 0, 0)), Vector((0, 0, 1)))
+                                     Vector((1, 0, 0)), Vector((0, 0, 1)),
+                                     0)
 
         yield 0.5
 

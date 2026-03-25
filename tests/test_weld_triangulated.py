@@ -115,6 +115,7 @@ def _execute_cube_cut_and_set_weld(test_case, ctx):
     set_weld_from_edge_selection(
         bpy.context, abs(_DEPTH), extrude_dir, back_plane_offset,
         _FIRST_VERTEX, _SECOND_VERTEX, _LOCAL_X, _LOCAL_Y,
+        0,
     )
 
     return success

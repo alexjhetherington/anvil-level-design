@@ -9,7 +9,7 @@ import bpy
 from . import geometry
 from ..modal_draw.base_operator import ModalDrawBase, MIN_RECTANGLE_SIZE
 from ...utils import is_level_design_workspace
-from ..weld import set_weld_from_edge_selection
+from ..weld import set_weld_from_edge_selection, snapshot_coplanar_sides
 
 
 class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
@@ -72,6 +72,29 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
                         local_x, local_y, local_z):
+        # Snapshot coplanar faces BEFORE the cut modifies geometry
+        from mathutils import Vector
+        obj = context.active_object
+        coplanar_blocked = 0
+        if obj and obj.type == 'MESH':
+            import bmesh as _bmesh
+            bm_snap = _bmesh.from_edit_mesh(obj.data)
+            w2l = obj.matrix_world.inverted()
+            w2l_rot = w2l.to_3x3()
+            snap_origin = w2l @ first_vertex
+            snap_lx = (w2l_rot @ Vector(local_x)).normalized()
+            snap_ly = (w2l_rot @ Vector(local_y)).normalized()
+            diff_world = Vector(second_vertex) - Vector(first_vertex)
+            snap_cdx = abs(diff_world.dot(Vector(local_x))) * (w2l_rot @ Vector(local_x)).length
+            snap_cdy = abs(diff_world.dot(Vector(local_y))) * (w2l_rot @ Vector(local_y)).length
+            snap_diff = (w2l @ Vector(second_vertex)) - snap_origin
+            if snap_diff.dot(snap_lx) < 0:
+                snap_lx = -snap_lx
+            if snap_diff.dot(snap_ly) < 0:
+                snap_ly = -snap_ly
+            coplanar_blocked = snapshot_coplanar_sides(
+                bm_snap, (snap_origin, snap_lx, snap_ly, snap_cdx, snap_cdy))
+
         result = geometry.execute_cube_cut(
             context, first_vertex, second_vertex, depth,
             local_x, local_y, local_z
@@ -91,6 +114,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
             set_weld_from_edge_selection(
                 context, abs(depth), extrude_dir, back_plane_offset,
                 first_vertex, second_vertex, local_x, local_y,
+                coplanar_blocked,
             )
 
         return result
