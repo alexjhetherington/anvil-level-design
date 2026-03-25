@@ -932,59 +932,83 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         # Step 2: Create faces on each cuboid side face (not front/back)
         # Side faces are: left (x=0), right (x=cdx), bottom (y=0), top (y=cdy)
+        # Each entry: (filter_axis, offset, inward_normal, u_axis, w_axis)
         side_faces_def = [
-            (local_x, 0.0, local_x.copy()),        # left: dot(local_x)=0, inward = +local_x
-            (local_x, cdx, -local_x.copy()),        # right: dot(local_x)=cdx, inward = -local_x
-            (local_y, 0.0, local_y.copy()),         # bottom: dot(local_y)=0, inward = +local_y
-            (local_y, cdy, -local_y.copy()),        # top: dot(local_y)=cdy, inward = -local_y
+            (local_x, 0.0, local_x, local_y, local_z),
+            (local_x, cdx, -local_x, local_y, local_z),
+            (local_y, 0.0, local_y, local_x, local_z),
+            (local_y, cdy, -local_y, local_x, local_z),
         ]
 
-        all_relevant_edges = set(selected_edges) | set(new_edges)
+        all_relevant_verts = set(selected_verts)
+        for e in new_edges:
+            all_relevant_verts.update(e.verts)
         created_faces = []
 
-        for axis, offset_val, inward_normal in side_faces_def:
-            # Find edges on this plane
-            face_edges = []
-            for e in all_relevant_edges:
-                v0_offset = (e.verts[0].co - origin).dot(axis)
-                v1_offset = (e.verts[1].co - origin).dot(axis)
-                if (abs(v0_offset - offset_val) < _FOLDED_EPSILON and
-                        abs(v1_offset - offset_val) < _FOLDED_EPSILON):
-                    face_edges.append(e)
+        for filter_axis, offset_val, inward_normal, u_axis, w_axis in side_faces_def:
+            # Find vertices on this plane
+            plane_verts = [v for v in all_relevant_verts
+                          if abs((v.co - origin).dot(filter_axis) - offset_val)
+                          < _FOLDED_EPSILON]
 
-            if len(face_edges) < 3:
+            if len(plane_verts) < 3:
                 continue
 
-            # Trace edge loop to get vertex order
-            vert_adj = {}
-            for e in face_edges:
-                v0, v1 = e.verts
-                vert_adj.setdefault(v0, []).append(v1)
-                vert_adj.setdefault(v1, []).append(v0)
+            # Project to 2D (u, w) on the plane
+            vert_uw = {}
+            for v in plane_verts:
+                off = v.co - origin
+                vert_uw[v] = (off.dot(u_axis), off.dot(w_axis))
 
-            # Start from any vertex and trace the loop
-            start_v = face_edges[0].verts[0]
-            polygon = [start_v]
-            visited = {start_v}
-            current = start_v
+            us = [c[0] for c in vert_uw.values()]
+            ws = [c[1] for c in vert_uw.values()]
+            u_min, u_max = min(us), max(us)
+            w_min, w_max = min(ws), max(ws)
 
-            while True:
-                neighbors = vert_adj.get(current, [])
-                next_v = None
-                for n in neighbors:
-                    if n not in visited:
-                        next_v = n
-                        break
-                if next_v is None:
-                    break
-                polygon.append(next_v)
-                visited.add(next_v)
-                current = next_v
+            eps = _FOLDED_EPSILON
+
+            # Classify vertices onto rectangle perimeter edges and sort.
+            # Walk order: bottom → right → top → left.
+            bottom = sorted(
+                [v for v in plane_verts if abs(vert_uw[v][1] - w_min) < eps],
+                key=lambda v: vert_uw[v][0])
+            right_side = sorted(
+                [v for v in plane_verts if abs(vert_uw[v][0] - u_max) < eps],
+                key=lambda v: vert_uw[v][1])
+            top = sorted(
+                [v for v in plane_verts if abs(vert_uw[v][1] - w_max) < eps],
+                key=lambda v: -vert_uw[v][0])
+            left_side = sorted(
+                [v for v in plane_verts if abs(vert_uw[v][0] - u_min) < eps],
+                key=lambda v: -vert_uw[v][1])
+
+            # Walk perimeter, deduplicating at shared corners
+            polygon = list(bottom)
+            for side_verts in (right_side, top, left_side):
+                for v in side_verts:
+                    if v != polygon[-1]:
+                        polygon.append(v)
+            if len(polygon) > 1 and polygon[-1] == polygon[0]:
+                polygon.pop()
+
+            # Remove collinear intermediate vertices to avoid degenerate
+            # triangles during triangulation.
+            cleaned = []
+            n_poly = len(polygon)
+            for i in range(n_poly):
+                prev_v = polygon[(i - 1) % n_poly]
+                curr_v = polygon[i]
+                next_v = polygon[(i + 1) % n_poly]
+                edge_a = (curr_v.co - prev_v.co).normalized()
+                edge_b = (next_v.co - curr_v.co).normalized()
+                if edge_a.cross(edge_b).length > _FOLDED_EPSILON:
+                    cleaned.append(curr_v)
+            polygon = cleaned
 
             if len(polygon) < 3:
                 continue
 
-            # Check winding: compute face normal and compare with inward_normal
+            # Check winding against inward normal
             poly_normal = compute_normal_from_verts([v.co for v in polygon])
             if poly_normal is not None and poly_normal.dot(inward_normal) < 0:
                 polygon.reverse()

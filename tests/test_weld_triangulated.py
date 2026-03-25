@@ -179,7 +179,7 @@ class FoldedPlaneWeldTest(AnvilTestCase):
         bm.normal_update()
 
         self.assertEqual(len(bm.verts), 37)
-        self.assertEqual(len(bm.faces), 39)
+        self.assertEqual(len(bm.faces), 36)
 
         # Verify all vertex positions
         expected_verts = sorted([
@@ -251,14 +251,16 @@ class FoldedPlaneWeldTest(AnvilTestCase):
                                  f"Face {key} has wrong vertices")
 
         # Check weld faces by vertex coverage (triangulation is non-deterministic)
+        # Collinear intermediate verts (*.5, 1.5) are removed from the weld
+        # polygon to avoid degenerate triangles during triangulation.
         left_weld_verts = {(0.25, 0.0, 0.5), (0.25, 0.0, 1.0), (0.25, 0.25, 1.5),
-                           (0.25, 0.5, 1.5), (0.25, 0.75, 1.5),
+                           (0.25, 0.75, 1.5),
                            (0.25, 1.0, 0.5), (0.25, 1.0, 1.0)}
         right_weld_verts = {(0.75, 0.0, 0.5), (0.75, 0.0, 1.0), (0.75, 0.25, 1.5),
-                            (0.75, 0.5, 1.5), (0.75, 0.75, 1.5),
+                            (0.75, 0.75, 1.5),
                             (0.75, 1.0, 0.5), (0.75, 1.0, 1.0)}
-        bottom_weld_verts = {(0.25, 0.0, 0.5), (0.5, 0.0, 0.5), (0.75, 0.0, 0.5),
-                             (0.75, 1.0, 0.5), (0.5, 1.0, 0.5), (0.25, 1.0, 0.5)}
+        bottom_weld_verts = {(0.25, 0.0, 0.5), (0.75, 0.0, 0.5),
+                             (0.75, 1.0, 0.5), (0.25, 1.0, 0.5)}
 
         # Collect vertices from weld faces (faces at x=0.25 with +x normal,
         # x=0.75 with -x normal, z=0.5 with +z normal)
@@ -279,9 +281,9 @@ class FoldedPlaneWeldTest(AnvilTestCase):
                 actual_bottom |= fv
 
         self.assertEqual(actual_left, left_weld_verts,
-                         "Left weld faces should cover all 7 boundary vertices")
+                         "Left weld faces should cover all 6 non-collinear boundary vertices")
         self.assertEqual(actual_right, right_weld_verts,
-                         "Right weld faces should cover all 7 boundary vertices")
+                         "Right weld faces should cover all 6 non-collinear boundary vertices")
         self.assertEqual(actual_bottom, bottom_weld_verts,
                          "Bottom weld faces should cover all 6 boundary vertices")
 
