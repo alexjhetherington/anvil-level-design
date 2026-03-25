@@ -735,6 +735,20 @@ class LEVELDESIGN_PT_debug_panel(Panel):
             icon='CONSOLE',
         )
 
+        from ..operators.overlap_check import is_overlap_check_active, get_overlap_count
+        active = is_overlap_check_active()
+        count = get_overlap_count()
+        if active and count > 0:
+            text = f"Overlapping Faces ({count})"
+        else:
+            text = "Overlapping Faces"
+        layout.operator(
+            "leveldesign.toggle_overlap_check",
+            text=text,
+            depress=active,
+            icon='ERROR',
+        )
+
 
 classes = (
     LEVELDESIGN_PT_status_panel,

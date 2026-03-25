@@ -14,6 +14,7 @@ from . import select_linked
 from . import uv_select_invalid
 from . import weld
 from . import vertex_paint_color_picker
+from . import overlap_check
 
 
 def register():
@@ -33,9 +34,11 @@ def register():
     uv_select_invalid.register()
     weld.register()
     vertex_paint_color_picker.register()
+    overlap_check.register()
 
 
 def unregister():
+    overlap_check.unregister()
     vertex_paint_color_picker.unregister()
     weld.unregister()
     uv_select_invalid.unregister()
