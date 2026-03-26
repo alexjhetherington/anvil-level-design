@@ -151,6 +151,8 @@ This works for box select and lasso select when single clicking, shift clicking,
 
 Due to blender api limitations it does not work for box selecting or lasso-ing items, and it does not work with circle select or the tweak tool.
 
+Vertex painting does not work through backface culling, so when you enter vertex paint mode, face orientation will be enabled if it is not otherwise. This lets you see what you cannot paint through.
+
 ##### Paint Select
 
 Ctrl Left mouse paint selects, which is similar to circle select (hold and drag to add crossed items to the selection) but respects backface culling.
@@ -219,6 +221,8 @@ A useful hotkey to remember is numpad . to focus objects.
 Use '[' and ']' to double and half the grid size.
 
 The grid size is relative to the blender scene length unit (i.e. if you choose unit inches, 1 Anvil grid unit will equal 1 inch).
+
+Shift-G toggles between incremental and grid snap. Generally incremental snap is the most useful, but some operators (especially slides) behave more consistently with grid snapping.
 
 ### Exporting
 

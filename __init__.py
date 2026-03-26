@@ -130,6 +130,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.stretch_pick_image_from_face": "UV",
             "leveldesign.grid_scale_up": "Tools",
             "leveldesign.grid_scale_down": "Tools",
+            "leveldesign.toggle_snap_mode": "Tools",
             "leveldesign.line_mode_activate": "Tools",
             "leveldesign.box_builder": "Tools",
             "leveldesign.cube_cut": "Tools",

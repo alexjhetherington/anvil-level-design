@@ -138,6 +138,30 @@ class LEVELDESIGN_OT_grid_scale_up(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_toggle_snap_mode(Operator):
+    """Toggle between incremental and grid snapping"""
+    bl_idname = "leveldesign.toggle_snap_mode"
+    bl_label = "Toggle Snap Mode"
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def execute(self, context):
+        tool_settings = context.scene.tool_settings
+        snap = tool_settings.snap_elements
+        has_increment = 'INCREMENT' in snap
+        has_grid = 'GRID' in snap
+        if has_increment and not has_grid:
+            tool_settings.snap_elements = {'GRID'}
+        elif has_grid and not has_increment:
+            tool_settings.snap_elements = {'INCREMENT'}
+        else:
+            # Both or neither — default to incremental
+            tool_settings.snap_elements = {'INCREMENT'}
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_OT_grid_scale_down(Operator):
     """Decrease grid scale to previous step"""
     bl_idname = "leveldesign.grid_scale_down"
@@ -161,9 +185,23 @@ class LEVELDESIGN_OT_grid_scale_down(Operator):
         return {'FINISHED'}
 
 
+def get_snap_mode_icon(tool_settings):
+    """Return the appropriate icon for the current snap mode."""
+    snap = tool_settings.snap_elements
+    has_increment = 'INCREMENT' in snap
+    has_grid = 'GRID' in snap
+    if has_increment and not has_grid:
+        return 'SNAP_INCREMENT'
+    elif has_grid and not has_increment:
+        return 'SNAP_GRID'
+    else:
+        return 'GRID'
+
+
 classes = (
     LEVELDESIGN_OT_grid_scale_up,
     LEVELDESIGN_OT_grid_scale_down,
+    LEVELDESIGN_OT_toggle_snap_mode,
 )
 
 addon_keymaps = []
@@ -195,6 +233,13 @@ def register():
 
         kmi = km.keymap_items.new(
             "leveldesign.grid_scale_down", 'LEFT_BRACKET', 'PRESS',
+            head=True
+        )
+        addon_keymaps.append((km, kmi))
+
+        kmi = km.keymap_items.new(
+            "leveldesign.toggle_snap_mode", 'G', 'PRESS',
+            shift=True,
             head=True
         )
         addon_keymaps.append((km, kmi))

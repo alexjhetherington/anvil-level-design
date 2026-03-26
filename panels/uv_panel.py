@@ -10,7 +10,7 @@ from ..utils import (
     is_vertex_colors_enabled,
     is_level_design_workspace,
 )
-from ..operators.grid_tools import get_unit_label
+from ..operators.grid_tools import get_unit_label, get_snap_mode_icon
 from ..handlers import (
     get_active_image,
     get_previous_image,
@@ -46,14 +46,15 @@ class LEVELDESIGN_PT_status_panel(Panel):
         unit_settings = context.scene.unit_settings
         label = get_unit_label(unit_settings.system, unit_settings.length_unit)
 
+        snap_icon = get_snap_mode_icon(context.tool_settings)
         box = layout.box()
         if label:
             box.label(
-                text=f"Grid Size: {anvil_scale}  ({label})  [ / ]", icon='GRID'
+                text=f"Grid Size: {anvil_scale}  ({label})  [ / ]", icon=snap_icon
             )
         else:
             box.label(
-                text=f"Grid Size: {anvil_scale}  [ / ]", icon='GRID'
+                text=f"Grid Size: {anvil_scale}  [ / ]", icon=snap_icon
             )
 
         from ..operators.weld import get_weld_display_name

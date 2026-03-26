@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.7
+- Shift-G toggles between snap modes
+
 ## 1.4.6
 - WELD folded plane
 - Add debug button to display overlapping faces

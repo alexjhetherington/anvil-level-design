@@ -723,6 +723,13 @@ _tracked_modal_operators = set()
 _TOPOLOGY_MODAL_OPS = {
     'MESH_OT_bevel',
 }
+# Slide operators that should use grid snapping instead of incremental
+_SLIDE_MODAL_OPS = {
+    'MESH_OT_loopcut_slide',
+    'TRANSFORM_OT_vert_slide',
+    'TRANSFORM_OT_edge_slide',
+}
+_slide_snap_active = False
 # Track the file browser watcher modal operator
 _file_browser_watcher_running = False
 # Track the previously selected file browser path (to avoid reapplying same image)
@@ -2148,6 +2155,37 @@ def on_load_post(dummy):
     _migrate_legacy_uv_lock()
 
 
+def _poll_slide_snap_end():
+    """Timer that polls until the slide modal exits, then restores snap to INCREMENT."""
+    global _slide_snap_active
+    window = bpy.context.window
+    if not window:
+        _slide_snap_active = False
+        return None
+    current_modals = set(op.bl_idname for op in window.modal_operators)
+    if bool(current_modals & _SLIDE_MODAL_OPS):
+        return 0.05
+    bpy.context.scene.tool_settings.snap_elements = {'INCREMENT'}
+    _slide_snap_active = False
+    debug_log("[SnapMode] Slide modal ended, snap set to INCREMENT")
+    return None
+
+
+def _update_slide_snap_mode():
+    global _slide_snap_active
+    if _slide_snap_active:
+        return
+    window = bpy.context.window
+    if not window:
+        return
+    current_modals = set(op.bl_idname for op in window.modal_operators)
+    if bool(current_modals & _SLIDE_MODAL_OPS):
+        bpy.context.scene.tool_settings.snap_elements = {'GRID'}
+        _slide_snap_active = True
+        bpy.app.timers.register(_poll_slide_snap_end, first_interval=0.05)
+        debug_log("[SnapMode] Slide modal entered, snap set to GRID")
+
+
 @persistent
 def on_depsgraph_update(scene, depsgraph):
     """Consolidated depsgraph update handler"""
@@ -2160,6 +2198,9 @@ def on_depsgraph_update(scene, depsgraph):
     # Only process in the Level Design workspace
     if not is_level_design_workspace():
         return
+
+    # Auto-switch snap mode for slide operators (loop cut, vertex slide, edge slide)
+    _update_slide_snap_mode()
 
     try:
         # Check for duplicate materials (from copy/paste operations)
@@ -2435,7 +2476,9 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode, _slide_snap_active
+
+    _slide_snap_active = False
 
     # Clear face orientation msgbus subscription and restore state
     bpy.msgbus.clear_by_owner(_face_orientation_msgbus_owner)
