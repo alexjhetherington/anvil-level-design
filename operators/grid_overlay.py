@@ -181,6 +181,64 @@ def _collect_mesh_batches(depsgraph, shader):
 
 
 # ---------------------------------------------------------------------------
+#  Edit-mode edge redraw
+# ---------------------------------------------------------------------------
+
+def _draw_edit_edges_on_top(context, depsgraph, region):
+    """Redraw the active edit object's edges on top of the grid overlay.
+
+    POST_VIEW callbacks run after Blender's edit-mode overlays, so the
+    semi-transparent grid covers the wireframe edges.  Drawing the edges
+    again here restores their visibility.
+    """
+    obj = context.edit_object
+    if obj is None or obj.type != 'MESH':
+        return
+
+    eval_obj = obj.evaluated_get(depsgraph)
+    try:
+        mesh = eval_obj.to_mesh()
+    except RuntimeError:
+        return
+    if mesh is None:
+        return
+
+    try:
+        vert_count = len(mesh.vertices)
+        edge_count = len(mesh.edges)
+        if vert_count == 0 or edge_count == 0:
+            return
+
+        # Vertex positions (local space)
+        cos = np.empty(vert_count * 3, dtype=np.float32)
+        mesh.vertices.foreach_get('co', cos)
+        cos = cos.reshape(-1, 3)
+
+        # Transform to world space
+        mat = np.array(obj.matrix_world, dtype=np.float32)
+        ones = np.ones((vert_count, 1), dtype=np.float32)
+        cos_h = np.hstack((cos, ones))
+        world = (mat @ cos_h.T).T[:, :3]
+
+        # Expand edge indices into vertex pairs for LINES primitive
+        edge_idx = np.empty(edge_count * 2, dtype=np.int32)
+        mesh.edges.foreach_get('vertices', edge_idx)
+        edge_positions = world[edge_idx]  # (edge_count*2, 3)
+
+        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+        shader.uniform_float("viewportSize", (region.width, region.height))
+        shader.uniform_float("lineWidth", 1.5)
+        shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
+
+        batch = batch_for_shader(
+            shader, 'LINES', {"pos": edge_positions.tolist()},
+        )
+        batch.draw(shader)
+    finally:
+        eval_obj.to_mesh_clear()
+
+
+# ---------------------------------------------------------------------------
 #  Draw callback
 # ---------------------------------------------------------------------------
 
@@ -244,6 +302,12 @@ def _draw_grid_overlay():
         _shader.uniform_float("opacity", 0.3)
         for batch in batches:
             batch.draw(_shader)
+
+        # In edit mode the grid is drawn after Blender's edit-mode edge
+        # overlay (POST_VIEW), so the semi-transparent grid covers the
+        # edges.  Redraw the active object's edges on top to restore them.
+        if context.mode == 'EDIT_MESH':
+            _draw_edit_edges_on_top(context, depsgraph, region)
     except Exception as e:
         print(f"Level Design Tools: Grid overlay draw error: {e}")
     finally:
