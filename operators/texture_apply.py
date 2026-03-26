@@ -564,6 +564,177 @@ def _discard_other_bmeshes(op):
     op._other_bmeshes.clear()
 
 
+def _invoke_uv_transform_setup(op, context, event):
+    """Common invoke setup for UV-transform-only paint operators.
+
+    Like _invoke_apply_setup but does not require a file browser image and
+    does not touch materials.  Only the UV transform (offset, rotation, scale)
+    from the selected source face is used.
+
+    Returns None on success or a Blender result set on failure.
+    """
+    obj = context.object
+    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+        debug_log("[UVTransform] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
+        return {'PASS_THROUGH'}
+
+    if not context.tool_settings.mesh_select_mode[2]:
+        debug_log("[UVTransform] PASS_THROUGH: not in face select mode")
+        return {'PASS_THROUGH'}
+
+    bm_check = bmesh.from_edit_mesh(obj.data)
+    bm_check.faces.ensure_lookup_table()
+    selected_count = sum(1 for f in bm_check.faces if f.select)
+    if selected_count != 1:
+        debug_log(f"[UVTransform] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
+        return {'PASS_THROUGH'}
+
+    source_face = bm_check.faces.active
+    if source_face is None or not source_face.select:
+        debug_log(f"[UVTransform] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
+        return {'PASS_THROUGH'}
+
+    op._source_face_index = source_face.index
+    op._obj_matrix = obj.matrix_world.copy()
+
+    props = context.scene.level_design_props
+    op._ppm = props.pixels_per_meter
+    op._painted_face_indices = set()
+
+    op._other_objects_info = []
+    op._other_bmeshes = {}
+    op._paint_visited_other = set()
+    for other_obj in context.view_layer.objects:
+        if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
+            continue
+        other_me = other_obj.data
+        if other_me is None or len(other_me.polygons) == 0:
+            continue
+        bvh = BVHTree.FromPolygons(
+            [v.co for v in other_me.vertices],
+            [p.vertices for p in other_me.polygons]
+        )
+        op._other_objects_info.append({
+            'obj': other_obj,
+            'bvh': bvh,
+            'polygons': other_me.polygons,
+            'materials': other_me.materials,
+        })
+
+    debug_log(f"[UVTransform] invoke OK: source_face={op._source_face_index}")
+    return None
+
+
+def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
+    """Paint sample implementation for UV-transform-only operators.
+
+    Like _paint_sample_impl but does not change materials on target faces.
+    """
+    obj = op._paint_obj
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.faces.ensure_lookup_table()
+
+    origin_local, dir_local = op._paint_ray_local(region, rv3d, mouse_2d)
+
+    location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+        op._paint_bvh, origin_local, dir_local,
+        bm, me.materials, max_iterations=64
+    )
+
+    # ---- Cross-object raycast: find closest hit among other visible meshes ----
+    hit_other_obj = None
+    hit_other_face_index = None
+    if op._other_objects_info:
+        best_distance = distance if face_index is not None else float('inf')
+
+        coord = (mouse_2d.x, mouse_2d.y)
+        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
+        for info in op._other_objects_info:
+            other_obj = info['obj']
+            matrix_inv = other_obj.matrix_world.inverted()
+            origin_other = matrix_inv @ ray_origin
+            dir_other = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+            loc, norm, fidx, dist = raycast_bvh_skip_backfaces_polys(
+                info['bvh'], origin_other, dir_other,
+                info['polygons'], info['materials'], max_iterations=64
+            )
+
+            if fidx is not None and dist < best_distance:
+                best_distance = dist
+                hit_other_obj = other_obj
+                hit_other_face_index = fidx
+
+    # ---- Apply to other object if it was the closest hit ----
+    if hit_other_obj is not None:
+        visit_key = (id(hit_other_obj), hit_other_face_index)
+        if visit_key not in op._paint_visited_other:
+            op._paint_visited_other.add(visit_key)
+
+            other_me = hit_other_obj.data
+            obj_id = id(hit_other_obj)
+
+            if obj_id not in op._other_bmeshes:
+                other_bm = bmesh.new()
+                other_bm.from_mesh(other_me)
+                op._other_bmeshes[obj_id] = {
+                    'bm': other_bm,
+                    'obj': hit_other_obj,
+                }
+            other_data = op._other_bmeshes[obj_id]
+            other_bm = other_data['bm']
+            other_bm.faces.ensure_lookup_table()
+
+            target_face = other_bm.faces[hit_other_face_index]
+            source_face = bm.faces[op._source_face_index]
+
+            # No material change — only UV transform
+
+            from ..utils import get_render_active_uv_layer
+            source_uv = get_render_active_uv_layer(bm, me)
+            if source_uv is None:
+                source_uv = bm.loops.layers.uv.verify()
+            target_uv = other_bm.loops.layers.uv.verify()
+
+            source_to_target = hit_other_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
+
+            set_uv_from_other_face(
+                source_face, target_face, target_uv,
+                op._ppm, other_me, hit_other_obj.matrix_world,
+                source_uv_layer=source_uv, source_me=me,
+                source_to_target=source_to_target,
+            )
+
+            debug_log(f"[UVTransform] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
+        return
+
+    if face_index is None:
+        debug_log(f"[UVTransform] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
+        return
+
+    debug_log(f"[UVTransform] raycast hit face {face_index} at distance {distance:.4f}")
+    if face_index in op._paint_visited:
+        return
+    op._paint_visited.add(face_index)
+
+    target_face = bm.faces[face_index]
+    source_face = bm.faces[op._source_face_index]
+
+    from ..utils import get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm, me)
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.verify()
+
+    # No material change — only UV transform
+
+    set_uv_from_other_face(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix)
+
+    op._painted_face_indices.add(face_index)
+
+
 def _pick_source_from_cursor(op, context, event):
     """Raycast to find source face under cursor. Shared by pick operators.
 
@@ -1014,11 +1185,120 @@ class stretch_pick_image_from_face(Operator):
         return {'FINISHED'}
 
 
+# ---- Apply UV Transform to Face (Ctrl+Alt+Left Click) ----
+
+class apply_uv_transform_to_face(ModalPaintBase, Operator):
+    """Apply UV transform from selected face to hovered face without changing material (drag to paint)"""
+    bl_idname = "leveldesign.apply_uv_transform_to_face"
+    bl_label = "Apply UV Transform to Face"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def invoke(self, context, event):
+        result = _invoke_uv_transform_setup(self, context, event)
+        if result is not None:
+            return result
+        return self._invoke_paint(context, event)
+
+    def modal(self, context, event):
+        return self._modal_paint(context, event)
+
+    def paint_begin(self, context, event):
+        return True
+
+    def paint_cancel(self, context):
+        _discard_other_bmeshes(self)
+
+    def paint_sample(self, context, mouse_2d, region, rv3d):
+        _paint_sample_uv_transform_impl(self, context, mouse_2d, region, rv3d)
+
+    def paint_finish(self, context):
+        _flush_other_bmeshes(self)
+        if not self._painted_face_indices:
+            return
+        update_ui_from_selection(context)
+        update_active_image_from_face(context)
+        redraw_ui_panels(context)
+
+
+# ---- Pick UV Transform from Face (Ctrl+Alt+Right Click) ----
+
+class pick_uv_transform_from_face(Operator):
+    """Pick UV transform from hovered face and apply to selected faces without changing material"""
+    bl_idname = "leveldesign.pick_uv_transform_from_face"
+    bl_label = "Pick and Apply UV Transform"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def invoke(self, context, event):
+        pick_result = _pick_source_from_cursor(self, context, event)
+        if pick_result is None:
+            return {'PASS_THROUGH'}
+        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+
+        edit_obj = context.object
+        me = edit_obj.data
+        from ..utils import get_render_active_uv_layer
+        uv_layer = get_render_active_uv_layer(bm_edit, me)
+        if uv_layer is None:
+            uv_layer = bm_edit.loops.layers.uv.verify()
+        props = context.scene.level_design_props
+        ppm = props.pixels_per_meter
+
+        # No material change — only UV transform
+
+        is_same_object = (hit_obj == edit_obj)
+        _source_bm = None
+        if is_same_object:
+            _source_face = bm_edit.faces[hit_face_index]
+            _source_uv = uv_layer
+            _source_me = me
+            _source_to_target = None
+        else:
+            _source_bm = bmesh.new()
+            _source_bm.from_mesh(hit_obj.data)
+            _source_bm.faces.ensure_lookup_table()
+            _source_face = _source_bm.faces[hit_face_index]
+            _source_uv = _source_bm.loops.layers.uv.verify()
+            _source_me = hit_obj.data
+            _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
+
+        for target_face in selected_faces:
+            set_uv_from_other_face(
+                _source_face, target_face, uv_layer,
+                ppm, me, edit_obj.matrix_world,
+                bm=bm_edit,
+                source_uv_layer=_source_uv,
+                source_me=_source_me,
+                source_to_target=_source_to_target,
+            )
+
+        if _source_bm is not None:
+            _source_bm.free()
+
+        bmesh.update_edit_mesh(me)
+
+        update_ui_from_selection(context)
+        update_active_image_from_face(context)
+        redraw_ui_panels(context)
+        self.report({'INFO'}, "Applied UV transform")
+
+        return {'FINISHED'}
+
+
 classes = (
     apply_image_to_face,
     pick_image_from_face,
     stretch_apply_image_to_face,
     stretch_pick_image_from_face,
+    apply_uv_transform_to_face,
+    pick_uv_transform_from_face,
 )
 
 addon_keymaps = []
@@ -1068,6 +1348,26 @@ def register():
         stretch_pick_image_from_face.bl_idname,
         'RIGHTMOUSE', 'PRESS',
         shift=True,
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    # Ctrl+Alt+Left Click to apply UV transform to face
+    kmi = km.keymap_items.new(
+        apply_uv_transform_to_face.bl_idname,
+        'LEFTMOUSE', 'PRESS',
+        ctrl=True,
+        alt=True,
+        head=True
+    )
+    addon_keymaps.append((km, kmi))
+
+    # Ctrl+Alt+Right Click to pick UV transform from face
+    kmi = km.keymap_items.new(
+        pick_uv_transform_from_face.bl_idname,
+        'RIGHTMOUSE', 'PRESS',
+        ctrl=True,
         alt=True,
         head=True
     )

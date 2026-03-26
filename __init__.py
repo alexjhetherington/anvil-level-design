@@ -128,6 +128,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.pick_image_from_face": "UV",
             "leveldesign.stretch_apply_image_to_face": "UV",
             "leveldesign.stretch_pick_image_from_face": "UV",
+            "leveldesign.apply_uv_transform_to_face": "UV",
+            "leveldesign.pick_uv_transform_from_face": "UV",
             "leveldesign.grid_scale_up": "Tools",
             "leveldesign.grid_scale_down": "Tools",
             "leveldesign.toggle_snap_mode": "Tools",

@@ -3,6 +3,8 @@
 ## 1.4.7
 - Shift-G toggles between snap modes
 - Alt-G toggles a grid over geometry faces
+- Ctrl-Alt Left mouse applies a UV without changing the material
+- Ctrl-Alt Right mouse picks a UV without changing the material
 
 ## 1.4.6
 - WELD folded plane

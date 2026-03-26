@@ -533,3 +533,253 @@ class StretchApplyTest(AnvilTestCase):
 
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _get_second_material():
+    """Get (or create once) a second test material distinct from the primary one."""
+    mat_name = "UV_Transform_Test_Mat_B"
+    mat = bpy.data.materials.get(mat_name)
+    if mat:
+        return mat
+    # Create a new material with same image but different name
+    image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    output = nodes.new('ShaderNodeOutputMaterial')
+    bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+    tex = nodes.new('ShaderNodeTexImage')
+    tex.image = image
+    links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
+    links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+    return mat
+
+
+def _create_two_face_two_material_plane(name, source_scale_u, source_scale_v,
+                                         source_rotation, source_offset_x,
+                                         source_offset_y):
+    """Create a 2-face plane where each face has a DIFFERENT material.
+
+    Face 0 (lower): mat_a, default UVs (scale=1, rotation=0, offset=0)
+    Face 1 (upper): mat_b, caller-specified UV transform
+
+    Both materials use the same image so derive_transform_from_uvs works,
+    but they are distinct material slots so we can verify material_index
+    is preserved.
+    """
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+
+    v0 = bm.verts.new((0, 0, 0))
+    v1 = bm.verts.new((1, 0, 0))
+    v2 = bm.verts.new((1, 0, 1))
+    v3 = bm.verts.new((0, 0, 1))
+    v4 = bm.verts.new((1, 0, 2))
+    v5 = bm.verts.new((0, 0, 2))
+
+    bm.faces.new((v0, v1, v2, v3))
+    bm.faces.new((v3, v2, v4, v5))
+
+    bm.to_mesh(mesh)
+    bm.free()
+
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    mat_a = _get_material()
+    mat_b = _get_second_material()
+    obj.data.materials.append(mat_a)
+    obj.data.materials.append(mat_b)
+    mat_a_index = obj.data.materials.find(mat_a.name)
+    mat_b_index = obj.data.materials.find(mat_b.name)
+
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+    bm.faces.ensure_lookup_table()
+
+    # Face 0: mat_a, default transform
+    bm.faces[0].material_index = mat_a_index
+    apply_uv_to_face(bm.faces[0], uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+                     mat_a, ppm, obj.data)
+    # Face 1: mat_b, caller-specified transform
+    bm.faces[1].material_index = mat_b_index
+    apply_uv_to_face(bm.faces[1], uv_layer,
+                     source_scale_u, source_scale_v, source_rotation,
+                     source_offset_x, source_offset_y,
+                     mat_b, ppm, obj.data)
+
+    bmesh.update_edit_mesh(obj.data)
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    return obj
+
+
+class UVTransformApplyTest(AnvilTestCase):
+    """Test UV-transform-only apply (no material change)."""
+
+    def test_uv_transform_apply_transfers_scale_and_rotation(self):
+        """Applying UV transform from adjacent face should transfer scale and rotation."""
+        obj = _create_two_face_two_material_plane(
+            "uv_xform_adjacent", 2.5, 1.5, 45.0, 0.1, 0.1)
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        bm.faces.ensure_lookup_table()
+
+        # Verify starting state
+        source_t = derive_transform_from_uvs(bm.faces[1], uv_layer, ppm, obj.data)
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertAlmostEqual(source_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_u'], 1.0, places=3)
+
+        # Record material indices before
+        mat_index_0_before = bm.faces[0].material_index
+        mat_index_1_before = bm.faces[1].material_index
+        self.assertNotEqual(mat_index_0_before, mat_index_1_before)
+
+        # Apply UV transform from face 1 to face 0
+        result = set_uv_from_other_face(
+            bm.faces[1], bm.faces[0], uv_layer,
+            ppm, obj.data, obj.matrix_world,
+        )
+        self.assertTrue(result)
+        bmesh.update_edit_mesh(obj.data)
+
+        # UV transform should be transferred
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.5, places=3)
+        self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
+
+        # Material index must NOT have changed
+        self.assertEqual(bm.faces[0].material_index, mat_index_0_before)
+        self.assertEqual(bm.faces[1].material_index, mat_index_1_before)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_uv_transform_apply_preserves_material_with_different_params(self):
+        """UV transform apply with different params should preserve each face's material."""
+        obj = _create_two_face_two_material_plane(
+            "uv_xform_params", 3.0, 2.0, 30.0, 0.25, 0.5)
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        bm.faces.ensure_lookup_table()
+
+        mat_index_0_before = bm.faces[0].material_index
+        mat_index_1_before = bm.faces[1].material_index
+        self.assertNotEqual(mat_index_0_before, mat_index_1_before)
+
+        result = set_uv_from_other_face(
+            bm.faces[1], bm.faces[0], uv_layer,
+            ppm, obj.data, obj.matrix_world,
+        )
+        self.assertTrue(result)
+        bmesh.update_edit_mesh(obj.data)
+
+        target_t = derive_transform_from_uvs(bm.faces[0], uv_layer, ppm, obj.data)
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 3.0, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 2.0, places=3)
+        self.assertAlmostEqual(target_t['rotation'], 30.0, places=3)
+
+        # Material must be preserved
+        self.assertEqual(bm.faces[0].material_index, mat_index_0_before)
+        self.assertEqual(bm.faces[1].material_index, mat_index_1_before)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_uv_transform_apply_cross_object_preserves_material(self):
+        """Cross-object UV transform should transfer UVs but not change materials."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat_a = _get_material()
+        mat_b = _get_second_material()
+        ctx = _get_context_override()
+
+        # --- Source object: mat_a with custom UVs ---
+        mesh_a = bpy.data.meshes.new("uv_xform_src_mesh")
+        mesh_a.materials.append(mat_a)
+        obj_a = bpy.data.objects.new("uv_xform_src_obj", mesh_a)
+        bpy.context.collection.objects.link(obj_a)
+
+        bpy.context.view_layer.objects.active = obj_a
+        obj_a.select_set(True)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_a = bmesh.from_edit_mesh(mesh_a)
+        _make_vertical_face(bm_a, 0)
+        bm_a.normal_update()
+        uv_a = bm_a.loops.layers.uv.verify()
+        bm_a.faces.ensure_lookup_table()
+        bm_a.faces[0].material_index = 0
+        apply_uv_to_face(bm_a.faces[0], uv_a, 2.5, 1.5, 45.0, 0.3, 0.7,
+                         mat_a, ppm, mesh_a)
+
+        # --- Target object: mat_b with default UVs ---
+        mesh_b = bpy.data.meshes.new("uv_xform_tgt_mesh")
+        mesh_b.materials.append(mat_b)
+        bm_b = bmesh.new()
+        _make_vertical_face(bm_b, 0)
+        bm_b.normal_update()
+        uv_b = bm_b.loops.layers.uv.verify()
+        bm_b.faces.ensure_lookup_table()
+        bm_b.faces[0].material_index = 0
+        apply_uv_to_face(bm_b.faces[0], uv_b, 1.0, 1.0, 0.0, 0.0, 0.0,
+                         mat_b, ppm, mesh_b)
+
+        obj_b = bpy.data.objects.new("uv_xform_tgt_obj", mesh_b)
+        bpy.context.collection.objects.link(obj_b)
+        obj_b.location.x = 1
+        bpy.context.view_layer.update()
+
+        # Record target material before
+        target_mat_before = mesh_b.materials[0].name
+
+        source_to_target = obj_b.matrix_world.inverted() @ obj_a.matrix_world
+
+        result = set_uv_from_other_face(
+            bm_a.faces[0], bm_b.faces[0], uv_b,
+            ppm, mesh_b, obj_b.matrix_world,
+            source_uv_layer=uv_a, source_me=mesh_a,
+            source_to_target=source_to_target,
+        )
+        self.assertTrue(result)
+
+        # UV transform should be transferred
+        target_t = derive_transform_from_uvs(bm_b.faces[0], uv_b, ppm, mesh_b)
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.5, places=3)
+        self.assertAlmostEqual(target_t['rotation'], 45.0, places=3)
+
+        # Material must still be mat_b
+        self.assertEqual(bm_b.faces[0].material_index, 0)
+        self.assertEqual(mesh_b.materials[0].name, target_mat_before)
+
+        bm_b.to_mesh(mesh_b)
+        bm_b.free()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
