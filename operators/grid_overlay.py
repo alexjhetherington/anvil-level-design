@@ -134,14 +134,24 @@ def _collect_mesh_batches(depsgraph, shader):
         if not inst.show_self:
             continue
 
-        mesh = obj.data
+        # Use to_mesh() to get a snapshot that works in both object
+        # and edit mode (obj.data is stale while in edit mode).
+        try:
+            mesh = obj.to_mesh()
+        except RuntimeError:
+            continue
+        if mesh is None:
+            continue
+
         vert_count = len(mesh.vertices)
         if vert_count == 0:
+            obj.to_mesh_clear()
             continue
 
         mesh.calc_loop_triangles()
         tri_count = len(mesh.loop_triangles)
         if tri_count == 0:
+            obj.to_mesh_clear()
             continue
 
         # Vertex positions (local space)
@@ -165,6 +175,7 @@ def _collect_mesh_batches(depsgraph, shader):
             indices=tri_idx.reshape(-1, 3).tolist(),
         )
         batches.append(batch)
+        obj.to_mesh_clear()
 
     return batches
 
