@@ -48,14 +48,22 @@ class LEVELDESIGN_PT_status_panel(Panel):
 
         snap_icon = get_snap_mode_icon(context.tool_settings)
         box = layout.box()
+        row = box.row()
         if label:
-            box.label(
+            row.label(
                 text=f"Grid Size: {anvil_scale}  ({label})  [ / ]", icon=snap_icon
             )
         else:
-            box.label(
+            row.label(
                 text=f"Grid Size: {anvil_scale}  [ / ]", icon=snap_icon
             )
+        overlay_icon = 'HIDE_OFF' if props.show_grid_overlay else 'HIDE_ON'
+        row.operator(
+            "leveldesign.toggle_grid_overlay",
+            text="",
+            icon=overlay_icon,
+            emboss=False,
+        )
 
         from ..operators.weld import get_weld_display_name
         weld_mode = props.weld_mode

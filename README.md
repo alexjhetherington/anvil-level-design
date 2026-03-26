@@ -224,6 +224,8 @@ The grid size is relative to the blender scene length unit (i.e. if you choose u
 
 Shift-G toggles between incremental and grid snap. Generally incremental snap is the most useful, but some operators (especially slides) behave more consistently with grid snapping.
 
+Alt-G toggles the face overlay grid
+
 ### Exporting
 
 Right now there are no bespoke export behaviours. This means you can work with Blender and your game engine as you normally would.

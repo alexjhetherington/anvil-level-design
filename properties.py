@@ -623,6 +623,13 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         max=100000.0,
     )
 
+    # === Grid Overlay ===
+    show_grid_overlay: BoolProperty(
+        name="Show Grid Overlay",
+        description="Display a grid overlay on all visible geometry",
+        default=False,
+    )
+
     # === Context Weld State ===
     weld_mode: EnumProperty(
         name="Weld Mode",

@@ -1,4 +1,5 @@
 import bpy
+import gpu
 from .base_test import AnvilTestCase
 
 
@@ -47,4 +48,22 @@ class APIAvailabilityTest(AnvilTestCase):
         self.assertEqual(
             missing, [],
             f"Missing Blender operators: {', '.join(missing)}"
+        )
+
+    def test_all_required_gpu_apis_exist(self):
+        missing = []
+        # gpu.types classes used by grid_overlay
+        for cls_name in ("GPUShaderCreateInfo", "GPUStageInterfaceInfo", "GPUTexture"):
+            if not hasattr(gpu.types, cls_name):
+                missing.append(f"gpu.types.{cls_name}")
+        # gpu.shader functions used by grid_overlay
+        if not hasattr(gpu.shader, "create_from_info"):
+            missing.append("gpu.shader.create_from_info")
+        # gpu.state functions used by grid_overlay
+        if not hasattr(gpu.state, "active_framebuffer_get"):
+            missing.append("gpu.state.active_framebuffer_get")
+
+        self.assertEqual(
+            missing, [],
+            f"Missing GPU API symbols: {', '.join(missing)}"
         )

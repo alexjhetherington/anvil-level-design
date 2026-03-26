@@ -135,6 +135,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.box_builder": "Tools",
             "leveldesign.cube_cut": "Tools",
             "leveldesign.context_weld": "Tools",
+            "leveldesign.toggle_grid_overlay": "Tools",
         }
 
         wm = context.window_manager

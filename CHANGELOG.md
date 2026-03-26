@@ -2,6 +2,7 @@
 
 ## 1.4.7
 - Shift-G toggles between snap modes
+- Alt-G toggles a grid over geometry faces
 
 ## 1.4.6
 - WELD folded plane
