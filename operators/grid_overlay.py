@@ -347,6 +347,7 @@ class LEVELDESIGN_OT_toggle_grid_overlay(bpy.types.Operator):
     """Toggle grid overlay on all visible geometry"""
     bl_idname = "leveldesign.toggle_grid_overlay"
     bl_label = "Toggle Grid Overlay"
+    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
