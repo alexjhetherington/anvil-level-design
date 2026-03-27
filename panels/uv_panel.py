@@ -9,6 +9,7 @@ from ..utils import (
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
     is_level_design_workspace,
+    object_has_hotspot_material,
 )
 from ..operators.grid_tools import get_unit_label, get_snap_mode_icon
 from ..handlers import (
@@ -20,6 +21,7 @@ from ..handlers import (
     is_multi_face_unset_offset,
     get_selected_faces_share_image,
     get_all_selected_hotspot,
+    get_any_selected_hotspot,
 )
 
 
@@ -123,27 +125,61 @@ class LEVELDESIGN_OT_toggle_uv_lock(Operator):
         return {'CANCELLED'}
 
 
+class LEVELDESIGN_OT_toggle_auto_hotspot(Operator):
+    """Toggle automatic hotspot mapping after geometry changes"""
+    bl_idname = "leveldesign.toggle_auto_hotspot"
+    bl_label = "Toggle Auto Hotspot"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        obj = context.object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+        obj.anvil_auto_hotspot = not obj.anvil_auto_hotspot
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_toggle_combine_faces(Operator):
+    """Toggle multi-face islands during hotspot mapping"""
+    bl_idname = "leveldesign.toggle_combine_faces"
+    bl_label = "Toggle Combine Faces"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        obj = context.object
+        if not obj or obj.type != 'MESH':
+            return {'CANCELLED'}
+        obj.anvil_allow_combined_faces = not obj.anvil_allow_combined_faces
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_PT_uv_lock_panel(Panel):
     """UV Maps - per-layer lock/unlock"""
 
-    bl_label = "UV Maps"
+    bl_label = ""
     bl_idname = "LEVELDESIGN_PT_uv_lock_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
 
+
     @classmethod
     def poll(cls, context):
         return is_level_design_workspace()
+
+    def draw_header(self, context):
+        in_edit_mode = context.mode == 'EDIT_MESH'
+        # icon = 'LAYER_ACTIVE' if in_edit_mode else 'LAYER_USED'
+        text = "UV Maps"
+        if not in_edit_mode:
+            text += "  \u2192 Edit Mode"
+        self.layout.label(text=text)  # icon=icon
 
     def draw(self, context):
         layout = self.layout
         obj = context.object
         in_edit_mode = context.mode == 'EDIT_MESH'
         has_mesh = obj and obj.type == 'MESH'
-
-        if not in_edit_mode:
-            layout.label(text="(Edit Mode required)", icon='INFO')
 
         if not has_mesh:
             row = layout.row()
@@ -201,15 +237,33 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
 class LEVELDESIGN_PT_uv_settings_panel(Panel):
     """UV Settings (Scale, Rotation, Offset)"""
 
-    bl_label = "UV Settings"
+    bl_label = ""
     bl_idname = "LEVELDESIGN_PT_uv_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
 
+
     @classmethod
     def poll(cls, context):
         return is_level_design_workspace()
+
+    def draw_header(self, context):
+        in_edit_mode = context.mode == 'EDIT_MESH'
+        in_face_mode = (in_edit_mode and
+                        context.tool_settings.mesh_select_mode[2])
+        has_selection = in_face_mode and get_selected_face_count(context) > 0
+        all_hotspot = has_selection and get_all_selected_hotspot()
+        # active = has_selection and not all_hotspot
+        # icon = 'LAYER_ACTIVE' if active else 'LAYER_USED'
+        text = "UV Settings"
+        if not in_edit_mode:
+            text += "  \u2192 Edit Mode"
+        elif not has_selection:
+            text += "  \u2192 Select Faces"
+        elif all_hotspot:
+            text += "  \u2192 Select Non-Hotspots"
+        self.layout.label(text=text)  # icon=icon
 
     def draw(self, context):
         layout = self.layout
@@ -237,9 +291,6 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
                 col_warn.label(
                     text="Apply Object Scale (Ctrl+A).",
                 )
-
-        if all_hotspot:
-            layout.label(text="Hotspot texture", icon='INFO')
 
         col = layout.column(align=True)
 
@@ -269,6 +320,111 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
         off_row.prop(props, "texture_offset_y")
 
 
+class LEVELDESIGN_PT_hotspotting_panel(Panel):
+    """Hotspotting Controls"""
+
+    bl_label = ""
+    bl_idname = "LEVELDESIGN_PT_hotspotting_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Anvil'
+
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def draw_header(self, context):
+        obj = context.object
+        in_edit_mode = context.mode == 'EDIT_MESH'
+        has_obj = obj and obj.type == 'MESH'
+        obj_selected = has_obj and obj.select_get()
+        has_hotspot_mat = has_obj and object_has_hotspot_material(obj)
+        any_hotspot = get_any_selected_hotspot()
+
+        text = "Hotspotting"
+        if not in_edit_mode:
+            # Object mode
+            # #BUG: if a hotspot material exists on the object but is not
+            # assigned to any face, this still shows as enabled.
+            if not obj_selected or not has_hotspot_mat:
+                text += "  \u2192 Select Hotspot Object"
+                active = False
+            else:
+                active = True
+        else:
+            # Edit mode
+            in_face_mode = context.tool_settings.mesh_select_mode[2]
+            has_selection = in_face_mode and get_selected_face_count(context) > 0
+            if not has_hotspot_mat:
+                text += "  \u2192 Add Hotspot Face"
+                active = False
+            elif has_selection and not any_hotspot:
+                text += "  \u2192 Select Hotspots"
+                active = False
+            else:
+                active = has_hotspot_mat
+        # icon = 'LAYER_ACTIVE' if active else 'LAYER_USED'
+        self.layout.label(text=text)  # icon=icon
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        in_edit_mode = context.mode == 'EDIT_MESH'
+        has_obj = obj and obj.type == 'MESH'
+        obj_selected = has_obj and obj.select_get()
+        has_hotspot_mat = has_obj and object_has_hotspot_material(obj)
+        any_hotspot = get_any_selected_hotspot()
+
+        # Determine if panel contents should be disabled
+        panel_disabled = False
+        if not in_edit_mode:
+            if not obj_selected or not has_hotspot_mat:
+                panel_disabled = True
+        else:
+            in_face_mode = context.tool_settings.mesh_select_mode[2]
+            has_selection = in_face_mode and get_selected_face_count(context) > 0
+            if not has_hotspot_mat:
+                panel_disabled = True
+            elif has_selection and not any_hotspot:
+                panel_disabled = True
+
+        layout.enabled = not panel_disabled
+
+        # Auto hotspot checkbox (per-object)
+        if has_obj:
+            # Checkbox toggles as buttons on one row
+            row = layout.row(align=True)
+            row.operator(
+                "leveldesign.toggle_auto_hotspot",
+                text="Auto Hotspot",
+                icon='CHECKBOX_HLT' if obj.anvil_auto_hotspot else 'CHECKBOX_DEHLT',
+                depress=obj.anvil_auto_hotspot,
+            )
+            row.operator(
+                "leveldesign.toggle_combine_faces",
+                text="Combine Faces",
+                icon='CHECKBOX_HLT' if obj.anvil_allow_combined_faces else 'CHECKBOX_DEHLT',
+                depress=obj.anvil_allow_combined_faces,
+            )
+
+            layout.prop(obj, "anvil_hotspot_seam_mode", text="")
+
+            layout.label(text="Random Selection Priority")
+            layout.prop(obj, "anvil_hotspot_size_weight", text="\u2190 Aspect / Area \u2192")
+        else:
+            layout.label(text="No mesh object")
+
+        # Apply Hotspot button (works in both edit and object mode)
+        layout.separator()
+        layout.operator(
+            "leveldesign.apply_hotspot",
+            text="Apply Hotspot",
+            icon='UV_DATA',
+        )
+
+
 class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     """UV Shortcuts (Projection and Alignment)"""
 
@@ -277,6 +433,7 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
 
     @classmethod
     def poll(cls, context):
@@ -310,55 +467,6 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
         )
 
 
-class LEVELDESIGN_PT_hotspotting_panel(Panel):
-    """Hotspotting Controls"""
-
-    bl_label = "Hotspotting"
-    bl_idname = "LEVELDESIGN_PT_hotspotting_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Anvil'
-
-    @classmethod
-    def poll(cls, context):
-        return is_level_design_workspace()
-
-    def draw(self, context):
-        layout = self.layout
-        props = context.scene.level_design_props
-        obj = context.object
-
-        # Auto hotspot checkbox
-        layout.prop(props, "auto_hotspot")
-
-        # Hotspot seam mode dropdown
-        layout.prop(props, "hotspot_seam_mode", text="")
-
-        # Allow combined faces checkbox (per-object)
-        row = layout.row()
-        if obj and obj.type == 'MESH':
-            row.prop(obj, "anvil_allow_combined_faces")
-        else:
-            row.enabled = False
-            row.label(text="Allow Combined Faces")
-
-        # Hotspot size weight (per-object)
-        row = layout.row()
-        if obj and obj.type == 'MESH':
-            row.prop(obj, "anvil_hotspot_size_weight")
-        else:
-            row.enabled = False
-            row.label(text="Size Weight")
-
-        # Apply Hotspot button (works in both edit and object mode)
-        row = layout.row()
-        row.operator(
-            "leveldesign.apply_hotspot",
-            text="Apply Hotspot",
-            icon='UV_DATA',
-        )
-
-
 class LEVELDESIGN_PT_texture_preview_panel(Panel):
     """Texture Preview"""
 
@@ -367,6 +475,7 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Anvil'
+
 
     @classmethod
     def poll(cls, context):
@@ -763,10 +872,12 @@ classes = (
     LEVELDESIGN_PT_status_panel,
     LEVELDESIGN_OT_set_active_render_uv,
     LEVELDESIGN_OT_toggle_uv_lock,
+    LEVELDESIGN_OT_toggle_auto_hotspot,
+    LEVELDESIGN_OT_toggle_combine_faces,
     LEVELDESIGN_PT_uv_lock_panel,
     LEVELDESIGN_PT_uv_settings_panel,
-    LEVELDESIGN_PT_uv_shortcuts_panel,
     LEVELDESIGN_PT_hotspotting_panel,
+    LEVELDESIGN_PT_uv_shortcuts_panel,
     LEVELDESIGN_PT_texture_preview_panel,
     LEVELDESIGN_PT_texture_settings_panel,
     LEVELDESIGN_PT_default_material_settings_panel,

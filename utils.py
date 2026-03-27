@@ -1211,6 +1211,26 @@ def face_has_hotspot_material(face, me):
     return False
 
 
+def object_has_hotspot_material(obj):
+    """Check if any material on an object uses a hotspottable texture.
+
+    Args:
+        obj: Blender object to check
+
+    Returns:
+        True if any material on the object is hotspottable, False otherwise.
+    """
+    from .hotspot_mapping.json_storage import is_texture_hotspottable
+
+    if not obj or obj.type != 'MESH' or not obj.data.materials:
+        return False
+    for mat in obj.data.materials:
+        image = get_image_from_material(mat)
+        if image and is_texture_hotspottable(image.name):
+            return True
+    return False
+
+
 def get_connected_faces(face):
     """Get all faces connected to a face via shared edges.
 

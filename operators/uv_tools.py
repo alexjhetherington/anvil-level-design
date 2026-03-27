@@ -1489,9 +1489,9 @@ class LEVELDESIGN_OT_apply_hotspot(Operator):
             selected_faces = [f for f in bm.faces if f.select]
             faces_to_process = selected_faces if selected_faces else list(bm.faces)
 
-        # Get seam mode and hotspot settings from properties
+        # Get seam mode and hotspot settings from per-object properties
         props = context.scene.level_design_props
-        seam_mode = props.hotspot_seam_mode
+        seam_mode = obj.anvil_hotspot_seam_mode
         allow_combined_faces = obj.anvil_allow_combined_faces
         size_weight = obj.anvil_hotspot_size_weight
 

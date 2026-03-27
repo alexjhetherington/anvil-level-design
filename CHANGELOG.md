@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.4.8
+- Adjust Anvil panels for clarity
+
 ## 1.4.7
 - Shift-G toggles between snap modes
 - Alt-G toggles a grid over geometry faces

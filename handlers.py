@@ -138,10 +138,15 @@ _multi_face_unset_scale = False
 _multi_face_unset_rotation = False
 _multi_face_unset_offset = False
 _all_selected_hotspot = False
+_any_selected_hotspot = False
 
 
 def get_all_selected_hotspot():
     return _all_selected_hotspot
+
+
+def get_any_selected_hotspot():
+    return _any_selected_hotspot
 
 
 def get_multi_face_mode():
@@ -266,12 +271,12 @@ def _apply_auto_hotspots_deferred():
         id_layer = get_face_id_layer(bm)
         selected_ids, active_id = save_face_selection(bm, id_layer)
 
-        props = context.scene.level_design_props
-        seam_mode = props.hotspot_seam_mode
+        seam_mode = obj.anvil_hotspot_seam_mode
         allow_combined_faces = obj.anvil_allow_combined_faces
         size_weight = obj.anvil_hotspot_size_weight
         seam_angle = obj.anvil_hotspot_seam_angle
 
+        props = context.scene.level_design_props
         debug_log(f"[AutoHotspot] Processing {len(all_hotspot_faces)} hotspot faces")
         result = apply_hotspots_to_mesh(
             bm, me, all_hotspot_faces, seam_mode, allow_combined_faces,
@@ -965,7 +970,7 @@ def _check_multi_face_consistency(selected_faces, uv_layer, ppm, me, first_trans
 
 def update_ui_from_selection(context):
     """Update UI properties when selection changes"""
-    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot
+    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot
 
     if context.mode != 'EDIT_MESH':
         return
@@ -988,13 +993,14 @@ def update_ui_from_selection(context):
 
     selected_faces = [f for f in bm.faces if f.select]
 
-    # Check if all selected faces have hotspot materials
+    # Check if all/any selected faces have hotspot materials
     if selected_faces:
-        _all_selected_hotspot = all(
-            face_has_hotspot_material(f, me) for f in selected_faces
-        )
+        hotspot_flags = [face_has_hotspot_material(f, me) for f in selected_faces]
+        _all_selected_hotspot = all(hotspot_flags)
+        _any_selected_hotspot = any(hotspot_flags)
     else:
         _all_selected_hotspot = False
+        _any_selected_hotspot = False
 
     if len(selected_faces) > 1:
         _multi_face_mode = True
@@ -1591,7 +1597,7 @@ def apply_texture_from_file_browser():
 
         # Determine if we should apply hotspot logic
         # Only apply hotspots if auto_hotspot is enabled
-        if props.auto_hotspot and new_is_hotspottable:
+        if obj.anvil_auto_hotspot and new_is_hotspottable:
             # New texture is hotspottable - apply hotspots to ALL faces with hotspot materials
             # (entire object shape is relevant when finding hotspot islands)
             all_hotspot_faces = get_all_hotspot_faces(bm, obj.data)
@@ -1601,7 +1607,7 @@ def apply_texture_from_file_browser():
                 id_layer = get_face_id_layer(bm)
                 selected_ids, active_id = save_face_selection(bm, id_layer)
 
-                seam_mode = props.hotspot_seam_mode
+                seam_mode = obj.anvil_hotspot_seam_mode
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
                 seam_angle = obj.anvil_hotspot_seam_angle
@@ -1619,7 +1625,7 @@ def apply_texture_from_file_browser():
                 for face in all_hotspot_faces:
                     if face.is_valid:
                         cache_single_face(face, bm, ppm, obj.data)
-        elif props.auto_hotspot and not new_is_hotspottable and any_previous_was_hotspottable and any_connected_has_hotspot:
+        elif obj.anvil_auto_hotspot and not new_is_hotspottable and any_previous_was_hotspottable and any_connected_has_hotspot:
             # New texture is NOT hotspottable, but some selected faces previously had hotspot
             # AND some connected faces have hotspot textures - re-hotspot all to recalculate islands
             all_hotspot_faces = get_all_hotspot_faces(bm, obj.data)
@@ -1629,7 +1635,7 @@ def apply_texture_from_file_browser():
                 id_layer = get_face_id_layer(bm)
                 selected_ids, active_id = save_face_selection(bm, id_layer)
 
-                seam_mode = props.hotspot_seam_mode
+                seam_mode = obj.anvil_hotspot_seam_mode
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
                 seam_angle = obj.anvil_hotspot_seam_angle
@@ -2308,7 +2314,7 @@ def on_depsgraph_update(scene, depsgraph):
                             # incorrectly block the next genuine selection change
                             from .operators import weld as _weld_mod
                             _weld_mod._weld_just_stored = False
-                            if not is_fresh_start and props.auto_hotspot:
+                            if not is_fresh_start and obj.anvil_auto_hotspot:
                                 _force_auto_hotspot = True
                                 _apply_auto_hotspots()
                         return
@@ -2344,7 +2350,7 @@ def on_depsgraph_update(scene, depsgraph):
                     apply_world_scale_uvs(obj, scene)
                     apply_uv_lock(obj, scene)
 
-                    if not is_fresh_start and props.auto_hotspot:
+                    if not is_fresh_start and obj.anvil_auto_hotspot:
                         _apply_auto_hotspots()
 
                     _file_loaded_into_edit_depsgraph = False
@@ -2437,7 +2443,7 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _last_tracked_mode
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot, _last_tracked_mode
 
     # Clear face orientation msgbus subscription and restore state
     bpy.msgbus.clear_by_owner(_face_orientation_msgbus_owner)
@@ -2504,3 +2510,4 @@ def unregister():
     _multi_face_unset_rotation = False
     _multi_face_unset_offset = False
     _all_selected_hotspot = False
+    _any_selected_hotspot = False

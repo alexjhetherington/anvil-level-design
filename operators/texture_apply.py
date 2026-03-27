@@ -396,8 +396,8 @@ def _invoke_apply_setup(op, context, event):
 
     props = context.scene.level_design_props
     op._ppm = props.pixels_per_meter
-    op._auto_hotspot = props.auto_hotspot
-    op._hotspot_seam_mode = props.hotspot_seam_mode
+    op._auto_hotspot = obj.anvil_auto_hotspot
+    op._hotspot_seam_mode = obj.anvil_hotspot_seam_mode
     op._allow_combined_faces = obj.anvil_allow_combined_faces
     op._size_weight = obj.anvil_hotspot_size_weight
     op._painted_face_indices = set()
@@ -1041,14 +1041,14 @@ class pick_image_from_face(Operator):
 
         new_is_hotspottable = is_texture_hotspottable(image.name)
 
-        if props.auto_hotspot and new_is_hotspottable:
+        if edit_obj.anvil_auto_hotspot and new_is_hotspottable:
             all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
             if all_hotspot_faces:
                 id_layer = get_face_id_layer(bm_edit)
                 selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
-                seam_mode = props.hotspot_seam_mode
+                seam_mode = edit_obj.anvil_hotspot_seam_mode
                 allow_combined_faces = edit_obj.anvil_allow_combined_faces
                 size_weight = edit_obj.anvil_hotspot_size_weight
 
@@ -1063,7 +1063,7 @@ class pick_image_from_face(Operator):
                     if face.is_valid:
                         cache_single_face(face, bm_edit, ppm, me)
         else:
-            if (props.auto_hotspot and not new_is_hotspottable
+            if (edit_obj.anvil_auto_hotspot and not new_is_hotspottable
                     and any_previous_was_hotspottable and any_connected_has_hotspot):
                 all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
@@ -1071,7 +1071,7 @@ class pick_image_from_face(Operator):
                     id_layer = get_face_id_layer(bm_edit)
                     selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
-                    seam_mode = props.hotspot_seam_mode
+                    seam_mode = edit_obj.anvil_hotspot_seam_mode
                     allow_combined_faces = edit_obj.anvil_allow_combined_faces
                     size_weight = edit_obj.anvil_hotspot_size_weight
 

@@ -465,22 +465,8 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         update=update_projection_scale,
     )
 
-    hotspot_seam_mode: EnumProperty(
-        name="Seam Mode",
-        description="How to handle seams after hotspot mapping",
-        items=[
-            ('MAINTAIN_USER', "Maintain User Seams", "Remember seams before hotspotting and restore them after"),
-            ('DISPLAY_ALL', "Display All Seams", "Keep existing seams and add seams around single quad islands"),
-            ('CLEAR_ALL', "Clear All Seams", "Clear all seams after hotspotting"),
-        ],
-        default='CLEAR_ALL',
-    )
-
-    auto_hotspot: BoolProperty(
-        name="Auto Hotspot",
-        description="Automatically apply hotspot mapping after geometry changes",
-        default=False,
-    )
+    # auto_hotspot and hotspot_seam_mode moved to per-object properties
+    # (see register() below)
 
     # Face orientation overlay state saved before forcing it on in vertex paint/sculpt.
     # -1 = not saved, 0 = was off, 1 = was on
@@ -674,7 +660,7 @@ def register():
 
     # Per-object allow combined faces property for hotspotting
     bpy.types.Object.anvil_allow_combined_faces = BoolProperty(
-        name="Allow Combined Faces",
+        name="Combine Faces",
         description="Allow multi-face islands during hotspot mapping. When disabled, each face is mapped independently",
         default=True,
     )
@@ -689,8 +675,29 @@ def register():
         subtype='FACTOR',
     )
 
+    # Per-object auto hotspot toggle
+    bpy.types.Object.anvil_auto_hotspot = BoolProperty(
+        name="Auto Hotspot",
+        description="Automatically apply hotspot mapping after geometry changes",
+        default=False,
+    )
+
+    # Per-object seam mode for hotspot mapping
+    bpy.types.Object.anvil_hotspot_seam_mode = EnumProperty(
+        name="Seam Mode",
+        description="How to handle seams after hotspot mapping",
+        items=[
+            ('MAINTAIN_USER', "Maintain User Seams", "Remember seams before hotspotting and restore them after"),
+            ('DISPLAY_ALL', "Display All Seams", "Keep existing seams and add seams around single quad islands"),
+            ('CLEAR_ALL', "Clear All Seams", "Clear all seams after hotspotting"),
+        ],
+        default='CLEAR_ALL',
+    )
+
 
 def unregister():
+    del bpy.types.Object.anvil_hotspot_seam_mode
+    del bpy.types.Object.anvil_auto_hotspot
     del bpy.types.Object.anvil_hotspot_size_weight
     del bpy.types.Object.anvil_allow_combined_faces
     del bpy.types.Object.anvil_uv_map_settings
