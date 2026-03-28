@@ -802,7 +802,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
             uv_layer = get_render_active_uv_layer(bm, me)
         if uv_layer is None:
             uv_layer = bm.loops.layers.uv.verify()
-    print(f"[Hotspot Perf] Setup & filter: {time.perf_counter() - t0:.4f}s ({len(hotspottable_faces)} hotspottable faces from {len(faces)} input)")
+    debug_log(f"[Hotspot Perf] Setup & filter: {time.perf_counter() - t0:.4f}s ({len(hotspottable_faces)} hotspottable faces from {len(faces)} input)")
 
     # Phase 1: Group quad faces by angle and mark seams
     # This marks seams where face normals differ by > SEAM_ANGLE,
@@ -811,7 +811,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     debug_log(f"[Hotspot] Processing topology for {len(hotspottable_faces)} faces")
     quad_groups, non_quad_faces = get_quad_islands(bm, hotspottable_faces, SEAM_ANGLE)
     debug_log(f"[Hotspot] Created {len(quad_groups)} quad groups, {len(non_quad_faces)} non-quad faces")
-    print(f"[Hotspot Perf] Phase 1 - Topology (get_quad_islands): {time.perf_counter() - t0:.4f}s ({len(quad_groups)} groups, {len(non_quad_faces)} non-quads)")
+    debug_log(f"[Hotspot Perf] Phase 1 - Topology (get_quad_islands): {time.perf_counter() - t0:.4f}s ({len(quad_groups)} groups, {len(non_quad_faces)} non-quads)")
 
     # Phase 2: Select faces and unwrap with CONFORMAL
     t0 = time.perf_counter()
@@ -821,13 +821,13 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         face.select = True
 
     bpy.ops.uv.unwrap(method='CONFORMAL', margin=0.001)
-    print(f"[Hotspot Perf] Phase 2 - UV unwrap (CONFORMAL): {time.perf_counter() - t0:.4f}s")
+    debug_log(f"[Hotspot Perf] Phase 2 - UV unwrap (CONFORMAL): {time.perf_counter() - t0:.4f}s")
 
     # Phase 3: Detect UV islands and categorize by geometry type and size
     t0 = time.perf_counter()
     multi_quad_islands, single_quad_islands, ngon_islands = get_uv_islands(bm, hotspottable_faces, uv_layer)
     debug_log(f"[Hotspot] Found {len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon islands")
-    print(f"[Hotspot Perf] Phase 3 - Island detection: {time.perf_counter() - t0:.4f}s ({len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon)")
+    debug_log(f"[Hotspot Perf] Phase 3 - Island detection: {time.perf_counter() - t0:.4f}s ({len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon)")
 
     # If combined faces disabled (per-object setting), split all multi-quad islands into single faces
     # This makes the previous seam calculation redundant, so perhaps should be refactored
@@ -859,7 +859,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         debug_log(f"[Hotspot] Splitting failed multi-quad into {len(island)} single quads")
         for face in island:
             single_quad_islands.append([face])
-    print(f"[Hotspot Perf] Phase 4a - Multi-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(multi_quad_rectangled_islands)} success, {len(multi_quad_not_rectangled_islands)} failed)")
+    debug_log(f"[Hotspot Perf] Phase 4a - Multi-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(multi_quad_rectangled_islands)} success, {len(multi_quad_not_rectangled_islands)} failed)")
 
     # Phase 4b: Apply rectangle fitting to single-quad islands (always succeeds)
     t0 = time.perf_counter()
@@ -869,7 +869,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         result = make_single_quad_into_rectangle(bm, island, uv_layer)
         debug_log(f"[Hotspot] Single-quad island {i}: aspect={result['aspect_ratio']:.3f}")
         single_quad_rectangled_islands.append((island, result))
-    print(f"[Hotspot Perf] Phase 4b - Single-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(single_quad_rectangled_islands)} islands)")
+    debug_log(f"[Hotspot Perf] Phase 4b - Single-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(single_quad_rectangled_islands)} islands)")
 
     # Log summary of categorized islands
     debug_log(f"[Hotspot] Island summary:")
@@ -957,7 +957,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     for island, result in single_quad_rectangled_islands:
         aspect_ratio = result.get('aspect_ratio', 1.0)
         apply_hotspot_to_island(island, aspect_ratio)
-    print(f"[Hotspot Perf] Phase 5 - Hotspot matching & UV apply (quads): {time.perf_counter() - t0:.4f}s ({applied_count} applied, {no_match_count} no match)")
+    debug_log(f"[Hotspot Perf] Phase 5 - Hotspot matching & UV apply (quads): {time.perf_counter() - t0:.4f}s ({applied_count} applied, {no_match_count} no match)")
 
     # Phase 6: Apply hotspot UVs to ngon islands (using CONFORMAL bounding box)
     t0 = time.perf_counter()
@@ -986,7 +986,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         aspect_ratio = width / height
         apply_hotspot_to_island(island, aspect_ratio)
 
-    print(f"[Hotspot Perf] Phase 6 - Hotspot matching & UV apply (ngons): {time.perf_counter() - t0:.4f}s ({applied_count - ngon_applied_before} applied)")
+    debug_log(f"[Hotspot Perf] Phase 6 - Hotspot matching & UV apply (ngons): {time.perf_counter() - t0:.4f}s ({applied_count - ngon_applied_before} applied)")
     debug_log(f"[Hotspot] Applied hotspots to {applied_count} islands, {no_match_count} had no valid match")
 
     # Restore original user seams (clear scaffolding seams added during hotspotting)
@@ -1002,14 +1002,14 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     else:
         debug_log("[Hotspot] DEBUG_KEEP_HOTSPOT_SEAMS: keeping all scaffolding seams")
 
-    print(f"[Hotspot Perf] Seam restore: {time.perf_counter() - t0:.4f}s")
+    debug_log(f"[Hotspot Perf] Seam restore: {time.perf_counter() - t0:.4f}s")
 
     # Restore selection
     for face in hotspottable_faces:
         face.select = True
     bmesh.update_edit_mesh(me)
 
-    print(f"[Hotspot Perf] TOTAL: {time.perf_counter() - t_total_start:.4f}s")
+    debug_log(f"[Hotspot Perf] TOTAL: {time.perf_counter() - t_total_start:.4f}s")
     return (len(hotspottable_faces), skipped_no_hotspot, 0)
 
 
