@@ -529,11 +529,6 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
     face = island[0]
     loops = list(face.loops)
 
-    # Select only this face
-    for f in bm.faces:
-        f.select = False
-    face.select = True
-
     # Calculate edge lengths
     edge1_len = (loops[0].vert.co - loops[1].vert.co).length
     edge2_len = (loops[1].vert.co - loops[2].vert.co).length
@@ -554,7 +549,11 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
 
 
 def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
-    """Attempt to fit a multi-quad island's UVs into a rectangle using follow_active_quads.
+    """Fit a multi-quad island's UVs into a rectangle by propagating UVs across shared edges.
+
+    Starting from the first face (whose UVs are set from 3D edge lengths),
+    BFS-walks to neighbors via shared edges and places each new face's UVs
+    so the shared edge anchors it and the opposite edge uses 3D lengths.
 
     Args:
         bm: BMesh instance
@@ -572,42 +571,149 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
 
     debug_log(f"[try_make_multi_quad_into_rectangle] Processing island with {len(island)} faces")
 
-    # Select only this island's faces
-    for f in bm.faces:
-        f.select = False
+    island_set = set(island)
+
+    # Build edge -> faces lookup for this island only
+    edge_faces = {}
     for face in island:
-        face.select = True
+        for edge in face.edges:
+            edge_faces.setdefault(edge, []).append(face)
 
     # Set up the first quad with proper UVs based on its 3D proportions
     first_face = island[0]
     loops = list(first_face.loops)
 
-    # Calculate edge lengths of first quad
     edge1_len = (loops[0].vert.co - loops[1].vert.co).length
     edge2_len = (loops[1].vert.co - loops[2].vert.co).length
 
-    # Set UVs for first quad
     loops[0][uv_layer].uv = Vector((0, 0))
     loops[1][uv_layer].uv = Vector((edge1_len, 0))
     loops[2][uv_layer].uv = Vector((edge1_len, edge2_len))
     loops[3][uv_layer].uv = Vector((0, edge2_len))
 
-    # Set as active face
-    bm.faces.active = first_face
+    # BFS propagation
+    visited = {first_face}
+    queue = [first_face]
 
-    # Run follow active quads
-    bpy.ops.uv.follow_active_quads()
+    while queue:
+        current = queue.pop(0)
+
+        # Build vert -> loop lookup for current face
+        cur_vert_loop = {}
+        for loop in current.loops:
+            cur_vert_loop[loop.vert] = loop
+
+        for edge in current.edges:
+            neighbors = edge_faces.get(edge)
+            if not neighbors:
+                continue
+
+            for neighbor in neighbors:
+                if neighbor in visited:
+                    continue
+
+                # Find the two shared verts and two non-shared verts on the neighbor
+                shared_v0, shared_v1 = edge.verts
+                nb_loops = list(neighbor.loops)
+
+                # Get loop indices for shared verts in the neighbor
+                nb_vert_to_idx = {}
+                for i, loop in enumerate(nb_loops):
+                    nb_vert_to_idx[loop.vert] = i
+
+                if shared_v0 not in nb_vert_to_idx or shared_v1 not in nb_vert_to_idx:
+                    continue
+
+                idx0 = nb_vert_to_idx[shared_v0]
+                idx1 = nb_vert_to_idx[shared_v1]
+
+                # Copy shared edge UVs from current face to neighbor
+                uv_s0 = cur_vert_loop[shared_v0][uv_layer].uv.copy()
+                uv_s1 = cur_vert_loop[shared_v1][uv_layer].uv.copy()
+                nb_loops[idx0][uv_layer].uv = uv_s0
+                nb_loops[idx1][uv_layer].uv = uv_s1
+
+                # The other two verts (in loop order) need their UVs computed.
+                # In a quad with loop indices 0,1,2,3, if the shared edge is
+                # idx0->idx1, the opposite two are the remaining indices.
+                # We need to figure out which non-shared vert connects to which
+                # shared vert via an edge of the quad.
+                #
+                # Loop order for a quad: 0-1-2-3 with edges 0-1, 1-2, 2-3, 3-0
+                # If shared are at idx0 and idx1, there are two cases:
+                #   Adjacent in loop: e.g. shared=0,1 -> other=2,3
+                #   Diagonal: shouldn't happen for a shared edge
+
+                # Find the two non-shared loop indices
+                all_idx = {0, 1, 2, 3}
+                other_indices = sorted(all_idx - {idx0, idx1})
+                other_a, other_b = other_indices
+
+                # Determine which non-shared vert connects to which shared vert.
+                # In quad loop order, edges are (0,1),(1,2),(2,3),(3,0).
+                # other_a connects to a shared vert if they're adjacent in loop order.
+                vert_a = nb_loops[other_a].vert
+                vert_b = nb_loops[other_b].vert
+
+                # Check adjacency: other_a is adjacent to idx if (other_a+1)%4==idx or (idx+1)%4==other_a
+                def adjacent(i, j):
+                    return (i + 1) % 4 == j or (j + 1) % 4 == i
+
+                # Find which shared vert is adjacent to other_a
+                if adjacent(other_a, idx0):
+                    # other_a connects to shared_v0, other_b connects to shared_v1
+                    anchor_a_uv = uv_s0
+                    anchor_b_uv = uv_s1
+                    anchor_a_vert = shared_v0
+                    anchor_b_vert = shared_v1
+                else:
+                    # other_a connects to shared_v1, other_b connects to shared_v0
+                    anchor_a_uv = uv_s1
+                    anchor_b_uv = uv_s0
+                    anchor_a_vert = shared_v1
+                    anchor_b_vert = shared_v0
+
+                # Compute the UV direction perpendicular to the shared edge
+                shared_uv_dir = uv_s1 - uv_s0
+                # Perpendicular (rotated 90 degrees)
+                perp = Vector((-shared_uv_dir.y, shared_uv_dir.x))
+                if perp.length > 0.0001:
+                    perp.normalize()
+
+                # Ensure perp points AWAY from the current face's non-shared verts.
+                # Find current face's non-shared vert UVs and check which side they're on.
+                shared_verts = {shared_v0, shared_v1}
+                shared_mid_uv = (uv_s0 + uv_s1) * 0.5
+                for loop in current.loops:
+                    if loop.vert not in shared_verts:
+                        cur_other_uv = loop[uv_layer].uv
+                        if (cur_other_uv - shared_mid_uv).dot(perp) > 0:
+                            perp = -perp
+                        break
+
+                # The depth is the 3D distance from shared edge to opposite edge
+                depth_a = (vert_a.co - anchor_a_vert.co).length
+                depth_b = (vert_b.co - anchor_b_vert.co).length
+                depth = (depth_a + depth_b) / 2
+
+                nb_loops[other_a][uv_layer].uv = anchor_a_uv + perp * depth
+                nb_loops[other_b][uv_layer].uv = anchor_b_uv + perp * depth
+
+                visited.add(neighbor)
+                queue.append(neighbor)
 
     # Calculate final aspect ratio from resulting UVs
-    all_uvs = []
+    min_u = float('inf')
+    max_u = float('-inf')
+    min_v = float('inf')
+    max_v = float('-inf')
     for face in island:
         for loop in face.loops:
-            all_uvs.append(loop[uv_layer].uv)
-
-    min_u = min(uv.x for uv in all_uvs)
-    max_u = max(uv.x for uv in all_uvs)
-    min_v = min(uv.y for uv in all_uvs)
-    max_v = max(uv.y for uv in all_uvs)
+            u, v = loop[uv_layer].uv
+            if u < min_u: min_u = u
+            if u > max_u: max_u = u
+            if v < min_v: min_v = v
+            if v > max_v: max_v = v
 
     width = max_u - min_u
     height = max_v - min_v
