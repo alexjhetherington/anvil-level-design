@@ -397,7 +397,6 @@ def _invoke_apply_setup(op, context, event):
     props = context.scene.level_design_props
     op._ppm = props.pixels_per_meter
     op._auto_hotspot = obj.anvil_auto_hotspot
-    op._hotspot_seam_mode = obj.anvil_hotspot_seam_mode
     op._allow_combined_faces = obj.anvil_allow_combined_faces
     op._size_weight = obj.anvil_hotspot_size_weight
     op._painted_face_indices = set()
@@ -893,7 +892,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                 selected_ids, active_id = save_face_selection(bm, id_layer)
 
                 apply_hotspots_to_mesh(
-                    bm, me, all_hotspot_faces, self._hotspot_seam_mode,
+                    bm, me, all_hotspot_faces,
                     self._allow_combined_faces, self._obj_matrix,
                     self._ppm, self._size_weight
                 )
@@ -919,7 +918,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                     selected_ids, active_id = save_face_selection(bm, id_layer)
 
                     apply_hotspots_to_mesh(
-                        bm, me, all_hotspot_faces, self._hotspot_seam_mode,
+                        bm, me, all_hotspot_faces,
                         self._allow_combined_faces, self._obj_matrix,
                         self._ppm, self._size_weight
                     )
@@ -1048,12 +1047,11 @@ class pick_image_from_face(Operator):
                 id_layer = get_face_id_layer(bm_edit)
                 selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
-                seam_mode = edit_obj.anvil_hotspot_seam_mode
                 allow_combined_faces = edit_obj.anvil_allow_combined_faces
                 size_weight = edit_obj.anvil_hotspot_size_weight
 
                 apply_hotspots_to_mesh(
-                    bm_edit, me, all_hotspot_faces, seam_mode, allow_combined_faces,
+                    bm_edit, me, all_hotspot_faces, allow_combined_faces,
                     edit_obj.matrix_world, ppm, size_weight
                 )
 
@@ -1071,12 +1069,11 @@ class pick_image_from_face(Operator):
                     id_layer = get_face_id_layer(bm_edit)
                     selected_ids, active_id = save_face_selection(bm_edit, id_layer)
 
-                    seam_mode = edit_obj.anvil_hotspot_seam_mode
                     allow_combined_faces = edit_obj.anvil_allow_combined_faces
                     size_weight = edit_obj.anvil_hotspot_size_weight
 
                     apply_hotspots_to_mesh(
-                        bm_edit, me, all_hotspot_faces, seam_mode, allow_combined_faces,
+                        bm_edit, me, all_hotspot_faces, allow_combined_faces,
                         edit_obj.matrix_world, ppm, size_weight
                     )
 

@@ -6,6 +6,9 @@ import math
 from mathutils import Vector
 
 
+DEBUG_KEEP_HOTSPOT_SEAMS = False
+
+
 def debug_log(msg):
     """Print debug message if logging is enabled via the Debug panel."""
     try:

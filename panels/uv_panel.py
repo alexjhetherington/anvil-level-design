@@ -409,8 +409,6 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
                 depress=obj.anvil_allow_combined_faces,
             )
 
-            layout.prop(obj, "anvil_hotspot_seam_mode", text="")
-
             layout.label(text="Random Selection Priority")
             layout.prop(obj, "anvil_hotspot_size_weight", text="\u2190 Aspect / Area \u2192")
         else:

@@ -19,6 +19,7 @@ from ..utils import (
     get_render_active_uv_layer,
     debug_log,
     face_has_hotspot_material,
+    DEBUG_KEEP_HOTSPOT_SEAMS,
 )
 from .topology import get_quad_islands
 
@@ -593,13 +594,12 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle=None, uv_layer=None):
-    # Store original seams if we need to restore them later
+def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle=None, uv_layer=None):
+    # Store original user seams so we can restore them after hotspotting
     original_seams = set()
-    if seam_mode == 'MAINTAIN_USER':
-        for edge in bm.edges:
-            if edge.seam:
-                original_seams.add(edge.index)
+    for edge in bm.edges:
+        if edge.seam:
+            original_seams.add(edge.index)
 
     # Note: We no longer clear seams at the start - existing seams are respected
     # by group_quad_faces_by_angle_and_existing_seams() as group boundaries
@@ -797,9 +797,8 @@ def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world
 
     debug_log(f"[Hotspot] Applied hotspots to {applied_count} islands, {no_match_count} had no valid match")
 
-    # Handle seams based on seam_mode
-    if seam_mode == 'MAINTAIN_USER':
-        # Clear all seams first, then restore original user seams
+    # Restore original user seams (clear scaffolding seams added during hotspotting)
+    if not DEBUG_KEEP_HOTSPOT_SEAMS:
         for edge in bm.edges:
             edge.seam = False
         bm.edges.ensure_lookup_table()
@@ -807,22 +806,8 @@ def apply_hotspots_to_mesh(bm, me, faces, seam_mode, allow_combined_faces, world
             if edge_idx < len(bm.edges):
                 bm.edges[edge_idx].seam = True
         debug_log(f"[Hotspot] Restored {len(original_seams)} user seams")
-
-    # Commented out because it's useful to see the islands to debug when combine faces is on but faces aren't combining
-    #elif seam_mode == 'DISPLAY_ALL':
-        # Keep existing seams and add seams around single quad islands
-        #for island, result in single_quad_rectangled_islands:
-        #    face = island[0]  # island is a list with one face for single quads
-        #    for edge in face.edges:
-        #        edge.seam = True
-        #debug_log(f"[Hotspot] Added seams around {len(single_quad_rectangled_islands)} single quad islands")
-
-    elif seam_mode == 'CLEAR_ALL':
-        # Clear all seams on processed faces
-        for face in hotspottable_faces:
-            for edge in face.edges:
-                edge.seam = False
-        debug_log("[Hotspot] Cleared all seams")
+    else:
+        debug_log("[Hotspot] DEBUG_KEEP_HOTSPOT_SEAMS: keeping all scaffolding seams")
 
     # Restore selection
     for face in hotspottable_faces:
@@ -1489,14 +1474,12 @@ class LEVELDESIGN_OT_apply_hotspot(Operator):
             selected_faces = [f for f in bm.faces if f.select]
             faces_to_process = selected_faces if selected_faces else list(bm.faces)
 
-        # Get seam mode and hotspot settings from per-object properties
         props = context.scene.level_design_props
-        seam_mode = obj.anvil_hotspot_seam_mode
         allow_combined_faces = obj.anvil_allow_combined_faces
         size_weight = obj.anvil_hotspot_size_weight
 
         applied_count, skipped_no_hotspot, skipped_not_quad = apply_hotspots_to_mesh(
-            bm, me, faces_to_process, seam_mode, allow_combined_faces,
+            bm, me, faces_to_process, allow_combined_faces,
             obj.matrix_world, props.pixels_per_meter, size_weight
         )
 
