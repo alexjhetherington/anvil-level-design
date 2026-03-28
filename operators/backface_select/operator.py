@@ -233,7 +233,7 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
         mouse_2d, max_iterations=8
     )
     # Combine new culled and front faces not already handled by center ray
-    new_faces = (fan_culled - center_culled_faces) | fan_front
+    new_faces = fan_culled - center_culled_faces
     if front_face is not None:
         new_faces.discard(front_face.index)
 

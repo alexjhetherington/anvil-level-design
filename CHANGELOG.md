@@ -2,7 +2,8 @@
 
 ## 1.4.8
 - Adjust Anvil panels for clarity
-- Significantly(!) improve hotspot performance 
+- Significantly(!) improve hotspot performance
+- Fix edge selection edge case (2 overlapping front faces) 
 
 ## 1.4.7
 - Shift-G toggles between snap modes
