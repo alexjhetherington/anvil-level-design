@@ -413,15 +413,17 @@ def set_island_uvs_to_origin(island, uv_layer):
             loop[uv_layer].uv.y = 0.0
 
 
-def get_uv_islands(bm, faces):
+def get_uv_islands(bm, faces, uv_layer):
     """Get UV islands from a set of faces, categorized by geometry type and size.
 
-    Uses select_linked with UV delimiter to find connected UV regions,
-    then categorizes each island by face count and geometry type.
+    Flood-fills UV connectivity directly via BMesh (no operator calls).
+    Two faces are in the same island if they share an edge and their UV
+    coordinates match at that edge in both faces' loops.
 
     Args:
         bm: BMesh instance
         faces: List of faces to find islands within
+        uv_layer: BMesh UV layer
 
     Returns:
         Tuple of:
@@ -432,32 +434,65 @@ def get_uv_islands(bm, faces):
     if not faces:
         return [], [], []
 
-    # Deselect all faces first
-    for f in bm.faces:
-        f.select = False
+    UV_EPSILON = 1e-5
+    face_set = set(faces)
+    visited = set()
 
-    # Track which faces we still need to process
-    remaining = set(faces)
+    # Build edge -> face lookup restricted to our face set
+    edge_faces = {}
+    for face in faces:
+        for edge in face.edges:
+            edge_faces.setdefault(edge.index, []).append(face)
+
     all_islands = []
 
-    while remaining:
-        # Select one unprocessed face
-        start_face = next(iter(remaining))
-        start_face.select = True
+    for face in faces:
+        if face in visited:
+            continue
 
-        # Expand selection to entire UV island
-        bpy.ops.mesh.select_linked(delimit={'UV'})
-
-        # Collect all selected faces that are in our original set
         island = []
-        for f in bm.faces:
-            if f.select and f in remaining:
-                island.append(f)
-                remaining.discard(f)
-            f.select = False
+        stack = [face]
+        visited.add(face)
 
-        if island:
-            all_islands.append(island)
+        while stack:
+            current = stack.pop()
+            island.append(current)
+
+            for edge in current.edges:
+                neighbors = edge_faces.get(edge.index)
+                if not neighbors:
+                    continue
+
+                for neighbor in neighbors:
+                    if neighbor in visited:
+                        continue
+
+                    # Check UV continuity across the shared edge
+                    # Get UV coords at edge verts for both faces
+                    v0, v1 = edge.verts
+                    cur_uv0 = cur_uv1 = None
+                    for loop in current.loops:
+                        if loop.vert == v0:
+                            cur_uv0 = loop[uv_layer].uv
+                        elif loop.vert == v1:
+                            cur_uv1 = loop[uv_layer].uv
+
+                    nb_uv0 = nb_uv1 = None
+                    for loop in neighbor.loops:
+                        if loop.vert == v0:
+                            nb_uv0 = loop[uv_layer].uv
+                        elif loop.vert == v1:
+                            nb_uv1 = loop[uv_layer].uv
+
+                    if cur_uv0 is None or cur_uv1 is None or nb_uv0 is None or nb_uv1 is None:
+                        continue
+
+                    if (abs(cur_uv0.x - nb_uv0.x) < UV_EPSILON and abs(cur_uv0.y - nb_uv0.y) < UV_EPSILON
+                            and abs(cur_uv1.x - nb_uv1.x) < UV_EPSILON and abs(cur_uv1.y - nb_uv1.y) < UV_EPSILON):
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+
+        all_islands.append(island)
 
     # Categorize islands
     multi_quad_islands = []
@@ -595,7 +630,11 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
 
 
 def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle=None, uv_layer=None):
+    import time
+    t_total_start = time.perf_counter()
+
     # Store original user seams so we can restore them after hotspotting
+    t0 = time.perf_counter()
     original_seams = set()
     for edge in bm.edges:
         if edge.seam:
@@ -629,25 +668,32 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
             uv_layer = get_render_active_uv_layer(bm, me)
         if uv_layer is None:
             uv_layer = bm.loops.layers.uv.verify()
+    print(f"[Hotspot Perf] Setup & filter: {time.perf_counter() - t0:.4f}s ({len(hotspottable_faces)} hotspottable faces from {len(faces)} input)")
 
     # Phase 1: Group quad faces by angle and mark seams
     # This marks seams where face normals differ by > SEAM_ANGLE,
     # treats non-quads as blocking boundaries, and marks minimal cut graph seams
+    t0 = time.perf_counter()
     debug_log(f"[Hotspot] Processing topology for {len(hotspottable_faces)} faces")
     quad_groups, non_quad_faces = get_quad_islands(bm, hotspottable_faces, SEAM_ANGLE)
     debug_log(f"[Hotspot] Created {len(quad_groups)} quad groups, {len(non_quad_faces)} non-quad faces")
+    print(f"[Hotspot Perf] Phase 1 - Topology (get_quad_islands): {time.perf_counter() - t0:.4f}s ({len(quad_groups)} groups, {len(non_quad_faces)} non-quads)")
 
     # Phase 2: Select faces and unwrap with CONFORMAL
+    t0 = time.perf_counter()
     for f in bm.faces:
         f.select = False
     for face in hotspottable_faces:
         face.select = True
 
     bpy.ops.uv.unwrap(method='CONFORMAL', margin=0.001)
+    print(f"[Hotspot Perf] Phase 2 - UV unwrap (CONFORMAL): {time.perf_counter() - t0:.4f}s")
 
     # Phase 3: Detect UV islands and categorize by geometry type and size
-    multi_quad_islands, single_quad_islands, ngon_islands = get_uv_islands(bm, hotspottable_faces)
+    t0 = time.perf_counter()
+    multi_quad_islands, single_quad_islands, ngon_islands = get_uv_islands(bm, hotspottable_faces, uv_layer)
     debug_log(f"[Hotspot] Found {len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon islands")
+    print(f"[Hotspot Perf] Phase 3 - Island detection: {time.perf_counter() - t0:.4f}s ({len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon)")
 
     # If combined faces disabled (per-object setting), split all multi-quad islands into single faces
     # This makes the previous seam calculation redundant, so perhaps should be refactored
@@ -659,6 +705,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         multi_quad_islands = []
 
     # Phase 4a: Apply rectangle fitting to multi-quad islands (can fail)
+    t0 = time.perf_counter()
     multi_quad_rectangled_islands = []
     multi_quad_not_rectangled_islands = []
 
@@ -678,14 +725,17 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         debug_log(f"[Hotspot] Splitting failed multi-quad into {len(island)} single quads")
         for face in island:
             single_quad_islands.append([face])
+    print(f"[Hotspot Perf] Phase 4a - Multi-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(multi_quad_rectangled_islands)} success, {len(multi_quad_not_rectangled_islands)} failed)")
 
     # Phase 4b: Apply rectangle fitting to single-quad islands (always succeeds)
+    t0 = time.perf_counter()
     single_quad_rectangled_islands = []
 
     for i, island in enumerate(single_quad_islands):
         result = make_single_quad_into_rectangle(bm, island, uv_layer)
         debug_log(f"[Hotspot] Single-quad island {i}: aspect={result['aspect_ratio']:.3f}")
         single_quad_rectangled_islands.append((island, result))
+    print(f"[Hotspot Perf] Phase 4b - Single-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(single_quad_rectangled_islands)} islands)")
 
     # Log summary of categorized islands
     debug_log(f"[Hotspot] Island summary:")
@@ -761,6 +811,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         return True
 
     # Apply to multi-quad rectangled islands
+    t0 = time.perf_counter()
     for island, result in multi_quad_rectangled_islands:
         aspect_ratio = result.get('aspect_ratio', 1.0)
         apply_hotspot_to_island(island, aspect_ratio)
@@ -769,8 +820,11 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     for island, result in single_quad_rectangled_islands:
         aspect_ratio = result.get('aspect_ratio', 1.0)
         apply_hotspot_to_island(island, aspect_ratio)
+    print(f"[Hotspot Perf] Phase 5 - Hotspot matching & UV apply (quads): {time.perf_counter() - t0:.4f}s ({applied_count} applied, {no_match_count} no match)")
 
     # Phase 6: Apply hotspot UVs to ngon islands (using CONFORMAL bounding box)
+    t0 = time.perf_counter()
+    ngon_applied_before = applied_count
     for island in ngon_islands:
         # Get UV bounding box aspect ratio from CONFORMAL unwrap
         all_uvs = []
@@ -795,9 +849,11 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         aspect_ratio = width / height
         apply_hotspot_to_island(island, aspect_ratio)
 
+    print(f"[Hotspot Perf] Phase 6 - Hotspot matching & UV apply (ngons): {time.perf_counter() - t0:.4f}s ({applied_count - ngon_applied_before} applied)")
     debug_log(f"[Hotspot] Applied hotspots to {applied_count} islands, {no_match_count} had no valid match")
 
     # Restore original user seams (clear scaffolding seams added during hotspotting)
+    t0 = time.perf_counter()
     if not DEBUG_KEEP_HOTSPOT_SEAMS:
         for edge in bm.edges:
             edge.seam = False
@@ -809,11 +865,14 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     else:
         debug_log("[Hotspot] DEBUG_KEEP_HOTSPOT_SEAMS: keeping all scaffolding seams")
 
+    print(f"[Hotspot Perf] Seam restore: {time.perf_counter() - t0:.4f}s")
+
     # Restore selection
     for face in hotspottable_faces:
         face.select = True
     bmesh.update_edit_mesh(me)
 
+    print(f"[Hotspot Perf] TOTAL: {time.perf_counter() - t_total_start:.4f}s")
     return (len(hotspottable_faces), skipped_no_hotspot, 0)
 
 
