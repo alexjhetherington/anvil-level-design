@@ -243,30 +243,34 @@ def remove_texture_as_hotspottable(texture_name):
     return save_hotspots(data)
 
 
-def get_texture_hotspots(texture_name):
+def get_texture_hotspots(texture_name, data=None):
     """Get all hotspots for a texture.
 
     Args:
         texture_name: Name of the texture.
+        data: Pre-loaded hotspot data dict. If None, loads from storage.
 
     Returns:
         List of hotspot dicts, or empty list if texture not found.
     """
-    data = load_hotspots()
+    if data is None:
+        data = load_hotspots()
     texture_data = data.get("textures", {}).get(texture_name, {})
     return texture_data.get("hotspots", [])
 
 
-def get_texture_dimensions(texture_name):
+def get_texture_dimensions(texture_name, data=None):
     """Get stored dimensions for a texture.
 
     Args:
         texture_name: Name of the texture.
+        data: Pre-loaded hotspot data dict. If None, loads from storage.
 
     Returns:
         Tuple (width, height), or (0, 0) if not found.
     """
-    data = load_hotspots()
+    if data is None:
+        data = load_hotspots()
     texture_data = data.get("textures", {}).get(texture_name, {})
     return (
         texture_data.get("image_width", 0),

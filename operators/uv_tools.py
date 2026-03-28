@@ -38,6 +38,7 @@ from ..hotspot_mapping.json_storage import (
     is_texture_hotspottable,
     get_texture_hotspots,
     get_texture_dimensions,
+    load_hotspots,
 )
 
 
@@ -885,6 +886,9 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     avg_scale = (abs(scale.x) + abs(scale.y) + abs(scale.z)) / 3
     area_scale_factor = avg_scale ** 2
 
+    # Pre-load hotspot data once (avoids JSON parsing per-island)
+    hotspot_data = load_hotspots()
+
     # Helper to apply hotspot to an island
     def apply_hotspot_to_island(island, aspect_ratio):
         nonlocal applied_count, no_match_count
@@ -899,13 +903,13 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
             return False
 
         texture_name = image.name
-        hotspots = get_texture_hotspots(texture_name)
+        hotspots = get_texture_hotspots(texture_name, hotspot_data)
 
         if not hotspots:
             debug_log(f"[Hotspot] No hotspots defined for texture: {texture_name}")
             return False
 
-        image_width, image_height = get_texture_dimensions(texture_name)
+        image_width, image_height = get_texture_dimensions(texture_name, hotspot_data)
         if image_width <= 0 or image_height <= 0:
             # Fall back to actual image dimensions
             image_width = image.size[0]
