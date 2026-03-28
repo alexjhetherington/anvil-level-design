@@ -591,6 +591,16 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     loops[2][uv_layer].uv = Vector((edge1_len, edge2_len))
     loops[3][uv_layer].uv = Vector((0, edge2_len))
 
+    # Track UV positions assigned to each vertex during BFS.
+    # When a vert was already positioned by a previously processed face,
+    # reuse that position to keep shared edges consistent across the grid.
+    vert_uv = {}
+    for loop in loops:
+        vert_uv[loop.vert] = loop[uv_layer].uv.copy()
+
+    def adjacent(i, j):
+        return (i + 1) % 4 == j or (j + 1) % 4 == i
+
     # BFS propagation
     visited = {first_face}
     queue = [first_face]
@@ -612,11 +622,9 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
                 if neighbor in visited:
                     continue
 
-                # Find the two shared verts and two non-shared verts on the neighbor
                 shared_v0, shared_v1 = edge.verts
                 nb_loops = list(neighbor.loops)
 
-                # Get loop indices for shared verts in the neighbor
                 nb_vert_to_idx = {}
                 for i, loop in enumerate(nb_loops):
                     nb_vert_to_idx[loop.vert] = i
@@ -633,71 +641,72 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
                 nb_loops[idx0][uv_layer].uv = uv_s0
                 nb_loops[idx1][uv_layer].uv = uv_s1
 
-                # The other two verts (in loop order) need their UVs computed.
-                # In a quad with loop indices 0,1,2,3, if the shared edge is
-                # idx0->idx1, the opposite two are the remaining indices.
-                # We need to figure out which non-shared vert connects to which
-                # shared vert via an edge of the quad.
-                #
-                # Loop order for a quad: 0-1-2-3 with edges 0-1, 1-2, 2-3, 3-0
-                # If shared are at idx0 and idx1, there are two cases:
-                #   Adjacent in loop: e.g. shared=0,1 -> other=2,3
-                #   Diagonal: shouldn't happen for a shared edge
-
                 # Find the two non-shared loop indices
                 all_idx = {0, 1, 2, 3}
                 other_indices = sorted(all_idx - {idx0, idx1})
                 other_a, other_b = other_indices
 
-                # Determine which non-shared vert connects to which shared vert.
-                # In quad loop order, edges are (0,1),(1,2),(2,3),(3,0).
-                # other_a connects to a shared vert if they're adjacent in loop order.
                 vert_a = nb_loops[other_a].vert
                 vert_b = nb_loops[other_b].vert
 
-                # Check adjacency: other_a is adjacent to idx if (other_a+1)%4==idx or (idx+1)%4==other_a
-                def adjacent(i, j):
-                    return (i + 1) % 4 == j or (j + 1) % 4 == i
-
-                # Find which shared vert is adjacent to other_a
+                # Determine which non-shared vert connects to which shared vert
                 if adjacent(other_a, idx0):
-                    # other_a connects to shared_v0, other_b connects to shared_v1
                     anchor_a_uv = uv_s0
                     anchor_b_uv = uv_s1
                     anchor_a_vert = shared_v0
                     anchor_b_vert = shared_v1
                 else:
-                    # other_a connects to shared_v1, other_b connects to shared_v0
                     anchor_a_uv = uv_s1
                     anchor_b_uv = uv_s0
                     anchor_a_vert = shared_v1
                     anchor_b_vert = shared_v0
 
-                # Compute the UV direction perpendicular to the shared edge
-                shared_uv_dir = uv_s1 - uv_s0
-                # Perpendicular (rotated 90 degrees)
-                perp = Vector((-shared_uv_dir.y, shared_uv_dir.x))
-                if perp.length > 0.0001:
-                    perp.normalize()
+                # Check if either non-shared vert already has a UV from a
+                # previously processed face. If so, reuse it for grid consistency.
+                a_known = vert_a in vert_uv
+                b_known = vert_b in vert_uv
 
-                # Ensure perp points AWAY from the current face's non-shared verts.
-                # Find current face's non-shared vert UVs and check which side they're on.
-                shared_verts = {shared_v0, shared_v1}
-                shared_mid_uv = (uv_s0 + uv_s1) * 0.5
-                for loop in current.loops:
-                    if loop.vert not in shared_verts:
-                        cur_other_uv = loop[uv_layer].uv
-                        if (cur_other_uv - shared_mid_uv).dot(perp) > 0:
-                            perp = -perp
-                        break
+                if a_known and b_known:
+                    # Both already positioned (closing face of a grid)
+                    nb_loops[other_a][uv_layer].uv = vert_uv[vert_a].copy()
+                    nb_loops[other_b][uv_layer].uv = vert_uv[vert_b].copy()
+                elif a_known:
+                    # vert_a is known; derive vert_b by matching the offset
+                    nb_loops[other_a][uv_layer].uv = vert_uv[vert_a].copy()
+                    offset = vert_uv[vert_a] - anchor_a_uv
+                    nb_loops[other_b][uv_layer].uv = anchor_b_uv + offset
+                    vert_uv[vert_b] = nb_loops[other_b][uv_layer].uv.copy()
+                elif b_known:
+                    # vert_b is known; derive vert_a by matching the offset
+                    nb_loops[other_b][uv_layer].uv = vert_uv[vert_b].copy()
+                    offset = vert_uv[vert_b] - anchor_b_uv
+                    nb_loops[other_a][uv_layer].uv = anchor_a_uv + offset
+                    vert_uv[vert_a] = nb_loops[other_a][uv_layer].uv.copy()
+                else:
+                    # Neither vert known — compute from 3D edge lengths
+                    shared_uv_dir = uv_s1 - uv_s0
+                    perp = Vector((-shared_uv_dir.y, shared_uv_dir.x))
+                    if perp.length > 0.0001:
+                        perp.normalize()
 
-                # The depth is the 3D distance from shared edge to opposite edge
-                depth_a = (vert_a.co - anchor_a_vert.co).length
-                depth_b = (vert_b.co - anchor_b_vert.co).length
-                depth = (depth_a + depth_b) / 2
+                    # Ensure perp points AWAY from the current face
+                    shared_verts = {shared_v0, shared_v1}
+                    shared_mid_uv = (uv_s0 + uv_s1) * 0.5
+                    for loop in current.loops:
+                        if loop.vert not in shared_verts:
+                            cur_other_uv = loop[uv_layer].uv
+                            if (cur_other_uv - shared_mid_uv).dot(perp) > 0:
+                                perp = -perp
+                            break
 
-                nb_loops[other_a][uv_layer].uv = anchor_a_uv + perp * depth
-                nb_loops[other_b][uv_layer].uv = anchor_b_uv + perp * depth
+                    depth_a = (vert_a.co - anchor_a_vert.co).length
+                    depth_b = (vert_b.co - anchor_b_vert.co).length
+                    depth = (depth_a + depth_b) / 2
+
+                    nb_loops[other_a][uv_layer].uv = anchor_a_uv + perp * depth
+                    nb_loops[other_b][uv_layer].uv = anchor_b_uv + perp * depth
+                    vert_uv[vert_a] = nb_loops[other_a][uv_layer].uv.copy()
+                    vert_uv[vert_b] = nb_loops[other_b][uv_layer].uv.copy()
 
                 visited.add(neighbor)
                 queue.append(neighbor)
@@ -723,6 +732,24 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
             'success': False,
             'aspect_ratio': 0.0,
             'reason': 'zero_size',
+        }
+
+    # Verify the faces form a rectangular grid. A rectangular grid of quads
+    # has exactly 4 corner vertices (vertices touching exactly 1 face in the
+    # island). An L-shape or other non-rectangular arrangement has more.
+    island_set = set(island)
+    vert_face_count = {}
+    for face in island:
+        for vert in face.verts:
+            vert_face_count[vert] = vert_face_count.get(vert, 0) + 1
+
+    corner_count = sum(1 for count in vert_face_count.values() if count == 1)
+
+    if corner_count != 4:
+        return {
+            'success': False,
+            'aspect_ratio': 0.0,
+            'reason': 'not_rectangular',
         }
 
     aspect_ratio = width / height
