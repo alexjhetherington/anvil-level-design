@@ -735,7 +735,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle=None, uv_layer=None):
+def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, uv_layer=None):
     import time
     t_total_start = time.perf_counter()
 

@@ -273,13 +273,13 @@ def _apply_auto_hotspots_deferred():
 
         allow_combined_faces = obj.anvil_allow_combined_faces
         size_weight = obj.anvil_hotspot_size_weight
-        seam_angle = obj.anvil_hotspot_seam_angle
+
 
         props = context.scene.level_design_props
         debug_log(f"[AutoHotspot] Processing {len(all_hotspot_faces)} hotspot faces")
         result = apply_hotspots_to_mesh(
             bm, me, all_hotspot_faces, allow_combined_faces,
-            obj.matrix_world, props.pixels_per_meter, size_weight, seam_angle
+            obj.matrix_world, props.pixels_per_meter, size_weight
         )
         debug_log(f"[AutoHotspot] Applied: {result}")
 
@@ -1608,12 +1608,12 @@ def apply_texture_from_file_browser():
 
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
-                seam_angle = obj.anvil_hotspot_seam_angle
+        
 
                 debug_log(f"[FileBrowser] Applying hotspots to {len(all_hotspot_faces)} faces (all hotspot faces)")
                 apply_hotspots_to_mesh(
                     bm, obj.data, all_hotspot_faces, allow_combined_faces,
-                    obj.matrix_world, ppm, size_weight, seam_angle
+                    obj.matrix_world, ppm, size_weight
                 )
 
                 # Restore selection state
@@ -1635,12 +1635,12 @@ def apply_texture_from_file_browser():
 
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
-                seam_angle = obj.anvil_hotspot_seam_angle
+        
 
                 debug_log(f"[FileBrowser] Re-hotspotting {len(all_hotspot_faces)} faces (island structure changed)")
                 apply_hotspots_to_mesh(
                     bm, obj.data, all_hotspot_faces, allow_combined_faces,
-                    obj.matrix_world, ppm, size_weight, seam_angle
+                    obj.matrix_world, ppm, size_weight
                 )
 
                 # Restore selection state
