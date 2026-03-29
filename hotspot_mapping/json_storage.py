@@ -4,6 +4,14 @@ Hotspot Mapping - JSON Storage
 Handles reading/writing hotspot data.
 Data is stored in scene properties for undo support.
 Optionally synced to an external JSON file on blend save.
+
+Data model: Each hotspottable texture has a list of bisecting lines.
+Each line has: axis ("v" or "h"), pos (pixel position), start, end (extent).
+A full line spans the entire image; a partial (anchored) line spans between
+two perpendicular lines or image edges.
+
+Rectangular hotspot cells are derived from the line arrangement using a
+union-find algorithm on the micro-grid.
 """
 
 import bpy
@@ -19,6 +27,10 @@ HOTSPOTS_VERSION = "1.0"
 # Orientation types for hotspots
 ORIENTATION_TYPES = ('Any', 'Upwards', 'Floor', 'Ceiling')
 
+
+# ---------------------------------------------------------------------------
+# File path helpers
+# ---------------------------------------------------------------------------
 
 def resolve_filepath():
     """Resolve the hotspots file path property to an absolute path.
@@ -73,6 +85,10 @@ def make_path_relative(absolute_path):
         return absolute_path
 
 
+# ---------------------------------------------------------------------------
+# Scene property load/save
+# ---------------------------------------------------------------------------
+
 def load_hotspots():
     """Load hotspots data from scene property.
 
@@ -111,6 +127,10 @@ def save_hotspots(data):
     return True
 
 
+# ---------------------------------------------------------------------------
+# File sync
+# ---------------------------------------------------------------------------
+
 def load_from_file(filepath):
     """Read hotspot data from a JSON file and store in scene property.
 
@@ -127,7 +147,6 @@ def load_from_file(filepath):
         return False
 
     if not os.path.exists(filepath):
-        # File doesn't exist yet - create it with current scene data
         debug_log(f"[Hotspots] File not found, creating: {filepath}")
         data = load_hotspots()
         try:
@@ -137,7 +156,8 @@ def load_from_file(filepath):
             debug_log(f"[Hotspots] Created: {filepath}")
             return True
         except IOError as e:
-            print(f"Anvil Hotspots: Error creating {filepath}: {e}", flush=True)
+            print(f"Anvil Hotspots: Error creating {filepath}: {e}",
+                  flush=True)
             return False
 
     try:
@@ -199,7 +219,8 @@ def sync_from_file():
         scene.hotspot_mapping_props.hotspots_json = json.dumps(data)
         debug_log(f"[Hotspots] Synced from file: {filepath}")
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Anvil Hotspots: Error syncing from {filepath}: {e}", flush=True)
+        print(f"Anvil Hotspots: Error syncing from {filepath}: {e}",
+              flush=True)
 
 
 def sync_to_file():
@@ -226,7 +247,8 @@ def sync_to_file():
             json.dump(data, f, indent=2)
         debug_log(f"[Hotspots] Synced to file: {filepath}")
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Anvil Hotspots: Error syncing to {filepath}: {e}", flush=True)
+        print(f"Anvil Hotspots: Error syncing to {filepath}: {e}",
+              flush=True)
 
 
 def scene_has_hotspots():
@@ -238,6 +260,11 @@ def scene_has_hotspots():
     data = load_hotspots()
     textures = data.get("textures", {})
     for tex_data in textures.values():
+        if tex_data.get("lines") is not None:
+            return True
+        # Legacy formats
+        if tex_data.get("tree") is not None:
+            return True
         if tex_data.get("hotspots"):
             return True
     return False
@@ -250,6 +277,10 @@ def _create_empty_data():
         "textures": {}
     }
 
+
+# ---------------------------------------------------------------------------
+# Texture management
+# ---------------------------------------------------------------------------
 
 def is_texture_hotspottable(texture_name):
     """Check if a texture is marked as hotspottable.
@@ -265,7 +296,7 @@ def is_texture_hotspottable(texture_name):
 
 
 def add_texture_as_hotspottable(texture_name, width, height):
-    """Add a texture as hotspottable.
+    """Add a texture as hotspottable with a single full-image hotspot.
 
     Args:
         texture_name: Name of the texture (image filename).
@@ -284,7 +315,10 @@ def add_texture_as_hotspottable(texture_name, width, height):
     data["textures"][texture_name] = {
         "image_width": width,
         "image_height": height,
-        "hotspots": []
+        "lines": [],
+        "cell_orientations": {
+            _cell_key(0, 0, width, height): "Any",
+        },
     }
 
     return save_hotspots(data)
@@ -308,20 +342,202 @@ def remove_texture_as_hotspottable(texture_name):
     return save_hotspots(data)
 
 
+# ---------------------------------------------------------------------------
+# Cell key helpers
+# ---------------------------------------------------------------------------
+
+def _cell_key(x, y, w, h):
+    """Create a string key for a cell from its bounds."""
+    return f"{x}_{y}_{w}_{h}"
+
+
+def _parse_cell_key(key):
+    """Parse a cell key back into (x, y, w, h)."""
+    parts = key.split("_")
+    return int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+
+
+# ---------------------------------------------------------------------------
+# Cell derivation
+# ---------------------------------------------------------------------------
+
+def derive_cells(lines, img_width, img_height):
+    """Derive rectangular hotspot cells from a set of bisecting lines.
+
+    Uses a micro-grid + union-find approach: lines create grid boundaries,
+    and adjacent micro-cells without a separating line are merged.
+
+    Args:
+        lines: List of line dicts with axis, pos, start, end.
+        img_width: Image width in pixels.
+        img_height: Image height in pixels.
+
+    Returns:
+        Sorted list of (x, y, w, h) tuples.
+    """
+    if not lines:
+        return [(0, 0, img_width, img_height)]
+
+    # Collect all unique grid coordinates
+    x_set = {0, img_width}
+    y_set = {0, img_height}
+    for line in lines:
+        if line["axis"] == "v":
+            x_set.add(line["pos"])
+            y_set.add(line["start"])
+            y_set.add(line["end"])
+        else:
+            y_set.add(line["pos"])
+            x_set.add(line["start"])
+            x_set.add(line["end"])
+
+    xs = sorted(x_set)
+    ys = sorted(y_set)
+    cols = len(xs) - 1
+    rows = len(ys) - 1
+
+    if cols <= 0 or rows <= 0:
+        return [(0, 0, img_width, img_height)]
+
+    # Index lookups
+    x_idx = {v: i for i, v in enumerate(xs)}
+    y_idx = {v: i for i, v in enumerate(ys)}
+
+    # Separation matrices
+    # h_sep[r][c]: horizontal boundary between row r and r+1 at column c
+    # v_sep[r][c]: vertical boundary between col c and c+1 at row r
+    h_sep = [[False] * cols for _ in range(rows - 1)]
+    v_sep = [[False] * (cols - 1) for _ in range(rows)]
+
+    for line in lines:
+        if line["axis"] == "h":
+            pos = line["pos"]
+            if pos not in y_idx or pos == 0 or pos == img_height:
+                continue
+            r = y_idx[pos] - 1
+            start_c = x_idx.get(line["start"], 0)
+            end_x = line["end"]
+            for c in range(cols):
+                if xs[c] >= line["start"] and xs[c + 1] <= end_x:
+                    h_sep[r][c] = True
+        else:
+            pos = line["pos"]
+            if pos not in x_idx or pos == 0 or pos == img_width:
+                continue
+            c = x_idx[pos] - 1
+            start_r = y_idx.get(line["start"], 0)
+            end_y = line["end"]
+            for r in range(rows):
+                if ys[r] >= line["start"] and ys[r + 1] <= end_y:
+                    v_sep[r][c] = True
+
+    # Union-find
+    parent = list(range(rows * cols))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for r in range(rows):
+        for c in range(cols):
+            idx = r * cols + c
+            if c + 1 < cols and not v_sep[r][c]:
+                union(idx, r * cols + c + 1)
+            if r + 1 < rows and not h_sep[r][c]:
+                union(idx, (r + 1) * cols + c)
+
+    # Collect merged groups → bounding rectangles
+    groups = {}
+    for r in range(rows):
+        for c in range(cols):
+            root = find(r * cols + c)
+            if root not in groups:
+                groups[root] = []
+            groups[root].append((r, c))
+
+    cells = []
+    for members in groups.values():
+        min_r = min(r for r, c in members)
+        max_r = max(r for r, c in members)
+        min_c = min(c for r, c in members)
+        max_c = max(c for r, c in members)
+        x = xs[min_c]
+        y = ys[min_r]
+        w = xs[max_c + 1] - x
+        h = ys[max_r + 1] - y
+        cells.append((x, y, w, h))
+
+    cells.sort(key=lambda c: (c[1], c[0]))
+    return cells
+
+
+# ---------------------------------------------------------------------------
+# Queries
+# ---------------------------------------------------------------------------
+
+def get_texture_lines(texture_name, data=None):
+    """Get the list of bisecting lines for a texture.
+
+    Args:
+        texture_name: Name of the texture.
+        data: Pre-loaded data dict. If None, loads from storage.
+
+    Returns:
+        List of line dicts, or empty list if not found.
+    """
+    if data is None:
+        data = load_hotspots()
+    tex_data = data.get("textures", {}).get(texture_name)
+    if tex_data is None:
+        return []
+    return tex_data.get("lines", [])
+
+
 def get_texture_hotspots(texture_name, data=None):
-    """Get all hotspots for a texture.
+    """Get all hotspots for a texture as a flat list.
+
+    Derives cells from lines and attaches orientations.
+    Also supports legacy formats.
 
     Args:
         texture_name: Name of the texture.
         data: Pre-loaded hotspot data dict. If None, loads from storage.
 
     Returns:
-        List of hotspot dicts, or empty list if texture not found.
+        List of hotspot dicts with x, y, width, height, orientation_type.
     """
     if data is None:
         data = load_hotspots()
-    texture_data = data.get("textures", {}).get(texture_name, {})
-    return texture_data.get("hotspots", [])
+    tex_data = data.get("textures", {}).get(texture_name, {})
+
+    # Lines-based format (current)
+    lines = tex_data.get("lines")
+    if lines is not None:
+        img_w = tex_data.get("image_width", 0)
+        img_h = tex_data.get("image_height", 0)
+        if img_w <= 0 or img_h <= 0:
+            return []
+        cells = derive_cells(lines, img_w, img_h)
+        orientations = tex_data.get("cell_orientations", {})
+        result = []
+        for x, y, w, h in cells:
+            key = _cell_key(x, y, w, h)
+            orientation = orientations.get(key, "Any")
+            result.append({
+                "x": x, "y": y, "width": w, "height": h,
+                "orientation_type": orientation,
+            })
+        return result
+
+    # Legacy flat format
+    return tex_data.get("hotspots", [])
 
 
 def get_texture_dimensions(texture_name, data=None):
@@ -343,203 +559,338 @@ def get_texture_dimensions(texture_name, data=None):
     )
 
 
-def _generate_hotspot_id(hotspots):
-    """Generate a unique hotspot ID.
-
-    Args:
-        hotspots: List of existing hotspots.
-
-    Returns:
-        String ID like "hotspot_0", "hotspot_1", etc.
-    """
-    existing_ids = {h.get("id", "") for h in hotspots}
-    counter = 0
-    while True:
-        new_id = f"hotspot_{counter}"
-        if new_id not in existing_ids:
-            return new_id
-        counter += 1
-
-
-def add_hotspot(texture_name, x, y, width, height):
-    """Add a new hotspot to a texture.
+def get_cells_with_orientations(texture_name, data=None):
+    """Get derived cells with their orientations and keys.
 
     Args:
         texture_name: Name of the texture.
-        x: X position of top-left corner in pixels.
-        y: Y position of top-left corner in pixels.
-        width: Width of hotspot in pixels.
-        height: Height of hotspot in pixels.
+        data: Pre-loaded data dict. If None, loads from storage.
 
     Returns:
-        The new hotspot ID, or None if failed.
+        List of (x, y, w, h, orientation_type, cell_key) tuples,
+        or empty list.
+    """
+    if data is None:
+        data = load_hotspots()
+    tex_data = data.get("textures", {}).get(texture_name, {})
+
+    lines = tex_data.get("lines")
+    if lines is None:
+        return []
+
+    img_w = tex_data.get("image_width", 0)
+    img_h = tex_data.get("image_height", 0)
+    if img_w <= 0 or img_h <= 0:
+        return []
+
+    cells = derive_cells(lines, img_w, img_h)
+    orientations = tex_data.get("cell_orientations", {})
+
+    result = []
+    for x, y, w, h in cells:
+        key = _cell_key(x, y, w, h)
+        orientation = orientations.get(key, "Any")
+        result.append((x, y, w, h, orientation, key))
+    return result
+
+
+def find_cell_at_point(cells, px, py):
+    """Find the cell containing a pixel coordinate.
+
+    Args:
+        cells: List of (x, y, w, h) tuples (or tuples with extra fields).
+        px: X pixel coordinate.
+        py: Y pixel coordinate.
+
+    Returns:
+        The matching tuple, or None.
+    """
+    for cell in cells:
+        x, y, w, h = cell[0], cell[1], cell[2], cell[3]
+        if x <= px < x + w and y <= py < y + h:
+            return cell
+    return None
+
+
+def find_anchors(lines, px, py, axis, img_width, img_height):
+    """Find anchor extent for a partial line at the cursor position.
+
+    Looks for the two nearest perpendicular lines (or image edges)
+    that bracket the cursor along the line's extent direction.
+
+    Args:
+        lines: List of line dicts.
+        px: Cursor X in pixels.
+        py: Cursor Y in pixels.
+        axis: "v" or "h" - the axis of the line being added.
+        img_width: Image width.
+        img_height: Image height.
+
+    Returns:
+        Tuple (start, end) for the partial line's extent.
+    """
+    if axis == "v":
+        # Vertical line: find horizontal boundaries active at x=px
+        boundaries = [0, img_height]
+        for line in lines:
+            if line["axis"] == "h":
+                if line["start"] <= px <= line["end"]:
+                    boundaries.append(line["pos"])
+        boundaries = sorted(set(boundaries))
+
+        for i in range(len(boundaries) - 1):
+            if boundaries[i] <= py < boundaries[i + 1]:
+                return (boundaries[i], boundaries[i + 1])
+        return (0, img_height)
+    else:
+        # Horizontal line: find vertical boundaries active at y=py
+        boundaries = [0, img_width]
+        for line in lines:
+            if line["axis"] == "v":
+                if line["start"] <= py <= line["end"]:
+                    boundaries.append(line["pos"])
+        boundaries = sorted(set(boundaries))
+
+        for i in range(len(boundaries) - 1):
+            if boundaries[i] <= px < boundaries[i + 1]:
+                return (boundaries[i], boundaries[i + 1])
+        return (0, img_width)
+
+
+def get_line_move_range(lines, line_index, img_width, img_height):
+    """Get the valid movement range for a line.
+
+    The line can move between the nearest parallel lines whose extents
+    overlap, ensuring at least 1px of cell width on each side.
+
+    Args:
+        lines: List of line dicts.
+        line_index: Index of the line to move.
+        img_width: Image width.
+        img_height: Image height.
+
+    Returns:
+        Tuple (min_pos, max_pos) inclusive.
+    """
+    line = lines[line_index]
+    axis = line["axis"]
+    pos = line["pos"]
+    start = line["start"]
+    end = line["end"]
+
+    if axis == "v":
+        range_min = 1
+        range_max = img_width - 1
+    else:
+        range_min = 1
+        range_max = img_height - 1
+
+    for i, other in enumerate(lines):
+        if i == line_index or other["axis"] != axis:
+            continue
+        # Check extent overlap
+        if other["start"] < end and start < other["end"]:
+            if other["pos"] < pos:
+                range_min = max(range_min, other["pos"] + 1)
+            elif other["pos"] > pos:
+                range_max = min(range_max, other["pos"] - 1)
+
+    return (range_min, range_max)
+
+
+# ---------------------------------------------------------------------------
+# Orientation helpers
+# ---------------------------------------------------------------------------
+
+def _rebuild_orientations(old_cells, old_orientations, new_cells):
+    """Rebuild cell orientations after a line change.
+
+    For each new cell, finds the old cell that contained its center
+    and inherits that cell's orientation.
+
+    Args:
+        old_cells: List of (x, y, w, h) from before the change.
+        old_orientations: Dict mapping cell keys to orientation strings.
+        new_cells: List of (x, y, w, h) from after the change.
+
+    Returns:
+        New orientations dict.
+    """
+    new_orientations = {}
+    for nx, ny, nw, nh in new_cells:
+        cx = nx + nw / 2
+        cy = ny + nh / 2
+        # Find old cell containing this center
+        inherited = "Any"
+        for ox, oy, ow, oh in old_cells:
+            if ox <= cx < ox + ow and oy <= cy < oy + oh:
+                old_key = _cell_key(ox, oy, ow, oh)
+                inherited = old_orientations.get(old_key, "Any")
+                break
+        new_orientations[_cell_key(nx, ny, nw, nh)] = inherited
+    return new_orientations
+
+
+def cycle_cell_orientation(texture_name, cell_key):
+    """Cycle to the next orientation type for a cell.
+
+    Args:
+        texture_name: Name of the texture.
+        cell_key: String key identifying the cell.
+
+    Returns:
+        The new orientation type string, or None if failed.
     """
     data = load_hotspots()
-
-    if texture_name not in data.get("textures", {}):
-        debug_log(f"[Hotspots] Texture not found: {texture_name}")
+    tex_data = data.get("textures", {}).get(texture_name)
+    if tex_data is None:
         return None
 
-    hotspots = data["textures"][texture_name].get("hotspots", [])
-    new_id = _generate_hotspot_id(hotspots)
-
-    hotspots.append({
-        "id": new_id,
-        "x": x,
-        "y": y,
-        "width": width,
-        "height": height,
-        "orientation_type": "Any"
-    })
-
-    data["textures"][texture_name]["hotspots"] = hotspots
-
-    if save_hotspots(data):
-        return new_id
-    return None
-
-
-def update_hotspot(texture_name, hotspot_id, x, y, width, height):
-    """Update an existing hotspot.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot to update.
-        x: New X position.
-        y: New Y position.
-        width: New width.
-        height: New height.
-
-    Returns:
-        True if updated successfully, False otherwise.
-    """
-    data = load_hotspots()
-
-    if texture_name not in data.get("textures", {}):
-        return False
-
-    hotspots = data["textures"][texture_name].get("hotspots", [])
-
-    for hotspot in hotspots:
-        if hotspot.get("id") == hotspot_id:
-            hotspot["x"] = x
-            hotspot["y"] = y
-            hotspot["width"] = width
-            hotspot["height"] = height
-            return save_hotspots(data)
-
-    debug_log(f"[Hotspots] Hotspot not found: {hotspot_id}")
-    return False
-
-
-def delete_hotspot(texture_name, hotspot_id):
-    """Delete a hotspot.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot to delete.
-
-    Returns:
-        True if deleted successfully, False otherwise.
-    """
-    data = load_hotspots()
-
-    if texture_name not in data.get("textures", {}):
-        return False
-
-    hotspots = data["textures"][texture_name].get("hotspots", [])
-    original_count = len(hotspots)
-
-    data["textures"][texture_name]["hotspots"] = [
-        h for h in hotspots if h.get("id") != hotspot_id
-    ]
-
-    if len(data["textures"][texture_name]["hotspots"]) < original_count:
-        return save_hotspots(data)
-
-    debug_log(f"[Hotspots] Hotspot not found for deletion: {hotspot_id}")
-    return False
-
-
-def get_hotspot_by_id(texture_name, hotspot_id):
-    """Get a specific hotspot by ID.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot.
-
-    Returns:
-        Hotspot dict, or None if not found.
-    """
-    hotspots = get_texture_hotspots(texture_name)
-    for hotspot in hotspots:
-        if hotspot.get("id") == hotspot_id:
-            return hotspot
-    return None
-
-
-def get_hotspot_orientation(texture_name, hotspot_id):
-    """Get the orientation type of a hotspot.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot.
-
-    Returns:
-        Orientation type string, or 'Any' if not found.
-    """
-    hotspot = get_hotspot_by_id(texture_name, hotspot_id)
-    if hotspot:
-        return hotspot.get("orientation_type", "Any")
-    return "Any"
-
-
-def set_hotspot_orientation(texture_name, hotspot_id, orientation_type):
-    """Set the orientation type of a hotspot.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot.
-        orientation_type: One of ORIENTATION_TYPES.
-
-    Returns:
-        True if updated successfully, False otherwise.
-    """
-    if orientation_type not in ORIENTATION_TYPES:
-        debug_log(f"[Hotspots] Invalid orientation type: {orientation_type}")
-        return False
-
-    data = load_hotspots()
-
-    if texture_name not in data.get("textures", {}):
-        return False
-
-    hotspots = data["textures"][texture_name].get("hotspots", [])
-
-    for hotspot in hotspots:
-        if hotspot.get("id") == hotspot_id:
-            hotspot["orientation_type"] = orientation_type
-            return save_hotspots(data)
-
-    debug_log(f"[Hotspots] Hotspot not found: {hotspot_id}")
-    return False
-
-
-def cycle_hotspot_orientation(texture_name, hotspot_id):
-    """Cycle to the next orientation type for a hotspot.
-
-    Args:
-        texture_name: Name of the texture.
-        hotspot_id: ID of the hotspot.
-
-    Returns:
-        The new orientation type, or None if failed.
-    """
-    current = get_hotspot_orientation(texture_name, hotspot_id)
-    current_index = ORIENTATION_TYPES.index(current) if current in ORIENTATION_TYPES else 0
+    orientations = tex_data.get("cell_orientations", {})
+    current = orientations.get(cell_key, "Any")
+    current_index = (ORIENTATION_TYPES.index(current)
+                     if current in ORIENTATION_TYPES else 0)
     next_index = (current_index + 1) % len(ORIENTATION_TYPES)
     next_type = ORIENTATION_TYPES[next_index]
 
-    if set_hotspot_orientation(texture_name, hotspot_id, next_type):
-        return next_type
-    return None
+    orientations[cell_key] = next_type
+    tex_data["cell_orientations"] = orientations
+    save_hotspots(data)
+    return next_type
+
+
+# ---------------------------------------------------------------------------
+# Line mutations
+# ---------------------------------------------------------------------------
+
+def add_line(texture_name, axis, pos, start, end):
+    """Add a bisecting line to a texture.
+
+    Rebuilds cell orientations so new cells inherit from the cell they
+    were split from.
+
+    Args:
+        texture_name: Name of the texture.
+        axis: "v" or "h".
+        pos: Absolute pixel position.
+        start: Extent start (pixels along perpendicular axis).
+        end: Extent end.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    data = load_hotspots()
+    tex_data = data.get("textures", {}).get(texture_name)
+    if tex_data is None:
+        return False
+
+    lines = tex_data.get("lines", [])
+    img_w = tex_data.get("image_width", 0)
+    img_h = tex_data.get("image_height", 0)
+    old_orientations = tex_data.get("cell_orientations", {})
+
+    old_cells = derive_cells(lines, img_w, img_h)
+
+    lines.append({"axis": axis, "pos": pos, "start": start, "end": end})
+    tex_data["lines"] = lines
+
+    new_cells = derive_cells(lines, img_w, img_h)
+    tex_data["cell_orientations"] = _rebuild_orientations(
+        old_cells, old_orientations, new_cells
+    )
+
+    return save_hotspots(data)
+
+
+def remove_line(texture_name, line_index):
+    """Remove a bisecting line, merging adjacent cells.
+
+    The merged cell inherits the orientation of the first (top-left) cell.
+
+    Args:
+        texture_name: Name of the texture.
+        line_index: Index into the lines list.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    data = load_hotspots()
+    tex_data = data.get("textures", {}).get(texture_name)
+    if tex_data is None:
+        return False
+
+    lines = tex_data.get("lines", [])
+    if line_index < 0 or line_index >= len(lines):
+        return False
+
+    img_w = tex_data.get("image_width", 0)
+    img_h = tex_data.get("image_height", 0)
+    old_orientations = tex_data.get("cell_orientations", {})
+
+    old_cells = derive_cells(lines, img_w, img_h)
+
+    lines.pop(line_index)
+    tex_data["lines"] = lines
+
+    new_cells = derive_cells(lines, img_w, img_h)
+    tex_data["cell_orientations"] = _rebuild_orientations(
+        old_cells, old_orientations, new_cells
+    )
+
+    return save_hotspots(data)
+
+
+def move_line(texture_name, line_index, new_pos):
+    """Move a bisecting line to a new position.
+
+    Rebuilds cell orientations.
+
+    Args:
+        texture_name: Name of the texture.
+        line_index: Index into the lines list.
+        new_pos: New absolute pixel position.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    data = load_hotspots()
+    tex_data = data.get("textures", {}).get(texture_name)
+    if tex_data is None:
+        return False
+
+    lines = tex_data.get("lines", [])
+    if line_index < 0 or line_index >= len(lines):
+        return False
+
+    img_w = tex_data.get("image_width", 0)
+    img_h = tex_data.get("image_height", 0)
+    old_orientations = tex_data.get("cell_orientations", {})
+
+    old_cells = derive_cells(lines, img_w, img_h)
+
+    old_pos = lines[line_index]["pos"]
+    moved_axis = lines[line_index]["axis"]
+    lines[line_index]["pos"] = new_pos
+
+    # Update perpendicular partial lines anchored to the moved line.
+    # A partial line's start or end may reference the moved line's old pos.
+    if old_pos != new_pos:
+        for i, other in enumerate(lines):
+            if i == line_index or other["axis"] == moved_axis:
+                continue
+            if other["start"] == old_pos:
+                other["start"] = new_pos
+            if other["end"] == old_pos:
+                other["end"] = new_pos
+            # Ensure start < end after update
+            if other["start"] > other["end"]:
+                other["start"], other["end"] = other["end"], other["start"]
+
+    tex_data["lines"] = lines
+
+    new_cells = derive_cells(lines, img_w, img_h)
+    tex_data["cell_orientations"] = _rebuild_orientations(
+        old_cells, old_orientations, new_cells
+    )
+
+    return save_hotspots(data)

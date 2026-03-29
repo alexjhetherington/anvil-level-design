@@ -91,11 +91,11 @@ Hotspot maps are defined in the Image Editor:
 1. Open your texture atlas in Hotspot Mapping workspace
 2. Click the Hotspot Edit tool in the left sidebar
 2. In the Anvil panel (N key), click "Assign Hotspottable" to mark the texture as a hotspot source
-3. Click "Add Hotspot" to create a new hotspot region
+3. Add lines in the image to split the texture into hotspots
 4. Click and drag on the image to define rectangular hotspot areas
-5. Hotspots can be resized by dragging their edges or corners, and moved by dragging the centre
+5. Hotspots can be resized by dragging edges
 
-Hotspot data is stored in a `hotspots.json` file next to your .blend file. This file can be shared between projects or checked into version control.
+Hotspot data is stored in the .blend file. An external json can optionally be defined so hotspot info can be shared across projects.
 
 As in 3d views using this addon, '[' and ']' control pixel snapping.
 

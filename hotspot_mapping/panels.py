@@ -38,13 +38,15 @@ class HOTSPOT_PT_main_panel(Panel):
             row.operator("hotspot.clear_file_path", text="", icon='X')
         else:
             row.label(text="None (data in .blend only)")
-        box.operator("hotspot.browse_file_path", text="Browse...", icon='FILEBROWSER')
+        box.operator("hotspot.browse_file_path", text="Browse...",
+                     icon='FILEBROWSER')
 
         layout.separator()
 
         # Check if image is open
         if not space.image:
-            layout.label(text="Open an image to define hotspots", icon='INFO')
+            layout.label(text="Open an image to define hotspots",
+                         icon='INFO')
             return
 
         image = space.image
@@ -52,7 +54,6 @@ class HOTSPOT_PT_main_panel(Panel):
 
         # Check if this texture is hotspottable
         if not json_storage.is_texture_hotspottable(texture_name):
-            # Show assign button
             layout.operator(
                 "hotspot.assign_hotspottable",
                 text="Assign Hotspottable",
@@ -60,7 +61,7 @@ class HOTSPOT_PT_main_panel(Panel):
             )
             return
 
-        # Texture is hotspottable - show hotspot management UI
+        # Texture is hotspottable - show management UI
 
         # Header with remove option
         row = layout.row()
@@ -73,29 +74,21 @@ class HOTSPOT_PT_main_panel(Panel):
 
         layout.separator()
 
-        # Get hotspots for this texture
-        hotspots = json_storage.get_texture_hotspots(texture_name)
+        # Show cells
+        cells = json_storage.get_cells_with_orientations(texture_name)
 
-        # Hotspot list
-        if hotspots:
+        if cells:
             box = layout.box()
-            for hotspot in hotspots:
-                hotspot_id = hotspot.get("id", "")
-                is_active = (props.active_hotspot_id == hotspot_id)
-                orientation = hotspot.get("orientation_type", "Any")
-
+            box.label(text=f"Hotspots ({len(cells)})", icon='MESH_GRID')
+            for i, (cx, cy, cw, ch, orientation, key) in enumerate(cells):
                 row = box.row(align=True)
 
-                # Selection button (whole row acts as selector)
-                op = row.operator(
-                    "hotspot.select_hotspot",
-                    text=hotspot_id,
-                    depress=is_active,
-                    icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
-                )
-                op.hotspot_id = hotspot_id
+                # Label
+                sub = row.row()
+                sub.scale_x = 0.5
+                sub.label(text=f"#{i + 1}")
 
-                # Orientation type button (cycles on click)
+                # Orientation type button
                 orientation_symbols = {
                     'Any': '●',
                     'Upwards': '↑',
@@ -109,45 +102,24 @@ class HOTSPOT_PT_main_panel(Panel):
                     "hotspot.cycle_orientation",
                     text=f"{symbol} {orientation}",
                 )
-                op.hotspot_id = hotspot_id
+                op.cell_key = key
 
                 # Show dimensions
                 sub = row.row()
                 sub.scale_x = 0.8
-                sub.label(text=f"{hotspot.get('width', 0)}x{hotspot.get('height', 0)}")
-
-                # Delete button
-                op = row.operator(
-                    "hotspot.delete_hotspot",
-                    text="",
-                    icon='TRASH'
-                )
-                op.hotspot_id = hotspot_id
-        else:
-            layout.label(text="No hotspots defined", icon='INFO')
+                sub.label(text=f"{cw}x{ch}")
 
         layout.separator()
 
-        # Add hotspot button
-        layout.operator(
-            "hotspot.add_hotspot",
-            text="Add Hotspot",
-            icon='ADD'
-        )
-
-        # Show active hotspot details
-        if props.active_hotspot_id:
-            hotspot = json_storage.get_hotspot_by_id(
-                texture_name, props.active_hotspot_id
-            )
-            if hotspot:
-                layout.separator()
-                box = layout.box()
-                box.label(text="Selected Hotspot", icon='RESTRICT_SELECT_OFF')
-                col = box.column(align=True)
-                col.label(text=f"Position: ({hotspot.get('x', 0)}, {hotspot.get('y', 0)})")
-                col.label(text=f"Size: {hotspot.get('width', 0)} x {hotspot.get('height', 0)}")
-                col.label(text=f"Orientation: {hotspot.get('orientation_type', 'Any')}")
+        # Instructions
+        box = layout.box()
+        box.label(text="Usage", icon='QUESTION')
+        col = box.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="Click to add full bisecting line")
+        col.label(text="Ctrl+Click for anchored partial line")
+        col.label(text="Drag existing lines to move")
+        col.label(text="X / Del to remove selected line")
 
         # Snapping settings
         layout.separator()

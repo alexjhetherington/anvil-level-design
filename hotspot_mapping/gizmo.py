@@ -1,8 +1,10 @@
 """
 Hotspot Mapping - Gizmo System
 
-GPU drawing and interactive editing for hotspot rectangles in Image Editor.
-Uses a Blender Tool for proper mouse input handling.
+GPU drawing and interactive editing for line-based hotspots in Image Editor.
+Draws cell outlines, bisecting lines, orientation icons, and a preview line
+under the cursor. Handles click-to-split (full line by default, ctrl for
+anchored partial line), line dragging, and line deletion.
 """
 
 import bpy
@@ -15,7 +17,10 @@ from .properties import SNAP_SIZES
 from ..utils import debug_log, is_hotspot_mapping_workspace
 
 
+# ---------------------------------------------------------------------------
 # Snap size adjustment operators
+# ---------------------------------------------------------------------------
+
 class HOTSPOT_OT_snap_size_up(bpy.types.Operator):
     """Increase hotspot snap size"""
     bl_idname = "hotspot.snap_size_up"
@@ -29,7 +34,6 @@ class HOTSPOT_OT_snap_size_up(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.hotspot_mapping_props
         current = props.snap_size
-        # Find next larger size in list
         for size in SNAP_SIZES:
             if size > current:
                 props.snap_size = size
@@ -38,7 +42,6 @@ class HOTSPOT_OT_snap_size_up(bpy.types.Operator):
         else:
             self.report({'INFO'}, f"Hotspot snap: {current}px (max)")
 
-        # Refresh UI panels
         for area in context.screen.areas:
             if area.type == 'IMAGE_EDITOR':
                 area.tag_redraw()
@@ -58,7 +61,6 @@ class HOTSPOT_OT_snap_size_down(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.hotspot_mapping_props
         current = props.snap_size
-        # Find next smaller size in list
         for size in reversed(SNAP_SIZES):
             if size < current:
                 props.snap_size = size
@@ -67,7 +69,6 @@ class HOTSPOT_OT_snap_size_down(bpy.types.Operator):
         else:
             self.report({'INFO'}, f"Hotspot snap: {current}px (min)")
 
-        # Refresh UI panels
         for area in context.screen.areas:
             if area.type == 'IMAGE_EDITOR':
                 area.tag_redraw()
@@ -80,9 +81,9 @@ class HOTSPOT_OT_cycle_orientation(bpy.types.Operator):
     bl_label = "Cycle Orientation"
     bl_options = {'REGISTER', 'UNDO'}
 
-    hotspot_id: bpy.props.StringProperty(
-        name="Hotspot ID",
-        description="ID of the hotspot to cycle orientation",
+    cell_key: bpy.props.StringProperty(
+        name="Cell Key",
+        description="Key of the cell to cycle orientation",
         options={'SKIP_SAVE', 'HIDDEN'},
     )
 
@@ -97,14 +98,11 @@ class HOTSPOT_OT_cycle_orientation(bpy.types.Operator):
         space = context.space_data
         image = space.image
 
-        if not self.hotspot_id:
-            self.report({'WARNING'}, "No hotspot specified")
-            return {'CANCELLED'}
-
-        new_type = json_storage.cycle_hotspot_orientation(image.name, self.hotspot_id)
+        new_type = json_storage.cycle_cell_orientation(
+            image.name, self.cell_key
+        )
         if new_type:
             self.report({'INFO'}, f"Orientation: {new_type}")
-            # Force redraw
             for area in context.screen.areas:
                 if area.type == 'IMAGE_EDITOR':
                     area.tag_redraw()
@@ -114,42 +112,71 @@ class HOTSPOT_OT_cycle_orientation(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-# Tool definition for Image Editor
+# ---------------------------------------------------------------------------
+# Tool definition
+# ---------------------------------------------------------------------------
+
 class HOTSPOT_TOOL_edit(bpy.types.WorkSpaceTool):
     bl_space_type = 'IMAGE_EDITOR'
     bl_context_mode = 'VIEW'
 
     bl_idname = "hotspot.edit_tool"
     bl_label = "Hotspot Edit"
-    bl_description = "Click and drag to move/resize hotspot regions"
+    bl_description = (
+        "Click to add bisecting line (Ctrl for partial). "
+        "Drag lines to move. X/Del to delete."
+    )
     bl_icon = "ops.transform.resize"
 
     bl_keymap = (
-        ("hotspot.click_select", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
-        ("hotspot.update_cursor", {"type": 'MOUSEMOVE', "value": 'ANY'}, None),
+        ("hotspot.click_select",
+         {"type": 'LEFTMOUSE', "value": 'PRESS', "any": True},
+         None),
+        ("hotspot.update_cursor",
+         {"type": 'MOUSEMOVE', "value": 'ANY', "any": True},
+         None),
+        ("hotspot.delete_line", {"type": 'X', "value": 'PRESS'},
+         None),
+        ("hotspot.delete_line", {"type": 'DEL', "value": 'PRESS'},
+         None),
     )
 
 
+# ---------------------------------------------------------------------------
 # Visual styling
-COLOR_HOTSPOT = (1.0, 0.5, 0.0, 0.8)           # Orange - normal hotspot
-COLOR_HOTSPOT_ACTIVE = (0.0, 1.0, 0.5, 0.9)    # Green - selected hotspot
-COLOR_HOTSPOT_HOVER = (1.0, 0.8, 0.0, 0.9)     # Yellow - hovered hotspot
-COLOR_HANDLE = (1.0, 1.0, 1.0, 0.9)            # White - resize handles
-COLOR_ICON = (1.0, 1.0, 1.0, 0.9)              # White - orientation icons
+# ---------------------------------------------------------------------------
+
+COLOR_CELL = (1.0, 0.5, 0.0, 0.8)               # Orange - cell outlines
+COLOR_LINE = (1.0, 0.5, 0.0, 0.8)                # Orange - bisecting lines
+COLOR_LINE_HOVER = (1.0, 0.8, 0.0, 0.9)          # Yellow - hovered line
+COLOR_LINE_ACTIVE = (0.0, 1.0, 0.5, 0.9)         # Green - selected line
+COLOR_PREVIEW = (0.4, 0.7, 1.0, 0.7)             # Blue - preview line
+COLOR_ICON = (1.0, 1.0, 1.0, 0.9)                # White - orientation icons
 LINE_WIDTH = 2.0
-HANDLE_SIZE = 8  # pixels
+SPLIT_LINE_WIDTH = 2.0
+PREVIEW_LINE_WIDTH = 2.0
+LINE_HIT_THRESHOLD = 8  # pixels (screen space)
 
-# Icon sizing - relative to viewport and image size
-# Thresholds are based on how much the image fills the viewport ("fit" zoom)
-ICON_FRACTION_MAX = 1 / 20   # max icon size as fraction of viewport height
-ICON_FRACTION_MIN = 1 / 40   # min icon size as fraction of viewport height
-ZOOM_HIDE_FACTOR = 0.8       # hide icons when zoomed out past this fraction of fit zoom
-ZOOM_FULL_FACTOR = 5.0       # icons reach max size at this multiple of fit zoom
+# Icon sizing
+ICON_FRACTION_MAX = 1 / 20
+ICON_FRACTION_MIN = 1 / 40
+ZOOM_HIDE_FACTOR = 0.8
+ZOOM_FULL_FACTOR = 5.0
 
 
-# Global draw handler reference
+# ---------------------------------------------------------------------------
+# Module state for preview and hover
+# ---------------------------------------------------------------------------
+
 _draw_handler = None
 _last_tool_idname = None
+
+# Cached by update_cursor for the draw handler
+_preview_axis = None        # "v" or "h"
+_preview_pos = None         # absolute pixel position
+_preview_extent = None      # (start, end) pixel range
+_hovered_line_idx = -1      # index of hovered line, -1 if none
+_cursor_ctrl = False        # whether ctrl is held (for preview extent)
 
 
 def _check_tool_change():
@@ -169,7 +196,6 @@ def _check_tool_change():
 
         if current_idname != _last_tool_idname:
             _last_tool_idname = current_idname
-            # Tool changed - redraw all Image Editors
             for window in context.window_manager.windows:
                 for area in window.screen.areas:
                     if area.type == 'IMAGE_EDITOR':
@@ -177,120 +203,304 @@ def _check_tool_change():
     except Exception:
         pass
 
-    return 0.25  # Check every 0.5 seconds
+    return 0.25
 
 
-def _get_image_editor_image(context):
-    """Get the image from the active Image Editor space."""
-    space = context.space_data
-    if space and space.type == 'IMAGE_EDITOR':
-        return space.image
-    return None
+# ---------------------------------------------------------------------------
+# Coordinate helpers
+# ---------------------------------------------------------------------------
+
+def _pixel_to_view(x, y, img_w, img_h):
+    """Convert pixel coords (y from top) to view/UV coords (y from bottom)."""
+    return (x / img_w, (img_h - y) / img_h)
 
 
-def _pixel_to_view(x, y, img_width, img_height):
-    """Convert pixel coordinates to view (UV) coordinates.
+def _pixel_to_region(px, py, img_w, img_h, view2d):
+    """Convert pixel coords to screen region coords."""
+    vx, vy = _pixel_to_view(px, py, img_w, img_h)
+    return view2d.view_to_region(vx, vy, clip=False)
 
-    Blender's Image Editor view2d uses UV coordinates (0-1 range).
-    We store hotspots in pixel coords with (0,0) at top-left.
-    View coords have (0,0) at bottom-left.
 
-    Args:
-        x: X position in pixels (from left)
-        y: Y position in pixels (from top, as stored in JSON)
-        img_width: Image width in pixels
-        img_height: Image height in pixels
+def _region_to_pixel(mx, my, img_w, img_h, view2d):
+    """Convert screen region coords to pixel coords (y from top)."""
+    vx, vy = view2d.region_to_view(mx, my)
+    return (vx * img_w, img_h - (vy * img_h))
+
+
+# ---------------------------------------------------------------------------
+# Hit detection
+# ---------------------------------------------------------------------------
+
+def _find_hit_line(context, event, image):
+    """Find the bisecting line under the mouse cursor.
 
     Returns:
-        Tuple (view_x, view_y) in UV space (0-1 range)
+        The line's index, or -1 if none.
     """
-    # Convert to UV space (0-1) and flip Y
-    view_x = x / img_width
-    view_y = (img_height - y) / img_height
-    return (view_x, view_y)
+    lines = json_storage.get_texture_lines(image.name)
+    if not lines:
+        return -1
+
+    img_w = image.size[0] if image.size[0] > 0 else 1
+    img_h = image.size[1] if image.size[1] > 0 else 1
+
+    region = context.region
+    view2d = region.view2d
+    mx, my = event.mouse_region_x, event.mouse_region_y
+
+    best_idx = -1
+    best_dist = LINE_HIT_THRESHOLD
+
+    for i, line in enumerate(lines):
+        axis = line["axis"]
+        pos = line["pos"]
+        start = line["start"]
+        end = line["end"]
+
+        if axis == "v":
+            sx, _ = _pixel_to_region(pos, 0, img_w, img_h, view2d)
+            _, sy1 = _pixel_to_region(0, end, img_w, img_h, view2d)
+            _, sy2 = _pixel_to_region(0, start, img_w, img_h, view2d)
+            dist = abs(mx - sx)
+            in_extent = sy1 <= my <= sy2
+        else:
+            _, sy = _pixel_to_region(0, pos, img_w, img_h, view2d)
+            sx1, _ = _pixel_to_region(start, 0, img_w, img_h, view2d)
+            sx2, _ = _pixel_to_region(end, 0, img_w, img_h, view2d)
+            dist = abs(my - sy)
+            in_extent = sx1 <= mx <= sx2
+
+        if in_extent and dist < best_dist:
+            best_dist = dist
+            best_idx = i
+
+    return best_idx
 
 
-def _get_hit_zone_for_hotspot(context, event, hotspot, image):
-    """Determine which part of a hotspot was clicked.
+def _find_hit_icon(context, event, image):
+    """Find the cell whose orientation icon is under the cursor.
 
-    Standalone function used by both click_select and interactive_edit.
-
-    Returns: 'center', 'top', 'bottom', 'left', 'right',
-             'top_left', 'top_right', 'bottom_left', 'bottom_right', or None
+    Returns:
+        The cell's key string, or None.
     """
+    cells = json_storage.get_cells_with_orientations(image.name)
+    if not cells:
+        return None
+
+    img_w = image.size[0] if image.size[0] > 0 else 1
+    img_h = image.size[1] if image.size[1] > 0 else 1
+
     region = context.region
     view2d = region.view2d
 
-    img_width = image.size[0] if image.size[0] > 0 else 1
-    img_height = image.size[1] if image.size[1] > 0 else 1
+    # Zoom calculation for icon sizing
+    _, origin_y = view2d.view_to_region(0, 0, clip=False)
+    _, unit_y = view2d.view_to_region(0, 1, clip=False)
+    pixels_per_uv = abs(unit_y - origin_y)
 
-    # Get hotspot bounds in view (UV) coords
-    px = hotspot.get("x", 0)
-    py = hotspot.get("y", 0)
-    pw = hotspot.get("width", 0)
-    ph = hotspot.get("height", 0)
+    viewport_height = region.height
+    zoom_hide = viewport_height * ZOOM_HIDE_FACTOR
+    if pixels_per_uv < zoom_hide:
+        return None
 
-    x1, y2 = _pixel_to_view(px, py, img_width, img_height)
-    x2, y1 = _pixel_to_view(px + pw, py + ph, img_width, img_height)
+    zoom_full = viewport_height * ZOOM_FULL_FACTOR
+    icon_size_max = viewport_height * ICON_FRACTION_MAX
+    icon_size_min = viewport_height * ICON_FRACTION_MIN
 
-    # Convert to region coords
-    rx1, ry1 = view2d.view_to_region(x1, y1, clip=False)
-    rx2, ry2 = view2d.view_to_region(x2, y2, clip=False)
+    if pixels_per_uv >= zoom_full:
+        icon_size = icon_size_max
+    else:
+        t = (pixels_per_uv - zoom_hide) / (zoom_full - zoom_hide)
+        icon_size = icon_size_min + t * (icon_size_max - icon_size_min)
 
     mx, my = event.mouse_region_x, event.mouse_region_y
-    hs = HANDLE_SIZE
+    hs = icon_size / 2 + 2
 
-    # Check corners first (higher priority)
-    if abs(mx - rx1) < hs and abs(my - ry1) < hs:
-        return 'bottom_left'
-    if abs(mx - rx2) < hs and abs(my - ry1) < hs:
-        return 'bottom_right'
-    if abs(mx - rx2) < hs and abs(my - ry2) < hs:
-        return 'top_right'
-    if abs(mx - rx1) < hs and abs(my - ry2) < hs:
-        return 'top_left'
-
-    # Check edges - detect anywhere along the edge, not just at midpoint
-    on_left_edge = abs(mx - rx1) < hs and ry1 + hs < my < ry2 - hs
-    on_right_edge = abs(mx - rx2) < hs and ry1 + hs < my < ry2 - hs
-    on_bottom_edge = abs(my - ry1) < hs and rx1 + hs < mx < rx2 - hs
-    on_top_edge = abs(my - ry2) < hs and rx1 + hs < mx < rx2 - hs
-
-    if on_bottom_edge:
-        return 'bottom'
-    if on_top_edge:
-        return 'top'
-    if on_left_edge:
-        return 'left'
-    if on_right_edge:
-        return 'right'
-
-    # Check if inside rectangle (center move)
-    if rx1 <= mx <= rx2 and ry1 <= my <= ry2:
-        return 'center'
+    for cx, cy, cw, ch, _orient, key in cells:
+        icon_px = cx + cw / 2
+        icon_py = cy + ch / 2
+        rcx, rcy = _pixel_to_region(icon_px, icon_py, img_w, img_h, view2d)
+        if abs(mx - rcx) <= hs and abs(my - rcy) <= hs:
+            return key
 
     return None
 
 
-# Cursor mapping for different drag modes
-CURSOR_FOR_MODE = {
-    'center': 'HAND',
-    'left': 'MOVE_X',
-    'right': 'MOVE_X',
-    'top': 'MOVE_Y',
-    'bottom': 'MOVE_Y',
-    'top_left': 'SCROLL_XY',
-    'top_right': 'SCROLL_XY',
-    'bottom_left': 'SCROLL_XY',
-    'bottom_right': 'SCROLL_XY',
-}
+def _compute_preview(context, event, image, use_anchored):
+    """Compute the preview bisecting line for the cursor position.
 
+    Args:
+        context: Blender context.
+        event: Mouse event.
+        image: Blender image.
+        use_anchored: If True (ctrl held), use anchored partial extent.
+
+    Returns:
+        Tuple (axis, pos, extent_start, extent_end) or None.
+    """
+    img_w = image.size[0] if image.size[0] > 0 else 1
+    img_h = image.size[1] if image.size[1] > 0 else 1
+
+    region = context.region
+    view2d = region.view2d
+    mx, my = event.mouse_region_x, event.mouse_region_y
+
+    px, py = _region_to_pixel(mx, my, img_w, img_h, view2d)
+
+    # Must be inside image bounds
+    if px < 0 or px >= img_w or py < 0 or py >= img_h:
+        return None
+
+    # Suppress preview near icon centers
+    cells = json_storage.get_cells_with_orientations(image.name)
+    for cx, cy, cw, ch, _orient, _key in cells:
+        icon_cx = cx + cw / 2
+        icon_cy = cy + ch / 2
+        dead_zone = min(cw, ch) / 4
+        if abs(px - icon_cx) < dead_zone and abs(py - icon_cy) < dead_zone:
+            return None
+
+    # Determine axis from closest edge (loop-cut semantics:
+    # nearest vertical edge → horizontal cut, and vice versa)
+    # Find the cell the cursor is in for edge distance calculation
+    cell = json_storage.find_cell_at_point(cells, px, py)
+    if cell is not None:
+        cx, cy, cw, ch = cell[0], cell[1], cell[2], cell[3]
+    else:
+        cx, cy, cw, ch = 0, 0, img_w, img_h
+
+    dist_left = px - cx
+    dist_right = (cx + cw) - px
+    dist_top = py - cy
+    dist_bottom = (cy + ch) - py
+
+    min_horiz = min(dist_left, dist_right)
+    min_vert = min(dist_top, dist_bottom)
+
+    if min_horiz <= min_vert:
+        axis = "h"
+        raw_pos = py
+    else:
+        axis = "v"
+        raw_pos = px
+
+    # Snap
+    props = context.scene.hotspot_mapping_props
+    if props.snap_enabled:
+        snap = props.snap_size
+        snapped = round(raw_pos / snap) * snap
+    else:
+        snapped = int(raw_pos)
+
+    # Compute extent
+    lines = json_storage.get_texture_lines(image.name)
+    if use_anchored:
+        ext_start, ext_end = json_storage.find_anchors(
+            lines, px, py, axis, img_w, img_h
+        )
+    else:
+        if axis == "v":
+            ext_start, ext_end = 0, img_h
+        else:
+            ext_start, ext_end = 0, img_w
+
+    # Clamp within extent (at least 1px from edges)
+    if axis == "v":
+        snapped = max(1, min(snapped, img_w - 1))
+    else:
+        snapped = max(1, min(snapped, img_h - 1))
+
+    # Don't show preview if extent is too small to split
+    if ext_end - ext_start < 2:
+        return None
+
+    return (axis, snapped, ext_start, ext_end)
+
+
+# ---------------------------------------------------------------------------
+# Cursor update operator
+# ---------------------------------------------------------------------------
 
 class HOTSPOT_OT_update_cursor(bpy.types.Operator):
-    """Update cursor based on what's under the mouse"""
+    """Update cursor and preview line based on mouse position"""
     bl_idname = "hotspot.update_cursor"
     bl_label = "Update Hotspot Cursor"
     bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        global _preview_axis, _preview_pos, _preview_extent
+        global _hovered_line_idx, _cursor_ctrl
+
+        space = context.space_data
+        if not space or space.type != 'IMAGE_EDITOR':
+            return {'PASS_THROUGH'}
+
+        image = space.image
+        if not image or not json_storage.is_texture_hotspottable(image.name):
+            _preview_axis = None
+            _preview_pos = None
+            _preview_extent = None
+            _hovered_line_idx = -1
+            context.window.cursor_set('DEFAULT')
+            return {'PASS_THROUGH'}
+
+        _cursor_ctrl = event.ctrl
+
+        # Check if hovering a line
+        hit_line = _find_hit_line(context, event, image)
+        _hovered_line_idx = hit_line
+
+        if hit_line >= 0:
+            lines = json_storage.get_texture_lines(image.name)
+            if hit_line < len(lines):
+                if lines[hit_line]["axis"] == "v":
+                    context.window.cursor_set('MOVE_X')
+                else:
+                    context.window.cursor_set('MOVE_Y')
+            else:
+                context.window.cursor_set('DEFAULT')
+        else:
+            hit_icon = _find_hit_icon(context, event, image)
+            if hit_icon is not None:
+                context.window.cursor_set('DEFAULT')
+            else:
+                context.window.cursor_set('CROSSHAIR')
+
+        # Compute preview line (not shown when hovering a line)
+        if hit_line < 0:
+            preview = _compute_preview(context, event, image, event.ctrl)
+            if preview is not None:
+                _preview_axis = preview[0]
+                _preview_pos = preview[1]
+                _preview_extent = (preview[2], preview[3])
+            else:
+                _preview_axis = None
+                _preview_pos = None
+                _preview_extent = None
+        else:
+            _preview_axis = None
+            _preview_pos = None
+            _preview_extent = None
+
+        context.area.tag_redraw()
+        return {'PASS_THROUGH'}
+
+
+# ---------------------------------------------------------------------------
+# Click handler
+# ---------------------------------------------------------------------------
+
+class HOTSPOT_OT_click_select(bpy.types.Operator):
+    """Click to add line, drag existing line, or cycle orientation"""
+    bl_idname = "hotspot.click_select"
+    bl_label = "Click Select Hotspot"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    use_anchored: bpy.props.BoolProperty(
+        name="Use Anchored",
+        description="Add a partial line anchored between perpendicular lines",
+        options={'SKIP_SAVE', 'HIDDEN'},
+    )
 
     def invoke(self, context, event):
         space = context.space_data
@@ -298,78 +508,210 @@ class HOTSPOT_OT_update_cursor(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         image = space.image
-        if not image:
-            context.window.cursor_set('DEFAULT')
-            return {'PASS_THROUGH'}
-
-        if not json_storage.is_texture_hotspottable(image.name):
-            context.window.cursor_set('DEFAULT')
+        if not image or not json_storage.is_texture_hotspottable(image.name):
             return {'PASS_THROUGH'}
 
         props = context.scene.hotspot_mapping_props
-        hotspots = json_storage.get_texture_hotspots(image.name)
 
-        # Check if hovering over any orientation icon first
-        for hotspot in hotspots:
-            if _is_click_on_icon(context, event, hotspot, image):
-                context.window.cursor_set('DEFAULT')
-                return {'PASS_THROUGH'}
+        # Priority 1: Click on orientation icon
+        hit_icon = _find_hit_icon(context, event, image)
+        if hit_icon is not None:
+            debug_log(f"[Hotspots Click] ICON click on cell {hit_icon}")
+            bpy.ops.hotspot.cycle_orientation(cell_key=hit_icon)
+            return {'FINISHED'}
 
-        hit_zone = None
+        # Priority 2: Click on line → select and start drag
+        hit_line = _find_hit_line(context, event, image)
+        if hit_line >= 0:
+            debug_log(f"[Hotspots Click] LINE click on #{hit_line}")
+            props.active_line_idx = hit_line
+            context.area.tag_redraw()
+            bpy.ops.hotspot.drag_line('INVOKE_DEFAULT',
+                                      line_index=hit_line)
+            return {'FINISHED'}
 
-        # Check active hotspot first (priority for selected hotspot)
-        if props.active_hotspot_id:
-            active_hotspot = json_storage.get_hotspot_by_id(image.name, props.active_hotspot_id)
-            if active_hotspot:
-                hit_zone = _get_hit_zone_for_hotspot(context, event, active_hotspot, image)
-
-        # If not on active hotspot, check others
-        if not hit_zone:
-            for hotspot in hotspots:
-                hit_zone = _get_hit_zone_for_hotspot(context, event, hotspot, image)
-                if hit_zone:
-                    break
-
-        if hit_zone:
-            cursor = CURSOR_FOR_MODE.get(hit_zone, 'DEFAULT')
-            context.window.cursor_set(cursor)
-        else:
-            context.window.cursor_set('DEFAULT')
+        # Priority 3: Click to add a new line
+        use_anchored = self.use_anchored or event.ctrl
+        preview = _compute_preview(context, event, image, use_anchored)
+        if preview is not None:
+            axis, pos, ext_start, ext_end = preview
+            debug_log(f"[Hotspots Click] ADD line axis={axis} pos={pos} "
+                      f"extent=[{ext_start},{ext_end}] "
+                      f"anchored={use_anchored}")
+            if json_storage.add_line(image.name, axis, pos,
+                                     ext_start, ext_end):
+                props.active_line_idx = -1
+                for area in context.screen.areas:
+                    if area.type == 'IMAGE_EDITOR':
+                        area.tag_redraw()
+                return {'FINISHED'}
 
         return {'PASS_THROUGH'}
 
 
-def _view_to_pixel(view_x, view_y, img_width, img_height):
-    """Convert view (UV) coordinates to pixel coordinates.
+# ---------------------------------------------------------------------------
+# Drag line operator
+# ---------------------------------------------------------------------------
 
-    Args:
-        view_x: X in UV space (0-1)
-        view_y: Y in UV space (0-1)
-        img_width: Image width in pixels
-        img_height: Image height in pixels
+class HOTSPOT_OT_drag_line(bpy.types.Operator):
+    """Drag a bisecting line to move it"""
+    bl_idname = "hotspot.drag_line"
+    bl_label = "Drag Line"
+    bl_options = {'REGISTER', 'UNDO'}
 
-    Returns:
-        Tuple (pixel_x, pixel_y) where Y is from top (JSON format)
-    """
-    # Convert from UV space and flip Y back
-    pixel_x = view_x * img_width
-    pixel_y = img_height - (view_y * img_height)
-    return (pixel_x, pixel_y)
+    line_index: bpy.props.IntProperty(
+        name="Line Index",
+        options={'SKIP_SAVE', 'HIDDEN'},
+    )
 
+    _drag_start_pos = None
+    _line_axis = None
+    _move_range = None
+    _texture_name = None
+    _img_w = None
+    _img_h = None
+
+    @classmethod
+    def poll(cls, context):
+        if context.area.type != 'IMAGE_EDITOR':
+            return False
+        space = context.space_data
+        return space.image is not None
+
+    def invoke(self, context, event):
+        space = context.space_data
+        image = space.image
+        self._texture_name = image.name
+
+        self._img_w = image.size[0] if image.size[0] > 0 else 1
+        self._img_h = image.size[1] if image.size[1] > 0 else 1
+
+        lines = json_storage.get_texture_lines(self._texture_name)
+        if self.line_index < 0 or self.line_index >= len(lines):
+            return {'CANCELLED'}
+
+        line = lines[self.line_index]
+        self._line_axis = line["axis"]
+        self._drag_start_pos = line["pos"]
+        self._move_range = json_storage.get_line_move_range(
+            lines, self.line_index, self._img_w, self._img_h
+        )
+
+        if self._line_axis == "v":
+            context.window.cursor_modal_set('MOVE_X')
+        else:
+            context.window.cursor_modal_set('MOVE_Y')
+
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'MOUSEMOVE':
+            self._update_drag(context, event)
+
+        elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            context.window.cursor_modal_restore()
+            return {'FINISHED'}
+
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            context.window.cursor_modal_restore()
+            json_storage.move_line(self._texture_name,
+                                   self.line_index,
+                                   self._drag_start_pos)
+            context.area.tag_redraw()
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+    def _update_drag(self, context, event):
+        region = context.region
+        view2d = region.view2d
+
+        mx, my = event.mouse_region_x, event.mouse_region_y
+        vx, vy = view2d.region_to_view(mx, my)
+
+        if self._line_axis == "v":
+            raw_pos = vx * self._img_w
+        else:
+            raw_pos = self._img_h - (vy * self._img_h)
+
+        props = context.scene.hotspot_mapping_props
+        if props.snap_enabled:
+            snap = props.snap_size
+            new_pos = round(raw_pos / snap) * snap
+        else:
+            new_pos = int(raw_pos)
+
+        if self._move_range:
+            range_min, range_max = self._move_range
+            new_pos = max(range_min, min(new_pos, range_max))
+
+        json_storage.move_line(self._texture_name, self.line_index,
+                               new_pos)
+        context.area.tag_redraw()
+
+
+# ---------------------------------------------------------------------------
+# Delete line operator
+# ---------------------------------------------------------------------------
+
+class HOTSPOT_OT_delete_line(bpy.types.Operator):
+    """Delete the selected or hovered bisecting line"""
+    bl_idname = "hotspot.delete_line"
+    bl_label = "Delete Line"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not is_hotspot_mapping_workspace():
+            return False
+        if context.area.type != 'IMAGE_EDITOR':
+            return False
+        space = context.space_data
+        if not space.image:
+            return False
+        props = context.scene.hotspot_mapping_props
+        return props.active_line_idx >= 0 or _hovered_line_idx >= 0
+
+    def execute(self, context):
+        space = context.space_data
+        image = space.image
+        props = context.scene.hotspot_mapping_props
+
+        # Prefer selected, fall back to hovered
+        idx = props.active_line_idx
+        if idx < 0:
+            idx = _hovered_line_idx
+        if idx < 0:
+            self.report({'WARNING'}, "No line selected")
+            return {'CANCELLED'}
+
+        if json_storage.remove_line(image.name, idx):
+            self.report({'INFO'}, "Removed line")
+            props.active_line_idx = -1
+            for area in context.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.tag_redraw()
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, "Failed to remove line")
+            return {'CANCELLED'}
+
+
+# ---------------------------------------------------------------------------
+# Drawing
+# ---------------------------------------------------------------------------
 
 def draw_hotspots():
-    """Draw handler callback for hotspot rectangles."""
+    """Draw handler callback for hotspot visualization."""
     context = bpy.context
 
-    # Only draw in Image Editor
     if context.area is None or context.area.type != 'IMAGE_EDITOR':
         return
 
-    # Only draw in the Hotspot Mapping workspace
     if not is_hotspot_mapping_workspace():
         return
 
-    # Only draw when hotspot edit tool is active
     tool = context.workspace.tools.from_space_image_mode('VIEW')
     if not tool or tool.idname != "hotspot.edit_tool":
         return
@@ -383,42 +725,23 @@ def draw_hotspots():
     if not json_storage.is_texture_hotspottable(texture_name):
         return
 
-    # Get image dimensions
-    img_width = image.size[0] if image.size[0] > 0 else 1
-    img_height = image.size[1] if image.size[1] > 0 else 1
+    img_w = image.size[0] if image.size[0] > 0 else 1
+    img_h = image.size[1] if image.size[1] > 0 else 1
 
-    # Get hotspots
-    hotspots = json_storage.get_texture_hotspots(texture_name)
-    if not hotspots:
-        return
-
-    # Get active hotspot ID
-    props = context.scene.hotspot_mapping_props
-    active_id = props.active_hotspot_id
-
-    # Get view2d for coordinate conversion
     region = context.region
     view2d = region.view2d
 
-    # Calculate zoom level: screen pixels per UV unit (vertical)
-    # Measured vertically so it directly relates to image height vs viewport height
-    origin_x, origin_y = view2d.view_to_region(0, 0, clip=False)
+    # Zoom calculation for icon sizing
+    _, origin_y = view2d.view_to_region(0, 0, clip=False)
     _, unit_y = view2d.view_to_region(0, 1, clip=False)
     pixels_per_uv = abs(unit_y - origin_y)
 
-    # "Fit" zoom = when image height fills the viewport
     viewport_height = region.height
-    fit_zoom = viewport_height
-
-    # Zoom thresholds relative to fit zoom
-    zoom_hide = fit_zoom * ZOOM_HIDE_FACTOR
-    zoom_full = fit_zoom * ZOOM_FULL_FACTOR
-
-    # Icon size limits based on viewport size
+    zoom_hide = viewport_height * ZOOM_HIDE_FACTOR
+    zoom_full = viewport_height * ZOOM_FULL_FACTOR
     icon_size_max = viewport_height * ICON_FRACTION_MAX
     icon_size_min = viewport_height * ICON_FRACTION_MIN
 
-    # Interpolate icon size based on zoom
     if pixels_per_uv >= zoom_full:
         zoom_icon_size = icon_size_max
     elif pixels_per_uv <= zoom_hide:
@@ -427,69 +750,79 @@ def draw_hotspots():
         t = (pixels_per_uv - zoom_hide) / (zoom_full - zoom_hide)
         zoom_icon_size = icon_size_min + t * (icon_size_max - icon_size_min)
 
-    # Set up GPU state
+    props = context.scene.hotspot_mapping_props
+    active_line = props.active_line_idx
+
     gpu.state.blend_set('ALPHA')
     gpu.state.line_width_set(LINE_WIDTH)
 
     try:
-        # First pass: draw all rectangles and handles
-        hotspot_regions = []
-        for hotspot in hotspots:
-            hotspot_id = hotspot.get("id", "")
-            is_active = (hotspot_id == active_id)
+        # Pass 1: Draw cell outlines
+        cells = json_storage.get_cells_with_orientations(texture_name)
+        cell_regions = []
+        for cx, cy, cw, ch, orientation, _key in cells:
+            rx1, ry1 = _pixel_to_region(cx, cy + ch, img_w, img_h, view2d)
+            rx2, ry2 = _pixel_to_region(cx + cw, cy, img_w, img_h, view2d)
+            cell_regions.append((rx1, ry1, rx2, ry2, orientation))
+            _draw_rectangle(rx1, ry1, rx2, ry2, COLOR_CELL)
 
-            # Get hotspot bounds in pixel coords (y from top)
-            px = hotspot.get("x", 0)
-            py = hotspot.get("y", 0)
-            pw = hotspot.get("width", 0)
-            ph = hotspot.get("height", 0)
+        # Pass 2: Draw bisecting lines with highlighting
+        lines = json_storage.get_texture_lines(texture_name)
+        for i, line in enumerate(lines):
+            axis = line["axis"]
+            pos = line["pos"]
+            start = line["start"]
+            end = line["end"]
 
-            # Convert corners to view (UV) coords
-            # Top-left corner in JSON → top-left in UV (but Y flipped)
-            x1, y2 = _pixel_to_view(px, py, img_width, img_height)
-            # Bottom-right corner in JSON
-            x2, y1 = _pixel_to_view(px + pw, py + ph, img_width, img_height)
+            if axis == "v":
+                p1 = _pixel_to_region(pos, end, img_w, img_h, view2d)
+                p2 = _pixel_to_region(pos, start, img_w, img_h, view2d)
+            else:
+                p1 = _pixel_to_region(start, pos, img_w, img_h, view2d)
+                p2 = _pixel_to_region(end, pos, img_w, img_h, view2d)
 
-            # Convert view coords to region (screen) coords
-            rx1, ry1 = view2d.view_to_region(x1, y1, clip=False)
-            rx2, ry2 = view2d.view_to_region(x2, y2, clip=False)
+            if i == active_line:
+                color = COLOR_LINE_ACTIVE
+            elif i == _hovered_line_idx:
+                color = COLOR_LINE_HOVER
+            else:
+                color = COLOR_LINE
 
-            # Store for icon pass
-            orientation = hotspot.get("orientation_type", "Any")
-            hotspot_regions.append((rx1, ry1, rx2, ry2, orientation))
+            _draw_line(p1, p2, color, SPLIT_LINE_WIDTH)
 
-            # Choose color based on state
-            color = COLOR_HOTSPOT_ACTIVE if is_active else COLOR_HOTSPOT
+        # Pass 3: Preview bisecting line
+        if (_preview_axis is not None and _preview_pos is not None
+                and _preview_extent is not None):
+            ext_s, ext_e = _preview_extent
+            if _preview_axis == "v":
+                p1 = _pixel_to_region(_preview_pos, ext_e, img_w, img_h,
+                                      view2d)
+                p2 = _pixel_to_region(_preview_pos, ext_s, img_w, img_h,
+                                      view2d)
+            else:
+                p1 = _pixel_to_region(ext_s, _preview_pos, img_w, img_h,
+                                      view2d)
+                p2 = _pixel_to_region(ext_e, _preview_pos, img_w, img_h,
+                                      view2d)
+            _draw_line(p1, p2, COLOR_PREVIEW, PREVIEW_LINE_WIDTH)
 
-            # Draw rectangle
-            _draw_rectangle(rx1, ry1, rx2, ry2, color)
-
-            # Draw handles for active hotspot
-            if is_active:
-                _draw_handles(rx1, ry1, rx2, ry2)
-
-        # Second pass: draw all icons on top
+        # Pass 4: Orientation icons
         if pixels_per_uv >= zoom_hide:
-            for rx1, ry1, rx2, ry2, orientation in hotspot_regions:
+            for rx1, ry1, rx2, ry2, orientation in cell_regions:
                 icon_cx = (rx1 + rx2) / 2
                 icon_cy = (ry1 + ry2) / 2
-                _draw_orientation_icon(icon_cx, icon_cy, orientation, COLOR_ICON, zoom_icon_size)
+                _draw_orientation_icon(icon_cx, icon_cy, orientation,
+                                       COLOR_ICON, zoom_icon_size)
 
     finally:
-        # Restore GPU state
         gpu.state.blend_set('NONE')
         gpu.state.line_width_set(1.0)
 
 
 def _draw_rectangle(x1, y1, x2, y2, color):
     """Draw a rectangle outline."""
-    # Build line strip for rectangle (5 points to close the loop)
     points = [
-        (x1, y1),
-        (x2, y1),
-        (x2, y2),
-        (x1, y2),
-        (x1, y1),  # Close the loop
+        (x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1),
     ]
 
     try:
@@ -501,74 +834,45 @@ def _draw_rectangle(x1, y1, x2, y2, color):
 
         batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": points})
         batch.draw(shader)
-    except Exception as e:
-        # Fallback to simple shader
+    except Exception:
         try:
             shader = gpu.shader.from_builtin('UNIFORM_COLOR')
             shader.uniform_float("color", color)
-
-            # Draw as individual lines
-            lines = [
+            line_pairs = [
                 (x1, y1), (x2, y1),
                 (x2, y1), (x2, y2),
                 (x2, y2), (x1, y2),
                 (x1, y2), (x1, y1),
             ]
-            batch = batch_for_shader(shader, 'LINES', {"pos": lines})
+            batch = batch_for_shader(shader, 'LINES', {"pos": line_pairs})
             batch.draw(shader)
-        except Exception as e2:
+        except Exception:
             pass
 
 
-def _draw_handles(x1, y1, x2, y2):
-    """Draw resize handles at corners and edge midpoints."""
-    hs = HANDLE_SIZE // 2
-
-    # Calculate handle positions
-    handles = [
-        # Corners
-        (x1, y1),  # bottom-left
-        (x2, y1),  # bottom-right
-        (x2, y2),  # top-right
-        (x1, y2),  # top-left
-        # Edge midpoints
-        ((x1 + x2) / 2, y1),  # bottom
-        ((x1 + x2) / 2, y2),  # top
-        (x1, (y1 + y2) / 2),  # left
-        (x2, (y1 + y2) / 2),  # right
-    ]
-
-    # Draw each handle as a small square
-    for hx, hy in handles:
-        _draw_handle_square(hx - hs, hy - hs, hx + hs, hy + hs)
-
-
-def _draw_handle_square(x1, y1, x2, y2):
-    """Draw a filled square for a handle."""
+def _draw_line(p1, p2, color, width):
+    """Draw a single line segment."""
     try:
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        shader.uniform_float("color", COLOR_HANDLE)
+        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+        region = bpy.context.region
+        shader.uniform_float("viewportSize", (region.width, region.height))
+        shader.uniform_float("lineWidth", width)
+        shader.uniform_float("color", color)
 
-        # Draw as two triangles (filled quad)
-        vertices = [
-            (x1, y1), (x2, y1), (x2, y2),
-            (x1, y1), (x2, y2), (x1, y2),
-        ]
-        batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
+        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": [p1, p2]})
         batch.draw(shader)
     except Exception:
-        pass
+        try:
+            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            shader.uniform_float("color", color)
+            batch = batch_for_shader(shader, 'LINES', {"pos": [p1, p2]})
+            batch.draw(shader)
+        except Exception:
+            pass
 
 
 def _draw_orientation_icon(cx, cy, orientation_type, color, icon_size):
-    """Draw orientation symbol at center position (cx, cy).
-
-    Args:
-        cx, cy: Center position of icon in region coords
-        orientation_type: One of 'Any', 'Upwards', 'Floor', 'Ceiling'
-        color: RGBA tuple for icon color
-        icon_size: Size of the icon in pixels
-    """
+    """Draw orientation symbol at center position (cx, cy)."""
     orientation_symbols = {
         'Any': '●',
         'Upwards': '↑',
@@ -583,10 +887,8 @@ def _draw_orientation_icon(cx, cy, orientation_type, color, icon_size):
     blf.size(font_id, font_size)
     blf.color(font_id, color[0], color[1], color[2], color[3])
 
-    # Get text dimensions to center it
     text_width, text_height = blf.dimensions(font_id, symbol)
 
-    # Position text centered on cx, cy
     text_x = cx - text_width / 2
     text_y = cy - text_height / 2
 
@@ -594,447 +896,9 @@ def _draw_orientation_icon(cx, cy, orientation_type, color, icon_size):
     blf.draw(font_id, symbol)
 
 
-def _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, viewport_height):
-    """Get the icon click region for a hotspot.
-
-    Args:
-        rx1, ry1, rx2, ry2: Hotspot bounds in region coords
-        pixels_per_uv: Zoom level (screen pixels per UV unit)
-        viewport_height: Region height in pixels
-
-    Returns:
-        Tuple (icon_x1, icon_y1, icon_x2, icon_y2) for icon bounds,
-        or None if zoomed out too far to show icons
-    """
-    # Thresholds relative to fit zoom (image height fills viewport)
-    fit_zoom = viewport_height
-    zoom_hide = fit_zoom * ZOOM_HIDE_FACTOR
-    zoom_full = fit_zoom * ZOOM_FULL_FACTOR
-
-    # No icon if zoomed out too far
-    if pixels_per_uv < zoom_hide:
-        return None
-
-    # Icon size limits based on viewport
-    icon_size_max = viewport_height * ICON_FRACTION_MAX
-    icon_size_min = viewport_height * ICON_FRACTION_MIN
-
-    # Calculate icon size based on zoom with linear interpolation
-    if pixels_per_uv >= zoom_full:
-        icon_size = icon_size_max
-    else:
-        t = (pixels_per_uv - zoom_hide) / (zoom_full - zoom_hide)
-        icon_size = icon_size_min + t * (icon_size_max - icon_size_min)
-
-
-    # Icon is centered on hotspot
-    icon_cx = (rx1 + rx2) / 2
-    icon_cy = (ry1 + ry2) / 2
-    hs = icon_size / 2 + 2  # Slight padding for click area
-    return (icon_cx - hs, icon_cy - hs, icon_cx + hs, icon_cy + hs)
-
-
-def _is_click_on_icon(context, event, hotspot, image):
-    """Check if click is on the orientation icon of a hotspot.
-
-    Args:
-        context: Blender context
-        event: Mouse event
-        hotspot: Hotspot dict
-        image: Image object
-
-    Returns:
-        True if click is on icon, False otherwise
-    """
-    region = context.region
-    view2d = region.view2d
-
-    # Calculate zoom level: screen pixels per UV unit (vertical)
-    origin_x, origin_y = view2d.view_to_region(0, 0, clip=False)
-    _, unit_y = view2d.view_to_region(0, 1, clip=False)
-    pixels_per_uv = abs(unit_y - origin_y)
-
-    img_width = image.size[0] if image.size[0] > 0 else 1
-    img_height = image.size[1] if image.size[1] > 0 else 1
-
-    # Get hotspot bounds in view (UV) coords
-    px = hotspot.get("x", 0)
-    py = hotspot.get("y", 0)
-    pw = hotspot.get("width", 0)
-    ph = hotspot.get("height", 0)
-
-    x1, y2 = _pixel_to_view(px, py, img_width, img_height)
-    x2, y1 = _pixel_to_view(px + pw, py + ph, img_width, img_height)
-
-    # Convert to region coords
-    rx1, ry1 = view2d.view_to_region(x1, y1, clip=False)
-    rx2, ry2 = view2d.view_to_region(x2, y2, clip=False)
-
-    # Get icon bounds (returns None if zoomed out too far)
-    icon_bounds = _get_icon_region(rx1, ry1, rx2, ry2, pixels_per_uv, region.height)
-    if icon_bounds is None:
-        return False
-
-    icon_x1, icon_y1, icon_x2, icon_y2 = icon_bounds
-    mx, my = event.mouse_region_x, event.mouse_region_y
-
-    return icon_x1 <= mx <= icon_x2 and icon_y1 <= my <= icon_y2
-
-
-class HOTSPOT_OT_interactive_edit(bpy.types.Operator):
-    """Interactively edit hotspot position and size"""
-    bl_idname = "hotspot.interactive_edit"
-    bl_label = "Edit Hotspot"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    # Hit zone passed from click_select to avoid redundant detection
-    hit_zone: bpy.props.StringProperty(
-        name="Hit Zone",
-        description="Which part of the hotspot was clicked",
-        options={'SKIP_SAVE', 'HIDDEN'},
-    )
-
-    # Internal state
-    _dragging = False
-    _drag_mode = None  # 'move', 'resize_tl', 'resize_tr', 'resize_bl', 'resize_br', etc.
-    _drag_start_mouse = None
-    _drag_start_hotspot = None  # Copy of hotspot data at drag start
-
-    @classmethod
-    def poll(cls, context):
-        if context.area.type != 'IMAGE_EDITOR':
-            return False
-        space = context.space_data
-        if not space.image:
-            return False
-        props = context.scene.hotspot_mapping_props
-        if not props.active_hotspot_id:
-            return False
-        return json_storage.is_texture_hotspottable(space.image.name)
-
-    def invoke(self, context, event):
-        self._dragging = False
-        self._drag_mode = None
-        self._drag_start_mouse = None
-        self._drag_start_hotspot = None
-
-        # Get current hotspot data
-        space = context.space_data
-        image = space.image
-        props = context.scene.hotspot_mapping_props
-
-        hotspot = json_storage.get_hotspot_by_id(
-            image.name, props.active_hotspot_id
-        )
-        if not hotspot:
-            self.report({'WARNING'}, "No active hotspot")
-            return {'CANCELLED'}
-
-        # Use hit zone passed from click_select, or detect if called directly
-        zone = self.hit_zone if self.hit_zone else _get_hit_zone_for_hotspot(context, event, hotspot, image)
-        if zone is None:
-            return {'CANCELLED'}
-
-        # Start dragging
-        self._dragging = True
-        self._drag_mode = zone
-        self._drag_start_mouse = (event.mouse_region_x, event.mouse_region_y)
-        self._drag_start_hotspot = hotspot.copy()
-
-        # Set cursor based on drag mode
-        cursor = CURSOR_FOR_MODE.get(zone, 'DEFAULT')
-        context.window.cursor_modal_set(cursor)
-
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-
-    def modal(self, context, event):
-        if event.type == 'MOUSEMOVE':
-            self._update_drag(context, event)
-
-        elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            self._dragging = False
-            context.window.cursor_modal_restore()
-            # Save final position
-            self._save_hotspot(context)
-            return {'FINISHED'}
-
-        elif event.type in {'RIGHTMOUSE', 'ESC'}:
-            # Cancel - restore original position
-            context.window.cursor_modal_restore()
-            self._restore_hotspot(context)
-            return {'CANCELLED'}
-
-        return {'RUNNING_MODAL'}
-
-    def _update_drag(self, context, event):
-        """Update hotspot position/size based on mouse movement."""
-        if not self._dragging or not self._drag_start_hotspot:
-            return
-
-        space = context.space_data
-        image = space.image
-        props = context.scene.hotspot_mapping_props
-        region = context.region
-        view2d = region.view2d
-
-        img_width = image.size[0] if image.size[0] > 0 else 1
-        img_height = image.size[1] if image.size[1] > 0 else 1
-
-        # Calculate mouse delta in view coords
-        mx1, my1 = self._drag_start_mouse
-        mx2, my2 = event.mouse_region_x, event.mouse_region_y
-
-        # Convert region coords to view (UV) coords
-        vx1, vy1 = view2d.region_to_view(mx1, my1)
-        vx2, vy2 = view2d.region_to_view(mx2, my2)
-
-        # Delta in UV space, then convert to pixels
-        dx = (vx2 - vx1) * img_width
-        dy = (vy2 - vy1) * img_height  # Note: view Y increases upward
-
-        # Get original hotspot values
-        orig_x = self._drag_start_hotspot.get("x", 0)
-        orig_y = self._drag_start_hotspot.get("y", 0)
-        orig_w = self._drag_start_hotspot.get("width", 0)
-        orig_h = self._drag_start_hotspot.get("height", 0)
-
-        # Calculate new values based on drag mode
-        new_x, new_y, new_w, new_h = orig_x, orig_y, orig_w, orig_h
-
-        mode = self._drag_mode
-
-        if mode == 'center':
-            # Move entire rectangle
-            new_x = orig_x + int(dx)
-            new_y = orig_y - int(dy)  # Flip Y for JSON format
-        elif mode == 'left':
-            # Resize from left edge
-            new_x = orig_x + int(dx)
-            new_w = orig_w - int(dx)
-        elif mode == 'right':
-            # Resize from right edge
-            new_w = orig_w + int(dx)
-        elif mode == 'top':
-            # Resize from top edge (in view coords, top is higher Y)
-            new_y = orig_y - int(dy)  # Flip Y
-            new_h = orig_h + int(dy)
-        elif mode == 'bottom':
-            # Resize from bottom edge
-            new_h = orig_h - int(dy)
-        elif mode == 'top_left':
-            new_x = orig_x + int(dx)
-            new_w = orig_w - int(dx)
-            new_y = orig_y - int(dy)
-            new_h = orig_h + int(dy)
-        elif mode == 'top_right':
-            new_w = orig_w + int(dx)
-            new_y = orig_y - int(dy)
-            new_h = orig_h + int(dy)
-        elif mode == 'bottom_left':
-            new_x = orig_x + int(dx)
-            new_w = orig_w - int(dx)
-            new_h = orig_h - int(dy)
-        elif mode == 'bottom_right':
-            new_w = orig_w + int(dx)
-            new_h = orig_h - int(dy)
-
-        # Minimum size is snap size when snapping enabled, otherwise 8
-        min_size = props.snap_size if props.snap_enabled else 8
-
-        # Apply pixel snapping if enabled (absolute snap, not relative)
-        if props.snap_enabled:
-            snap = props.snap_size
-
-            def snap_to_grid(val):
-                return round(val / snap) * snap
-
-            if mode == 'center':
-                # Snap position only, preserve size
-                new_x = snap_to_grid(new_x)
-                new_y = snap_to_grid(new_y)
-            elif mode == 'left':
-                # Snap left edge, keep right edge fixed
-                right_edge = orig_x + orig_w
-                new_x = snap_to_grid(new_x)
-                new_w = right_edge - new_x
-            elif mode == 'right':
-                # Snap right edge, keep left edge fixed
-                right_edge = snap_to_grid(new_x + new_w)
-                new_w = right_edge - new_x
-            elif mode == 'top':
-                # Snap top edge, keep bottom edge fixed
-                bottom_edge = orig_y + orig_h
-                new_y = snap_to_grid(new_y)
-                new_h = bottom_edge - new_y
-            elif mode == 'bottom':
-                # Snap bottom edge, keep top edge fixed
-                bottom_edge = snap_to_grid(new_y + new_h)
-                new_h = bottom_edge - new_y
-            elif mode == 'top_left':
-                right_edge = orig_x + orig_w
-                bottom_edge = orig_y + orig_h
-                new_x = snap_to_grid(new_x)
-                new_y = snap_to_grid(new_y)
-                new_w = right_edge - new_x
-                new_h = bottom_edge - new_y
-            elif mode == 'top_right':
-                bottom_edge = orig_y + orig_h
-                right_edge = snap_to_grid(new_x + new_w)
-                new_y = snap_to_grid(new_y)
-                new_w = right_edge - new_x
-                new_h = bottom_edge - new_y
-            elif mode == 'bottom_left':
-                right_edge = orig_x + orig_w
-                new_x = snap_to_grid(new_x)
-                bottom_edge = snap_to_grid(new_y + new_h)
-                new_w = right_edge - new_x
-                new_h = bottom_edge - new_y
-            elif mode == 'bottom_right':
-                right_edge = snap_to_grid(new_x + new_w)
-                bottom_edge = snap_to_grid(new_y + new_h)
-                new_w = right_edge - new_x
-                new_h = bottom_edge - new_y
-
-        # Enforce minimum size (only for resize modes)
-        if mode != 'center':
-            if new_w < min_size:
-                if mode in ('left', 'top_left', 'bottom_left'):
-                    new_x = orig_x + orig_w - min_size
-                new_w = min_size
-            if new_h < min_size:
-                if mode in ('top', 'top_left', 'top_right'):
-                    new_y = orig_y + orig_h - min_size
-                new_h = min_size
-
-        # Clamp to image bounds
-        if mode == 'center':
-            # For moving, clamp position but never change size
-            new_x = max(0, min(new_x, img_width - new_w))
-            new_y = max(0, min(new_y, img_height - new_h))
-        else:
-            # For left edge drags: keep right edge fixed when clamping
-            if mode in ('left', 'top_left', 'bottom_left'):
-                right_edge = orig_x + orig_w
-                if new_x < 0:
-                    new_x = 0
-                    new_w = right_edge  # Recalculate width to keep right edge fixed
-                new_x = min(new_x, img_width - min_size)
-
-            # For top edge drags: keep bottom edge fixed when clamping
-            if mode in ('top', 'top_left', 'top_right'):
-                bottom_edge = orig_y + orig_h
-                if new_y < 0:
-                    new_y = 0
-                    new_h = bottom_edge  # Recalculate height to keep bottom edge fixed
-                new_y = min(new_y, img_height - min_size)
-
-            # For right/bottom edge drags: just clamp the size
-            new_w = max(min_size, min(new_w, img_width - new_x))
-            new_h = max(min_size, min(new_h, img_height - new_y))
-
-        # Ensure integer values
-        new_x = int(new_x)
-        new_y = int(new_y)
-        new_w = int(new_w)
-        new_h = int(new_h)
-
-        json_storage.update_hotspot(
-            image.name, props.active_hotspot_id,
-            new_x, new_y, new_w, new_h
-        )
-
-        # Force redraw
-        context.area.tag_redraw()
-
-    def _save_hotspot(self, context):
-        """Mark drag as complete. File sync happens on blend save."""
-        pass
-
-    def _restore_hotspot(self, context):
-        """Restore hotspot to original position on cancel."""
-        if not self._drag_start_hotspot:
-            return
-
-        space = context.space_data
-        image = space.image
-        props = context.scene.hotspot_mapping_props
-
-        orig = self._drag_start_hotspot
-        # Restore and sync to disk
-        json_storage.update_hotspot(
-            image.name, props.active_hotspot_id,
-            orig.get("x", 0), orig.get("y", 0),
-            orig.get("width", 0), orig.get("height", 0)
-        )
-        context.area.tag_redraw()
-
-
-class HOTSPOT_OT_click_select(bpy.types.Operator):
-    """Click to select a hotspot in the Image Editor"""
-    bl_idname = "hotspot.click_select"
-    bl_label = "Click Select Hotspot"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def invoke(self, context, event):
-        space = context.space_data
-        if not space or space.type != 'IMAGE_EDITOR':
-            return {'PASS_THROUGH'}
-
-        image = space.image
-        if not image:
-            return {'PASS_THROUGH'}
-
-        if not json_storage.is_texture_hotspottable(image.name):
-            return {'PASS_THROUGH'}
-
-        hotspots = json_storage.get_texture_hotspots(image.name)
-        props = context.scene.hotspot_mapping_props
-
-        # First check if click is on any hotspot's orientation icon
-        for hotspot in hotspots:
-            if _is_click_on_icon(context, event, hotspot, image):
-                hotspot_id = hotspot.get("id", "")
-                debug_log(f"[Hotspots Click] ICON click on {hotspot_id}")
-                # Cycle orientation and redraw
-                bpy.ops.hotspot.cycle_orientation(hotspot_id=hotspot_id)
-                return {'FINISHED'}
-
-        clicked_hotspot = None
-        hit_zone = None
-
-        # Check active hotspot first (priority for selected hotspot)
-        if props.active_hotspot_id:
-            active_hotspot = json_storage.get_hotspot_by_id(image.name, props.active_hotspot_id)
-            if active_hotspot:
-                zone = _get_hit_zone_for_hotspot(context, event, active_hotspot, image)
-                if zone:
-                    clicked_hotspot = active_hotspot
-                    hit_zone = zone
-                    debug_log(f"[Hotspots Click] HIT on active {active_hotspot.get('id')} zone={zone}")
-
-        # If not on active hotspot, check others
-        if not hit_zone:
-            for hotspot in hotspots:
-                zone = _get_hit_zone_for_hotspot(context, event, hotspot, image)
-                if zone:
-                    clicked_hotspot = hotspot
-                    hit_zone = zone
-                    debug_log(f"[Hotspots Click] HIT on {hotspot.get('id')} zone={zone}")
-                    break
-
-        if clicked_hotspot and hit_zone:
-            # Select this hotspot
-            props.active_hotspot_id = clicked_hotspot.get("id", "")
-            context.area.tag_redraw()
-
-            # Start dragging immediately, passing the hit zone
-            bpy.ops.hotspot.interactive_edit('INVOKE_DEFAULT', hit_zone=hit_zone)
-            return {'FINISHED'}
-        else:
-            # Clicked outside any hotspot - pass through to normal Blender behavior
-            return {'PASS_THROUGH'}
-
+# ---------------------------------------------------------------------------
+# Registration
+# ---------------------------------------------------------------------------
 
 _keymaps = []
 
@@ -1046,23 +910,21 @@ def register():
     bpy.utils.register_class(HOTSPOT_OT_snap_size_down)
     bpy.utils.register_class(HOTSPOT_OT_cycle_orientation)
     bpy.utils.register_class(HOTSPOT_OT_update_cursor)
-    bpy.utils.register_class(HOTSPOT_OT_interactive_edit)
+    bpy.utils.register_class(HOTSPOT_OT_drag_line)
     bpy.utils.register_class(HOTSPOT_OT_click_select)
+    bpy.utils.register_class(HOTSPOT_OT_delete_line)
 
-    # Register draw handler
     _draw_handler = bpy.types.SpaceImageEditor.draw_handler_add(
         draw_hotspots, (), 'WINDOW', 'POST_PIXEL'
     )
     debug_log(f"[Hotspots] Draw handler registered: {_draw_handler}")
 
-    # Register the Hotspot Edit tool in Image Editor toolbar
-    bpy.utils.register_tool(HOTSPOT_TOOL_edit, after={"builtin.sample"}, separator=True)
+    bpy.utils.register_tool(HOTSPOT_TOOL_edit, after={"builtin.sample"},
+                            separator=True)
     debug_log("[Hotspots] Tool registered: hotspot.edit_tool")
 
-    # Register timer to check for tool changes
     bpy.app.timers.register(_check_tool_change, persistent=True)
 
-    # Register keymaps for snap size adjustment ([ and ])
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if kc:
@@ -1088,11 +950,9 @@ def register():
 def unregister():
     global _draw_handler, _keymaps
 
-    # Unregister tool change timer
     if bpy.app.timers.is_registered(_check_tool_change):
         bpy.app.timers.unregister(_check_tool_change)
 
-    # Remove keymaps
     for km, kmi in _keymaps:
         try:
             km.keymap_items.remove(kmi)
@@ -1100,16 +960,16 @@ def unregister():
             pass
     _keymaps.clear()
 
-    # Unregister tool
     bpy.utils.unregister_tool(HOTSPOT_TOOL_edit)
 
-    # Remove draw handler
     if _draw_handler is not None:
-        bpy.types.SpaceImageEditor.draw_handler_remove(_draw_handler, 'WINDOW')
+        bpy.types.SpaceImageEditor.draw_handler_remove(_draw_handler,
+                                                       'WINDOW')
         _draw_handler = None
 
+    bpy.utils.unregister_class(HOTSPOT_OT_delete_line)
     bpy.utils.unregister_class(HOTSPOT_OT_click_select)
-    bpy.utils.unregister_class(HOTSPOT_OT_interactive_edit)
+    bpy.utils.unregister_class(HOTSPOT_OT_drag_line)
     bpy.utils.unregister_class(HOTSPOT_OT_update_cursor)
     bpy.utils.unregister_class(HOTSPOT_OT_cycle_orientation)
     bpy.utils.unregister_class(HOTSPOT_OT_snap_size_down)

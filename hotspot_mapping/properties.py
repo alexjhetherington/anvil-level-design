@@ -6,7 +6,8 @@ Stores hotspot data in Blender properties for undo support.
 """
 
 import bpy
-from bpy.props import StringProperty, PointerProperty, BoolProperty, IntProperty
+from bpy.props import (StringProperty, PointerProperty, BoolProperty,
+                       IntProperty)
 
 
 # Snap size options (powers of 2)
@@ -22,9 +23,10 @@ class HotspotMappingProperties(bpy.types.PropertyGroup):
         description="Name of the texture currently being edited",
     )
 
-    active_hotspot_id: StringProperty(
-        name="Active Hotspot",
-        description="ID of the currently selected hotspot",
+    active_line_idx: IntProperty(
+        name="Active Line",
+        description="Index of the currently selected bisecting line (-1 = none)",
+        default=-1,
     )
 
     snap_enabled: BoolProperty(
