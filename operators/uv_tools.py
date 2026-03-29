@@ -32,7 +32,7 @@ FLOOR_CEILING_ANGLE_THRESHOLD = math.radians(10)
 # Square aspect ratio tolerance (within 10% of 1.0)
 SQUARE_ASPECT_TOLERANCE = 0.1
 
-from ..handlers import cache_face_data, cache_single_face
+from ..handlers import cache_face_data, cache_single_face, update_ui_from_selection
 from ..properties import set_updating_from_selection, sync_scale_tracking, apply_uv_to_face
 from ..hotspot_mapping.json_storage import (
     is_texture_hotspottable,
@@ -805,9 +805,11 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     # Note: We no longer clear seams at the start - existing seams are respected
     # by group_quad_faces_by_angle_and_existing_seams() as group boundaries
 
-    # Filter to faces with hotspottable materials
+    # Filter to faces with hotspottable materials, skipping fixed faces
     hotspottable_faces = []
     skipped_no_hotspot = 0
+
+    fixed_layer = bm.faces.layers.int.get("anvil_fixed_hotspot")
 
     for face in faces:
         mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
@@ -815,6 +817,10 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
 
         if not image or not is_texture_hotspottable(image.name):
             skipped_no_hotspot += 1
+            continue
+
+        # Skip faces with the fixed hotspot flag (unless using override/choose)
+        if override_hotspot is None and fixed_layer is not None and face[fixed_layer] != 0:
             continue
 
         hotspottable_faces.append(face)
@@ -1733,7 +1739,7 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
         }
 
         # Save and restore selection since apply_hotspots_to_mesh modifies it
-        from ..utils import get_face_id_layer, save_face_selection, restore_face_selection
+        from ..utils import get_face_id_layer, get_fixed_hotspot_layer, save_face_selection, restore_face_selection
         id_layer = get_face_id_layer(bm)
         selected_ids, active_id = save_face_selection(bm, id_layer)
 
@@ -1744,9 +1750,16 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
             override_hotspot=override,
         )
 
+        # Mark chosen faces as fixed
+        if applied_count > 0:
+            fixed_layer = get_fixed_hotspot_layer(bm)
+            for face in selected_faces:
+                face[fixed_layer] = 1
+
         restore_face_selection(bm, id_layer, selected_ids, active_id)
         bmesh.update_edit_mesh(me)
         cache_face_data(context)
+        update_ui_from_selection(context)
 
         if applied_count > 0:
             self.report({'INFO'}, f"Applied hotspot to {applied_count} island(s)")

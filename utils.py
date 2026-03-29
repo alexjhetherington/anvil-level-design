@@ -25,6 +25,7 @@ def debug_log(msg):
 # Unlike Blender's face.index, these survive topology changes.
 
 FACE_ID_LAYER_NAME = "anvil_face_id"
+FIXED_HOTSPOT_LAYER_NAME = "anvil_fixed_hotspot"
 _next_face_id = 1
 
 
@@ -36,6 +37,17 @@ def get_face_id_layer(bm):
     layer = bm.faces.layers.int.get(FACE_ID_LAYER_NAME)
     if layer is None:
         layer = bm.faces.layers.int.new(FACE_ID_LAYER_NAME)
+    return layer
+
+
+def get_fixed_hotspot_layer(bm):
+    """Get or create the fixed-hotspot flag layer on a BMesh.
+
+    Returns the BMesh int layer (0 = not fixed, 1 = fixed).
+    """
+    layer = bm.faces.layers.int.get(FIXED_HOTSPOT_LAYER_NAME)
+    if layer is None:
+        layer = bm.faces.layers.int.new(FIXED_HOTSPOT_LAYER_NAME)
     return layer
 
 

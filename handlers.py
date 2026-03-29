@@ -139,6 +139,7 @@ _multi_face_unset_rotation = False
 _multi_face_unset_offset = False
 _all_selected_hotspot = False
 _any_selected_hotspot = False
+_any_selected_fixed_hotspot = False
 
 
 def get_all_selected_hotspot():
@@ -147,6 +148,10 @@ def get_all_selected_hotspot():
 
 def get_any_selected_hotspot():
     return _any_selected_hotspot
+
+
+def get_any_selected_fixed_hotspot():
+    return _any_selected_fixed_hotspot
 
 
 def get_multi_face_mode():
@@ -261,8 +266,13 @@ def _apply_auto_hotspots_deferred():
         if not force and not _any_hotspot_geometry_changed(bm, me):
             return None
 
-        # Get ALL faces with hotspot materials
-        all_hotspot_faces = [f for f in bm.faces if f.is_valid and face_has_hotspot_material(f, me)]
+        # Get ALL faces with hotspot materials, excluding fixed faces
+        fixed_layer = bm.faces.layers.int.get("anvil_fixed_hotspot")
+        all_hotspot_faces = [
+            f for f in bm.faces
+            if f.is_valid and face_has_hotspot_material(f, me)
+            and (fixed_layer is None or f[fixed_layer] == 0)
+        ]
 
         if not all_hotspot_faces:
             return None
@@ -969,7 +979,7 @@ def _check_multi_face_consistency(selected_faces, uv_layer, ppm, me, first_trans
 
 def update_ui_from_selection(context):
     """Update UI properties when selection changes"""
-    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot
+    global _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot, _any_selected_fixed_hotspot
 
     if context.mode != 'EDIT_MESH':
         return
@@ -997,9 +1007,18 @@ def update_ui_from_selection(context):
         hotspot_flags = [face_has_hotspot_material(f, me) for f in selected_faces]
         _all_selected_hotspot = all(hotspot_flags)
         _any_selected_hotspot = any(hotspot_flags)
+
+        # Check if any selected faces have the fixed hotspot flag
+        from .utils import get_fixed_hotspot_layer
+        fixed_layer = bm.faces.layers.int.get("anvil_fixed_hotspot")
+        if fixed_layer is not None:
+            _any_selected_fixed_hotspot = any(f[fixed_layer] != 0 for f in selected_faces)
+        else:
+            _any_selected_fixed_hotspot = False
     else:
         _all_selected_hotspot = False
         _any_selected_hotspot = False
+        _any_selected_fixed_hotspot = False
 
     if len(selected_faces) > 1:
         _multi_face_mode = True
@@ -2440,7 +2459,7 @@ def register():
 
 
 def unregister():
-    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot, _last_tracked_mode
+    global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index, _last_edit_object_name, _last_material_count, _active_image, _active_image_just_set, _file_browser_watcher_running, _last_file_browser_path, _file_loaded_into_edit_depsgraph, _was_first_save, _auto_hotspot_pending, _undo_in_progress, _multi_face_mode, _multi_face_unset_scale, _multi_face_unset_rotation, _multi_face_unset_offset, _all_selected_hotspot, _any_selected_hotspot, _any_selected_fixed_hotspot, _last_tracked_mode
 
     # Clear face orientation msgbus subscription and restore state
     bpy.msgbus.clear_by_owner(_face_orientation_msgbus_owner)
@@ -2508,3 +2527,4 @@ def unregister():
     _multi_face_unset_offset = False
     _all_selected_hotspot = False
     _any_selected_hotspot = False
+    _any_selected_fixed_hotspot = False

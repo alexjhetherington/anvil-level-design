@@ -22,6 +22,7 @@ from ..handlers import (
     get_selected_faces_share_image,
     get_all_selected_hotspot,
     get_any_selected_hotspot,
+    get_any_selected_fixed_hotspot,
 )
 
 
@@ -150,6 +151,45 @@ class LEVELDESIGN_OT_toggle_combine_faces(Operator):
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
         obj.anvil_allow_combined_faces = not obj.anvil_allow_combined_faces
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_toggle_fixed_hotspot(Operator):
+    """Toggle fixed hotspot flag on selected faces"""
+    bl_idname = "leveldesign.toggle_fixed_hotspot"
+    bl_label = "Toggle Fixed Hotspot"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.object and context.object.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
+
+    def execute(self, context):
+        import bmesh
+        from ..utils import get_fixed_hotspot_layer
+
+        obj = context.object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        fixed_layer = get_fixed_hotspot_layer(bm)
+        selected_faces = [f for f in bm.faces if f.select]
+
+        if not selected_faces:
+            return {'CANCELLED'}
+
+        # If any selected face is fixed, clear all; otherwise set all
+        any_fixed = any(f[fixed_layer] != 0 for f in selected_faces)
+        new_value = 0 if any_fixed else 1
+        for f in selected_faces:
+            f[fixed_layer] = new_value
+
+        bmesh.update_edit_mesh(me)
+
+        from ..handlers import update_ui_from_selection
+        update_ui_from_selection(context)
+
         return {'FINISHED'}
 
 
@@ -427,6 +467,24 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
             "leveldesign.hotspot_palette",
             text="Choose Hotspot",
             icon='IMGDISPLAY',
+        )
+
+        # Fixed hotspot indicator/toggle
+        layout.separator()
+        in_face_mode = (context.mode == 'EDIT_MESH' and
+                        context.tool_settings.mesh_select_mode[2])
+        has_face_selection = in_face_mode and get_selected_face_count(context) > 0
+        if has_face_selection:
+            is_fixed = get_any_selected_fixed_hotspot()
+        else:
+            is_fixed = False
+        row = layout.row()
+        row.enabled = has_face_selection
+        row.operator(
+            "leveldesign.toggle_fixed_hotspot",
+            text="Fixed",
+            icon='CHECKBOX_HLT' if is_fixed else 'CHECKBOX_DEHLT',
+            depress=is_fixed,
         )
 
 
@@ -879,6 +937,7 @@ classes = (
     LEVELDESIGN_OT_toggle_uv_lock,
     LEVELDESIGN_OT_toggle_auto_hotspot,
     LEVELDESIGN_OT_toggle_combine_faces,
+    LEVELDESIGN_OT_toggle_fixed_hotspot,
     LEVELDESIGN_PT_uv_lock_panel,
     LEVELDESIGN_PT_uv_settings_panel,
     LEVELDESIGN_PT_hotspotting_panel,
