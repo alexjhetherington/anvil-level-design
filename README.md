@@ -155,6 +155,8 @@ Due to blender api limitations it does not work for box selecting or lasso-ing i
 
 Vertex painting does not work through backface culling, so when you enter vertex paint mode, face orientation will be enabled if it is not otherwise. This lets you see what you cannot paint through.
 
+This addon sets the front face orientation colour to transparent in the active theme.
+
 ##### Paint Select
 
 Ctrl Left mouse paint selects, which is similar to circle select (hold and drag to add crossed items to the selection) but respects backface culling.
@@ -293,7 +295,7 @@ For a more convenient experience I recommend you consider adjusting the followin
 * You are unable to set addon keymaps for modal internal hotkeys i.e. 'exit walk view.' For this reason, Anvil manually adjusts user keymaps when required. I aim to do this in a way that does not destroy your existing keymaps.
 * Anvil manages materials for you based on image file names. If you rename an image file or rename a material you may run into issues.
 * The way we run initial addon setup is edge case city. See comments in code.
-* It's not feasible to have paint mode respect backface culling due to the complexity of brush operators. It means you must be 'inside' a room to paint faces you can see, or hide backfaces. Which is additionally annoying (above needing to select them in the first place given we ignore them due to backface culling) because you cannot select / hide faces in painting modes. I'm currently experimenting with forcing face orientation to be on in vertex paint mode. Or maybe adding a "hide all hidden-anyway-because-they-are-not-facing-you" faces button 
+* It's not feasible to have paint mode respect backface culling due to the complexity of brush operators. It means you must be 'inside' a room to paint faces you can see, or hide backfaces. Which is additionally annoying (above needing to select them in the first place given we ignore them due to backface culling) because you cannot select / hide faces in painting modes. I'm currently experimenting with forcing face orientation to be on in vertex paint mode. Anvil sets the front face orientation colour to transparent. Or maybe adding a "hide all hidden-anyway-because-they-are-not-facing-you" faces button 
 
 ### GLTF / Godot Material Limitations
 

@@ -334,6 +334,11 @@ def register():
 
     bpy.utils.register_class(LEVELDESIGN_OT_restore_default_keybindings)
     bpy.utils.register_class(LevelDesignPreferences)
+
+    # Make face orientation front face transparent so only back faces are highlighted
+    theme_3d = bpy.context.preferences.themes[0].view_3d
+    theme_3d.face_front = (theme_3d.face_front[0], theme_3d.face_front[1], theme_3d.face_front[2], 0.0)
+
     properties.register()
     handlers.register()
     operators.register()
