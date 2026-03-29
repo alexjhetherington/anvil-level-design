@@ -41,6 +41,13 @@ class HotspotMappingProperties(bpy.types.PropertyGroup):
         max=512,
     )
 
+    hotspots_file_path: StringProperty(
+        name="Hotspots File",
+        description="Path to external hotspots JSON file. Blank means data lives only in the .blend file",
+        default="",
+        subtype='FILE_PATH',
+    )
+
     # Store hotspot data as JSON string for undo support
     # This is the source of truth; JSON file is synced on save/load
     hotspots_json: StringProperty(

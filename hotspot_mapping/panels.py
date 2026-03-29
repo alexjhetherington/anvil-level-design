@@ -29,10 +29,18 @@ class HOTSPOT_PT_main_panel(Panel):
         space = context.space_data
         props = context.scene.hotspot_mapping_props
 
-        # Check if blend file is saved
-        if not bpy.data.filepath:
-            layout.label(text="Save .blend file first", icon='ERROR')
-            return
+        # Hotspot file path selector
+        box = layout.box()
+        box.label(text="Hotspot File", icon='FILE')
+        row = box.row(align=True)
+        if props.hotspots_file_path:
+            row.label(text=props.hotspots_file_path, icon='LINKED')
+            row.operator("hotspot.clear_file_path", text="", icon='X')
+        else:
+            row.label(text="None (data in .blend only)")
+        box.operator("hotspot.browse_file_path", text="Browse...", icon='FILEBROWSER')
+
+        layout.separator()
 
         # Check if image is open
         if not space.image:

@@ -4,8 +4,10 @@ Hotspot Mapping - Operators
 Operators for managing hotspots: assign hotspottable, add/delete/select hotspots.
 """
 
+import os
+
 import bpy
-from bpy.props import StringProperty
+from bpy.props import StringProperty, BoolProperty
 
 from . import json_storage
 from ..utils import debug_log
@@ -19,9 +21,6 @@ class HOTSPOT_OT_assign_hotspottable(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        # Must have an image in the editor and blend file must be saved
-        if not bpy.data.filepath:
-            return False
         space = context.space_data
         if space and space.type == 'IMAGE_EDITOR':
             return space.image is not None
@@ -58,8 +57,6 @@ class HOTSPOT_OT_remove_hotspottable(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not bpy.data.filepath:
-            return False
         space = context.space_data
         if space and space.type == 'IMAGE_EDITOR' and space.image:
             return json_storage.is_texture_hotspottable(space.image.name)
@@ -88,8 +85,6 @@ class HOTSPOT_OT_add_hotspot(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not bpy.data.filepath:
-            return False
         space = context.space_data
         if space and space.type == 'IMAGE_EDITOR' and space.image:
             return json_storage.is_texture_hotspottable(space.image.name)
@@ -144,8 +139,6 @@ class HOTSPOT_OT_delete_hotspot(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not bpy.data.filepath:
-            return False
         space = context.space_data
         if space and space.type == 'IMAGE_EDITOR' and space.image:
             return json_storage.is_texture_hotspottable(space.image.name)
@@ -198,12 +191,116 @@ class HOTSPOT_OT_select_hotspot(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOTSPOT_OT_browse_file_path(bpy.types.Operator):
+    """Browse for a hotspot JSON file to link"""
+    bl_idname = "hotspot.browse_file_path"
+    bl_label = "Set Hotspot File"
+
+    filepath: StringProperty(
+        name="File Path",
+        description="Path to the hotspots JSON file",
+        subtype='FILE_PATH',
+    )
+
+    filter_glob: StringProperty(
+        default="*.json",
+        options={'HIDDEN'},
+    )
+
+    confirm_pending: BoolProperty(
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+
+    resolved_path: StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        # Second call (after confirmation dialog) - apply directly
+        if self.confirm_pending:
+            self.confirm_pending = False
+            _apply_file_path(context, self.resolved_path)
+            return {'FINISHED'}
+
+        filepath = self.filepath
+        if not filepath:
+            return {'CANCELLED'}
+
+        # Ensure .json extension
+        if not filepath.lower().endswith('.json'):
+            filepath += '.json'
+
+        absolute_path = os.path.normpath(os.path.abspath(filepath))
+
+        # Check if we need a confirmation dialog
+        file_exists = os.path.exists(absolute_path)
+        has_hotspots = json_storage.scene_has_hotspots()
+
+        if has_hotspots and file_exists:
+            self.confirm_pending = True
+            self.resolved_path = absolute_path
+            return context.window_manager.invoke_props_dialog(self)
+
+        _apply_file_path(context, absolute_path)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Loading this file will replace your current hotspot data.", icon='ERROR')
+
+
+class HOTSPOT_OT_clear_file_path(bpy.types.Operator):
+    """Unlink the external hotspot file (data stays in .blend only)"""
+    bl_idname = "hotspot.clear_file_path"
+    bl_label = "Unlink Hotspot File"
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        if scene and hasattr(scene, 'hotspot_mapping_props'):
+            return bool(scene.hotspot_mapping_props.hotspots_file_path)
+        return False
+
+    def execute(self, context):
+        context.scene.hotspot_mapping_props.hotspots_file_path = ""
+        self.report({'INFO'}, "Hotspot file unlinked. Data remains in .blend file.")
+        return {'FINISHED'}
+
+
+def _apply_file_path(context, absolute_path):
+    """Set the hotspot file path and load/create the file.
+
+    Args:
+        context: Blender context.
+        absolute_path: Absolute path to the hotspot JSON file.
+    """
+    props = context.scene.hotspot_mapping_props
+
+    # Store as relative if blend is saved, absolute otherwise
+    stored_path = json_storage.make_path_relative(absolute_path)
+    props.hotspots_file_path = stored_path
+
+    # Load from file (creates if not found)
+    json_storage.load_from_file(absolute_path)
+
+    # Force UI redraw
+    for area in context.screen.areas:
+        area.tag_redraw()
+
+
 classes = (
     HOTSPOT_OT_assign_hotspottable,
     HOTSPOT_OT_remove_hotspottable,
     HOTSPOT_OT_add_hotspot,
     HOTSPOT_OT_delete_hotspot,
     HOTSPOT_OT_select_hotspot,
+    HOTSPOT_OT_browse_file_path,
+    HOTSPOT_OT_clear_file_path,
 )
 
 

@@ -939,19 +939,17 @@ class HOTSPOT_OT_interactive_edit(bpy.types.Operator):
         new_w = int(new_w)
         new_h = int(new_h)
 
-        # Update hotspot in scene property only (no disk write during drag)
         json_storage.update_hotspot(
             image.name, props.active_hotspot_id,
-            new_x, new_y, new_w, new_h,
-            sync_to_disk=False
+            new_x, new_y, new_w, new_h
         )
 
         # Force redraw
         context.area.tag_redraw()
 
     def _save_hotspot(self, context):
-        """Sync hotspot data to disk after drag completes."""
-        json_storage.sync_to_file()
+        """Mark drag as complete. File sync happens on blend save."""
+        pass
 
     def _restore_hotspot(self, context):
         """Restore hotspot to original position on cancel."""

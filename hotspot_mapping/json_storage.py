@@ -2,7 +2,8 @@
 Hotspot Mapping - JSON Storage
 
 Handles reading/writing hotspot data.
-Data is stored in scene properties for undo support, synced to JSON file on save.
+Data is stored in scene properties for undo support.
+Optionally synced to an external JSON file on blend save.
 """
 
 import bpy
@@ -19,36 +20,61 @@ HOTSPOTS_VERSION = "1.0"
 ORIENTATION_TYPES = ('Any', 'Upwards', 'Floor', 'Ceiling')
 
 
-def get_hotspots_filepath():
-    """Get the path to hotspots.json next to the .blend file.
+def resolve_filepath():
+    """Resolve the hotspots file path property to an absolute path.
+
+    If the stored path is relative, resolves it against the .blend file directory.
+    If the stored path is absolute, returns it as-is.
 
     Returns:
-        Path string, or None if blend file is not saved.
+        Absolute path string, or None if no path is set.
+    """
+    scene = bpy.context.scene
+    if not scene or not hasattr(scene, 'hotspot_mapping_props'):
+        return None
+
+    raw_path = scene.hotspot_mapping_props.hotspots_file_path
+    if not raw_path:
+        return None
+
+    # Strip Blender's "//" relative path prefix
+    if raw_path.startswith("//"):
+        blend_filepath = bpy.data.filepath
+        if not blend_filepath:
+            return None
+        blend_dir = os.path.dirname(blend_filepath)
+        return os.path.normpath(os.path.join(blend_dir, raw_path[2:]))
+
+    return os.path.normpath(raw_path)
+
+
+def make_path_relative(absolute_path):
+    """Convert an absolute path to a Blender-style relative path (//...).
+
+    Returns the original path if the blend file is not saved or if a relative
+    path cannot be computed (e.g. cross-drive on Windows).
+
+    Args:
+        absolute_path: Absolute file path.
+
+    Returns:
+        Blender-style relative path string, or the absolute path as fallback.
     """
     blend_filepath = bpy.data.filepath
     if not blend_filepath:
-        return None
+        return absolute_path
 
     blend_dir = os.path.dirname(blend_filepath)
-    return os.path.join(blend_dir, "hotspots.json")
-
-
-_file_not_found_cache = set()
-
-
-def invalidate_cache():
-    """Clear scene property data, forcing next load to read from disk."""
-    _file_not_found_cache.clear()
-    scene = bpy.context.scene
-    if scene and hasattr(scene, 'hotspot_mapping_props'):
-        scene.hotspot_mapping_props.hotspots_json = ""
+    try:
+        rel = os.path.relpath(absolute_path, blend_dir)
+        return "//" + rel.replace("\\", "/")
+    except ValueError:
+        # Cross-drive on Windows - keep absolute
+        return absolute_path
 
 
 def load_hotspots():
-    """Load hotspots data from scene property or JSON file.
-
-    Uses scene property as primary source (for undo support).
-    Falls back to JSON file if scene property is empty.
+    """Load hotspots data from scene property.
 
     Returns:
         Dict with hotspot data, or empty structure if not found.
@@ -59,46 +85,20 @@ def load_hotspots():
 
     props = scene.hotspot_mapping_props
 
-    # Try scene property first (for undo support)
     if props.hotspots_json:
         try:
             return json.loads(props.hotspots_json)
         except json.JSONDecodeError:
-            debug_log("[Hotspots] Invalid JSON in scene property, loading from file")
+            debug_log("[Hotspots] Invalid JSON in scene property")
 
-    # Fall back to JSON file
-    filepath = get_hotspots_filepath()
-    if filepath is None:
-        debug_log("[Hotspots] Cannot load: blend file not saved")
-        return _create_empty_data()
-
-    if filepath in _file_not_found_cache:
-        return _create_empty_data()
-
-    if not os.path.exists(filepath):
-        debug_log(f"[Hotspots] File not found: {filepath}")
-        _file_not_found_cache.add(filepath)
-        return _create_empty_data()
-
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        debug_log(f"[Hotspots] Loaded from: {filepath}")
-        # Store in scene property for undo support
-        props.hotspots_json = json.dumps(data)
-        return data
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"Anvil Hotspots: Error reading hotspots.json: {e}", flush=True)
-        return _create_empty_data()
+    return _create_empty_data()
 
 
-def save_hotspots(data, sync_to_disk=True):
-    """Save hotspots data to scene property and optionally JSON file.
+def save_hotspots(data):
+    """Save hotspots data to scene property.
 
     Args:
         data: Dict with hotspot data structure.
-        sync_to_disk: If True, also write to JSON file. Set False during
-                      drag operations for performance (file syncs on blend save).
 
     Returns:
         True if save successful, False otherwise.
@@ -107,35 +107,85 @@ def save_hotspots(data, sync_to_disk=True):
     if not scene or not hasattr(scene, 'hotspot_mapping_props'):
         return False
 
-    # Save to scene property (this is tracked by undo)
     scene.hotspot_mapping_props.hotspots_json = json.dumps(data)
+    return True
 
-    if not sync_to_disk:
-        return True
 
-    # Also save to JSON file
-    filepath = get_hotspots_filepath()
-    if filepath is None:
-        debug_log("[Hotspots] Cannot save to file: blend file not saved")
-        return True  # Scene property was saved, file will sync later
+def load_from_file(filepath):
+    """Read hotspot data from a JSON file and store in scene property.
+
+    If the file does not exist, creates it with current scene data (or empty data).
+
+    Args:
+        filepath: Absolute path to the JSON file.
+
+    Returns:
+        True if loaded successfully, False on error.
+    """
+    scene = bpy.context.scene
+    if not scene or not hasattr(scene, 'hotspot_mapping_props'):
+        return False
+
+    if not os.path.exists(filepath):
+        # File doesn't exist yet - create it with current scene data
+        debug_log(f"[Hotspots] File not found, creating: {filepath}")
+        data = load_hotspots()
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            debug_log(f"[Hotspots] Created: {filepath}")
+            return True
+        except IOError as e:
+            print(f"Anvil Hotspots: Error creating {filepath}: {e}", flush=True)
+            return False
 
     try:
-        _file_not_found_cache.discard(filepath)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        scene.hotspot_mapping_props.hotspots_json = json.dumps(data)
+        debug_log(f"[Hotspots] Loaded from: {filepath}")
+        return True
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Anvil Hotspots: Error reading {filepath}: {e}", flush=True)
+        return False
+
+
+def save_to_file(filepath):
+    """Write scene property hotspot data to a JSON file.
+
+    Args:
+        filepath: Absolute path to the JSON file.
+
+    Returns:
+        True if saved successfully, False on error.
+    """
+    scene = bpy.context.scene
+    if not scene or not hasattr(scene, 'hotspot_mapping_props'):
+        return False
+
+    props = scene.hotspot_mapping_props
+    if not props.hotspots_json:
+        return True
+
+    try:
+        data = json.loads(props.hotspots_json)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         debug_log(f"[Hotspots] Saved to: {filepath}")
         return True
-    except IOError as e:
-        print(f"Anvil Hotspots: Error writing hotspots.json: {e}", flush=True)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Anvil Hotspots: Error writing {filepath}: {e}", flush=True)
         return False
 
 
 def sync_from_file():
-    """Load data from JSON file into scene property.
+    """Load data from the configured JSON file into scene property.
 
-    Called on file load to sync external changes.
+    Called on file load. Does nothing if no file path is configured.
     """
-    filepath = get_hotspots_filepath()
+    filepath = resolve_filepath()
     if filepath is None or not os.path.exists(filepath):
         return
 
@@ -149,14 +199,18 @@ def sync_from_file():
         scene.hotspot_mapping_props.hotspots_json = json.dumps(data)
         debug_log(f"[Hotspots] Synced from file: {filepath}")
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Anvil Hotspots: Error syncing from hotspots.json: {e}", flush=True)
+        print(f"Anvil Hotspots: Error syncing from {filepath}: {e}", flush=True)
 
 
 def sync_to_file():
-    """Save data from scene property to JSON file.
+    """Save data from scene property to the configured JSON file.
 
-    Called on file save to ensure file is up to date.
+    Called on file save. Does nothing if no file path is configured.
     """
+    filepath = resolve_filepath()
+    if filepath is None:
+        return
+
     scene = bpy.context.scene
     if not scene or not hasattr(scene, 'hotspot_mapping_props'):
         return
@@ -165,17 +219,28 @@ def sync_to_file():
     if not props.hotspots_json:
         return
 
-    filepath = get_hotspots_filepath()
-    if filepath is None:
-        return
-
     try:
         data = json.loads(props.hotspots_json)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         debug_log(f"[Hotspots] Synced to file: {filepath}")
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Anvil Hotspots: Error syncing to hotspots.json: {e}", flush=True)
+        print(f"Anvil Hotspots: Error syncing to {filepath}: {e}", flush=True)
+
+
+def scene_has_hotspots():
+    """Check if the current scene has any hotspot data.
+
+    Returns:
+        True if there are any textures with hotspots defined.
+    """
+    data = load_hotspots()
+    textures = data.get("textures", {})
+    for tex_data in textures.values():
+        if tex_data.get("hotspots"):
+            return True
+    return False
 
 
 def _create_empty_data():
@@ -193,14 +258,14 @@ def is_texture_hotspottable(texture_name):
         texture_name: Name of the texture (image filename).
 
     Returns:
-        True if texture exists in hotspots.json, False otherwise.
+        True if texture exists in hotspots data, False otherwise.
     """
     data = load_hotspots()
     return texture_name in data.get("textures", {})
 
 
 def add_texture_as_hotspottable(texture_name, width, height):
-    """Add a texture to hotspots.json as hotspottable.
+    """Add a texture as hotspottable.
 
     Args:
         texture_name: Name of the texture (image filename).
@@ -226,7 +291,7 @@ def add_texture_as_hotspottable(texture_name, width, height):
 
 
 def remove_texture_as_hotspottable(texture_name):
-    """Remove a texture from hotspots.json.
+    """Remove a texture from hotspottable list.
 
     Args:
         texture_name: Name of the texture to remove.
@@ -334,7 +399,7 @@ def add_hotspot(texture_name, x, y, width, height):
     return None
 
 
-def update_hotspot(texture_name, hotspot_id, x, y, width, height, sync_to_disk=True):
+def update_hotspot(texture_name, hotspot_id, x, y, width, height):
     """Update an existing hotspot.
 
     Args:
@@ -344,8 +409,6 @@ def update_hotspot(texture_name, hotspot_id, x, y, width, height, sync_to_disk=T
         y: New Y position.
         width: New width.
         height: New height.
-        sync_to_disk: If True, also write to JSON file. Set False during
-                      drag operations for performance.
 
     Returns:
         True if updated successfully, False otherwise.
@@ -363,7 +426,7 @@ def update_hotspot(texture_name, hotspot_id, x, y, width, height, sync_to_disk=T
             hotspot["y"] = y
             hotspot["width"] = width
             hotspot["height"] = height
-            return save_hotspots(data, sync_to_disk=sync_to_disk)
+            return save_hotspots(data)
 
     debug_log(f"[Hotspots] Hotspot not found: {hotspot_id}")
     return False
