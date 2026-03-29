@@ -422,6 +422,13 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
             icon='UV_DATA',
         )
 
+        # Choose Hotspot palette button
+        layout.operator(
+            "leveldesign.hotspot_palette",
+            text="Choose Hotspot",
+            icon='IMGDISPLAY',
+        )
+
 
 class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     """UV Shortcuts (Projection and Alignment)"""

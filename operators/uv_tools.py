@@ -77,6 +77,54 @@ def is_roughly_square(aspect_ratio):
     return (1.0 - SQUARE_ASPECT_TOLERANCE) <= aspect_ratio <= (1.0 + SQUARE_ASPECT_TOLERANCE)
 
 
+def compute_hotspot_rotation(island, uv_layer, island_aspect, hotspot):
+    """Determine the UV rotation for applying a hotspot to an island.
+
+    - Upwards on walls: compute_upward_rotation for texture-top-up
+    - Upwards on non-walls: 0 degrees
+    - Otherwise: pick rotation that best matches aspect ratio
+
+    Args:
+        island: List of BMFaces in the island
+        uv_layer: UV layer
+        island_aspect: Aspect ratio (width/height) of the island
+        hotspot: Hotspot dict with width, height, orientation_type
+
+    Returns:
+        Rotation in degrees (0, 90, 180, or 270)
+    """
+    orientation = hotspot.get('orientation_type', 'Any')
+    face_type = classify_face_type(island[0])
+    hs_w = hotspot.get('width', 1)
+    hs_h = hotspot.get('height', 1)
+    hs_aspect = hs_w / hs_h if hs_h > 0 else 1.0
+
+    if orientation == 'Upwards' and face_type == 'wall':
+        return compute_upward_rotation(island, uv_layer)
+    elif orientation == 'Upwards':
+        return 0
+
+    if is_roughly_square(island_aspect) and is_roughly_square(hs_aspect):
+        return random.choice([0, 90, 180, 270])
+
+    # Determine whether a 90-degree rotation better matches the aspect ratio
+    if island_aspect > 0 and hs_aspect > 0:
+        aspect_score_normal = abs(math.log(island_aspect / hs_aspect))
+    else:
+        aspect_score_normal = float('inf')
+
+    rotated_aspect = 1.0 / island_aspect if island_aspect > 0.0001 else 1.0
+    if rotated_aspect > 0 and hs_aspect > 0:
+        aspect_score_rotated = abs(math.log(rotated_aspect / hs_aspect))
+    else:
+        aspect_score_rotated = float('inf')
+
+    if aspect_score_rotated < aspect_score_normal:
+        return random.choice([90, 270])
+    else:
+        return random.choice([0, 180])
+
+
 def compute_upward_rotation(island, uv_layer):
     """Compute the UV rotation needed to make texture top point upward in world space.
 
@@ -298,31 +346,11 @@ def find_best_hotspot(island_aspect, hotspots, image_width, image_height, face_t
     # Randomly choose among tied candidates
     best_hotspot, best_needs_90_rotation = random.choice(best_candidates)
 
-    # Determine the rotation
-    best_orientation = best_hotspot.get('orientation_type', 'Any')
-    hs_aspect = best_hotspot.get('width', 1) / best_hotspot.get('height', 1)
-
-    if best_orientation == 'Upwards':
-        # Compute the specific rotation to make texture top point upward
-        rotation = compute_upward_rotation(island, uv_layer)
-    else:
-        # Random rotation from valid options
-        island_is_square = is_roughly_square(island_aspect)
-        hotspot_is_square = is_roughly_square(hs_aspect)
-
-        if island_is_square and hotspot_is_square:
-            # All 4 rotations valid for square face + square hotspot
-            rotation = random.choice([0, 90, 180, 270])
-        elif best_needs_90_rotation:
-            # Aspect flip needed: 90° or 270°
-            rotation = random.choice([90, 270])
-        else:
-            # No aspect flip: 0° or 180°
-            rotation = random.choice([0, 180])
+    rotation = compute_hotspot_rotation(island, uv_layer, island_aspect, best_hotspot)
 
     debug_log(f"[find_best_hotspot] island_aspect={island_aspect:.3f}, face_type={face_type}, "
-              f"orientation={best_orientation}, rotation={rotation}, score={best_score:.3f}, "
-              f"size_weight={size_weight:.2f}")
+              f"orientation={best_hotspot.get('orientation_type', 'Any')}, rotation={rotation}, "
+              f"score={best_score:.3f}, size_weight={size_weight:.2f}")
     return best_hotspot, rotation
 
 
@@ -763,7 +791,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, uv_layer=None):
+def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, uv_layer=None, override_hotspot=None):
     import time
     t_total_start = time.perf_counter()
 
@@ -918,6 +946,15 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
         if image_width <= 0 or image_height <= 0:
             debug_log(f"[Hotspot] Invalid image dimensions for: {texture_name}")
             return False
+
+        if override_hotspot is not None:
+            # Use the caller-specified hotspot instead of finding best match
+            rotation_degrees = compute_hotspot_rotation(
+                island, uv_layer, aspect_ratio, override_hotspot
+            )
+            apply_hotspot_uvs(island, uv_layer, override_hotspot, image_width, image_height, rotation_degrees)
+            applied_count += 1
+            return True
 
         # Calculate island world-space area
         local_area = sum(f.calc_area() for f in island)
@@ -1637,6 +1674,354 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         return {'RUNNING_MODAL'}
 
 
+
+
+class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
+    """Apply a specific hotspot cell to selected faces"""
+    bl_idname = "leveldesign.apply_specific_hotspot"
+    bl_label = "Apply Specific Hotspot"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    cell_key: bpy.props.StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return (context.object and context.object.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
+
+    def execute(self, context):
+        obj = context.object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        selected_faces = [f for f in bm.faces if f.select]
+        if not selected_faces:
+            self.report({'WARNING'}, "No faces selected")
+            return {'CANCELLED'}
+
+        # Parse cell key
+        parts = self.cell_key.split('_')
+        if len(parts) != 4:
+            self.report({'ERROR'}, "Invalid cell key")
+            return {'CANCELLED'}
+        cell_x, cell_y, cell_w, cell_h = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+
+        # Build the override hotspot dict with orientation from hotspot data
+        hotspot_data = load_hotspots()
+        orientation = 'Any'
+        texture_name = None
+        for face in selected_faces:
+            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+            image = get_image_from_material(mat)
+            if image and is_texture_hotspottable(image.name):
+                texture_name = image.name
+                break
+
+        if texture_name is None:
+            self.report({'WARNING'}, "No hotspot faces in selection")
+            return {'CANCELLED'}
+
+        for hs in get_texture_hotspots(texture_name, hotspot_data):
+            if hs['x'] == cell_x and hs['y'] == cell_y and hs['width'] == cell_w and hs['height'] == cell_h:
+                orientation = hs.get('orientation_type', 'Any')
+                break
+
+        override = {
+            'x': cell_x, 'y': cell_y,
+            'width': cell_w, 'height': cell_h,
+            'orientation_type': orientation,
+        }
+
+        # Save and restore selection since apply_hotspots_to_mesh modifies it
+        from ..utils import get_face_id_layer, save_face_selection, restore_face_selection
+        id_layer = get_face_id_layer(bm)
+        selected_ids, active_id = save_face_selection(bm, id_layer)
+
+        props = context.scene.level_design_props
+        applied_count, skipped, _ = apply_hotspots_to_mesh(
+            bm, me, selected_faces, obj.anvil_allow_combined_faces,
+            obj.matrix_world, props.pixels_per_meter, obj.anvil_hotspot_size_weight,
+            override_hotspot=override,
+        )
+
+        restore_face_selection(bm, id_layer, selected_ids, active_id)
+        bmesh.update_edit_mesh(me)
+        cache_face_data(context)
+
+        if applied_count > 0:
+            self.report({'INFO'}, f"Applied hotspot to {applied_count} island(s)")
+        else:
+            self.report({'WARNING'}, "No hotspot faces in selection")
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_hotspot_palette(Operator):
+    """Pick a specific hotspot cell by clicking on it in a visual atlas overlay"""
+    bl_idname = "leveldesign.hotspot_palette"
+    bl_label = "Hotspot Palette"
+
+    @classmethod
+    def poll(cls, context):
+        if not (context.object and context.object.type == 'MESH' and context.mode == 'EDIT_MESH'):
+            return False
+        return True
+
+    def invoke(self, context, event):
+        obj = context.object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        selected_faces = [f for f in bm.faces if f.select]
+        if not selected_faces:
+            self.report({'WARNING'}, "No faces selected")
+            return {'CANCELLED'}
+
+        # Get texture from first selected face
+        face = selected_faces[0]
+        mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+        image = get_image_from_material(mat)
+
+        if not image or not is_texture_hotspottable(image.name):
+            self.report({'WARNING'}, "Selected face has no hotspottable texture")
+            return {'CANCELLED'}
+
+        hotspot_data = load_hotspots()
+        hotspots = get_texture_hotspots(image.name, hotspot_data)
+
+        if not hotspots:
+            self.report({'WARNING'}, "No hotspot cells defined for this texture")
+            return {'CANCELLED'}
+
+        self._hotspots = hotspots
+        self._image = image
+        self._img_w = image.size[0] if image.size[0] > 0 else 1
+        self._img_h = image.size[1] if image.size[1] > 0 else 1
+        self._hovered_cell = None
+        self._gpu_texture = None
+        self._draw_handler = None
+
+        # Find a perspective 3D view, falling back to context.area
+        self._area = context.area
+        found = False
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D' and space.region_3d and not space.region_3d.is_orthographic_side_view:
+                        self._area = area
+                        found = True
+                        break
+                if found:
+                    break
+
+        # Compute overlay layout using the target area's region
+        self._region = None
+        for region in self._area.regions:
+            if region.type == 'WINDOW':
+                self._region = region
+                break
+
+        self._update_layout(context)
+
+        # Register draw handler
+        self._draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_callback, (context,), 'WINDOW', 'POST_PIXEL'
+        )
+
+        context.window_manager.modal_handler_add(self)
+        self._area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def _update_layout(self, context):
+        """Compute the screen-space rectangle for the atlas image."""
+        region = self._region if self._region else context.region
+        padding = 40
+
+        avail_w = region.width - padding * 2
+        avail_h = region.height - padding * 2
+
+        img_aspect = self._img_w / self._img_h
+        avail_aspect = avail_w / avail_h if avail_h > 0 else 1.0
+
+        if img_aspect > avail_aspect:
+            # Image is wider than available space
+            self._draw_w = avail_w
+            self._draw_h = avail_w / img_aspect
+        else:
+            # Image is taller than available space
+            self._draw_h = avail_h
+            self._draw_w = avail_h * img_aspect
+
+        self._draw_x = (region.width - self._draw_w) / 2
+        self._draw_y = (region.height - self._draw_h) / 2
+
+    def _pixel_to_screen(self, px, py):
+        """Convert image pixel coords (y-down) to screen coords (y-up)."""
+        sx = self._draw_x + (px / self._img_w) * self._draw_w
+        sy = self._draw_y + self._draw_h - (py / self._img_h) * self._draw_h
+        return sx, sy
+
+    def _screen_to_pixel(self, sx, sy):
+        """Convert screen coords to image pixel coords (y-down)."""
+        px = ((sx - self._draw_x) / self._draw_w) * self._img_w
+        py = ((self._draw_y + self._draw_h - sy) / self._draw_h) * self._img_h
+        return px, py
+
+    def _hit_test(self, mx, my):
+        """Return the hotspot dict under mouse, or None."""
+        px, py = self._screen_to_pixel(mx, my)
+        if px < 0 or py < 0 or px > self._img_w or py > self._img_h:
+            return None
+        for hs in self._hotspots:
+            hx, hy, hw, hh = hs['x'], hs['y'], hs['width'], hs['height']
+            if hx <= px <= hx + hw and hy <= py <= hy + hh:
+                return hs
+        return None
+
+    def _ensure_gpu_texture(self):
+        """Create GPU texture from image pixels."""
+        if self._gpu_texture is not None:
+            return
+        import gpu
+        image = self._image
+        w, h = self._img_w, self._img_h
+        pixels = image.pixels[:]
+        buf = gpu.types.Buffer('FLOAT', w * h * 4, pixels)
+        self._gpu_texture = gpu.types.GPUTexture((w, h), format='RGBA32F', data=buf)
+
+    def _draw_callback(self, context):
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+
+        region = context.region
+
+        # Draw darkened background
+        gpu.state.blend_set('ALPHA')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.uniform_float("color", (0.0, 0.0, 0.0, 0.7))
+        bg_verts = [(0, 0), (region.width, 0), (region.width, region.height), (0, region.height)]
+        bg_batch = batch_for_shader(shader, 'TRI_FAN', {"pos": bg_verts})
+        bg_batch.draw(shader)
+
+        # Draw the texture image
+        self._ensure_gpu_texture()
+        if self._gpu_texture is not None:
+            shader_img = gpu.shader.from_builtin('IMAGE')
+            shader_img.uniform_sampler("image", self._gpu_texture)
+
+            x1, y1 = self._draw_x, self._draw_y
+            x2, y2 = self._draw_x + self._draw_w, self._draw_y + self._draw_h
+
+            img_verts = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+            img_uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+            img_batch = batch_for_shader(shader_img, 'TRI_FAN', {
+                "pos": img_verts, "texCoord": img_uvs,
+            })
+            img_batch.draw(shader_img)
+
+        # Draw cell outlines
+        line_color = (1.0, 0.6, 0.0, 0.9)  # Orange
+        hover_color = (1.0, 1.0, 1.0, 1.0)  # White
+        hover_fill = (1.0, 1.0, 1.0, 0.15)  # Semi-transparent white
+
+        for hs in self._hotspots:
+            hx, hy, hw, hh = hs['x'], hs['y'], hs['width'], hs['height']
+            sx1, sy1 = self._pixel_to_screen(hx, hy + hh)
+            sx2, sy2 = self._pixel_to_screen(hx + hw, hy)
+
+            is_hovered = (hs is self._hovered_cell)
+            color = hover_color if is_hovered else line_color
+
+            # Draw fill for hovered cell
+            if is_hovered:
+                shader_fill = gpu.shader.from_builtin('UNIFORM_COLOR')
+                shader_fill.uniform_float("color", hover_fill)
+                fill_verts = [(sx1, sy1), (sx2, sy1), (sx2, sy2), (sx1, sy2)]
+                fill_batch = batch_for_shader(shader_fill, 'TRI_FAN', {"pos": fill_verts})
+                fill_batch.draw(shader_fill)
+
+            # Draw outline
+            try:
+                shader_line = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+                shader_line.uniform_float("viewportSize", (region.width, region.height))
+                shader_line.uniform_float("lineWidth", 3.0 if is_hovered else 2.0)
+                shader_line.uniform_float("color", color)
+                outline_verts = [
+                    (sx1, sy1), (sx2, sy1), (sx2, sy2), (sx1, sy2), (sx1, sy1)
+                ]
+                outline_batch = batch_for_shader(shader_line, 'LINE_STRIP', {"pos": outline_verts})
+                outline_batch.draw(shader_line)
+            except Exception:
+                shader_line = gpu.shader.from_builtin('UNIFORM_COLOR')
+                shader_line.uniform_float("color", color)
+                outline_pairs = [
+                    (sx1, sy1), (sx2, sy1),
+                    (sx2, sy1), (sx2, sy2),
+                    (sx2, sy2), (sx1, sy2),
+                    (sx1, sy2), (sx1, sy1),
+                ]
+                outline_batch = batch_for_shader(shader_line, 'LINES', {"pos": outline_pairs})
+                outline_batch.draw(shader_line)
+
+            # Draw orientation icon
+            import blf
+            orientation = hs.get('orientation_type', 'Any')
+            orientation_symbols = {
+                'Any': '\u25CF',
+                'Upwards': '\u2191',
+                'Floor': '\u230A',
+                'Ceiling': '\u2308',
+            }
+            symbol = orientation_symbols.get(orientation, '?')
+            font_id = 0
+            cx = (sx1 + sx2) / 2
+            cy = (sy1 + sy2) / 2
+            font_size = max(10, min(24, int((sy2 - sy1) * 0.3)))
+            blf.size(font_id, font_size)
+            blf.color(font_id, *color)
+            tw, th = blf.dimensions(font_id, symbol)
+            blf.position(font_id, cx - tw / 2, cy - th / 2, 0)
+            blf.draw(font_id, symbol)
+
+        gpu.state.blend_set('NONE')
+
+    def _cleanup(self, context):
+        if self._draw_handler is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler, 'WINDOW')
+            self._draw_handler = None
+        self._gpu_texture = None
+        self._area.tag_redraw()
+
+    def _mouse_region_coords(self, event):
+        """Convert absolute mouse coords to self._region-relative coords."""
+        rgn = self._region
+        return event.mouse_x - rgn.x, event.mouse_y - rgn.y
+
+    def modal(self, context, event):
+        if event.type == 'MOUSEMOVE':
+            mx, my = self._mouse_region_coords(event)
+            self._hovered_cell = self._hit_test(mx, my)
+            self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            mx, my = self._mouse_region_coords(event)
+            clicked = self._hit_test(mx, my)
+            if clicked is not None:
+                cell_key = f"{clicked['x']}_{clicked['y']}_{clicked['width']}_{clicked['height']}"
+                self._cleanup(context)
+                bpy.ops.leveldesign.apply_specific_hotspot(cell_key=cell_key)
+                return {'FINISHED'}
+            # Click outside image — cancel
+            self._cleanup(context)
+            return {'CANCELLED'}
+
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._cleanup(context)
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+
 class LEVELDESIGN_OT_apply_hotspot(Operator):
     """Apply hotspot mapping to selected faces based on aspect ratio"""
     bl_idname = "leveldesign.apply_hotspot"
@@ -1709,6 +2094,8 @@ classes = (
     LEVELDESIGN_OT_align_uv,
     LEVELDESIGN_OT_fit_to_face,
     LEVELDESIGN_OT_face_uv_mode,
+    LEVELDESIGN_OT_apply_specific_hotspot,
+    LEVELDESIGN_OT_hotspot_palette,
     LEVELDESIGN_OT_apply_hotspot,
 )
 
