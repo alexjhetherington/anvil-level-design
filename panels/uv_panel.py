@@ -433,12 +433,10 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
             elif has_selection and not any_hotspot:
                 panel_disabled = True
 
-        layout.enabled = not panel_disabled
-
-        # Auto hotspot checkbox (per-object)
+        main_col = layout.column()
+        main_col.enabled = not panel_disabled
         if has_obj:
-            # Checkbox toggles as buttons on one row
-            row = layout.row(align=True)
+            row = main_col.row(align=True)
             row.operator(
                 "leveldesign.toggle_auto_hotspot",
                 text="Auto Hotspot",
@@ -452,27 +450,11 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
                 depress=obj.anvil_allow_combined_faces,
             )
 
-            layout.label(text="Random Selection Priority")
-            layout.prop(obj, "anvil_hotspot_size_weight", text="\u2190 Aspect / Area \u2192")
+            main_col.label(text="Random Selection Priority")
+            main_col.prop(obj, "anvil_hotspot_size_weight", text="\u2190 Aspect / Area \u2192")
         else:
-            layout.label(text="No mesh object")
+            main_col.label(text="No mesh object")
 
-        # Apply Hotspot button (works in both edit and object mode)
-        layout.separator()
-        layout.operator(
-            "leveldesign.apply_hotspot",
-            text="Apply Hotspot",
-            icon='UV_DATA',
-        )
-
-        # Choose Hotspot palette button
-        layout.operator(
-            "leveldesign.hotspot_palette",
-            text="Choose Hotspot",
-            icon='IMGDISPLAY',
-        )
-
-        # Fixed hotspot indicator/toggle
         layout.separator()
         in_face_mode = (context.mode == 'EDIT_MESH' and
                         context.tool_settings.mesh_select_mode[2])
@@ -481,9 +463,17 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
             is_fixed = get_any_selected_fixed_hotspot()
         else:
             is_fixed = False
-        row = layout.row()
-        fixed_sub = row.row()
-        fixed_sub.enabled = has_face_selection
+        row = layout.row(align=True)
+        choose_sub = row.row(align=True)
+        choose_sub.enabled = not panel_disabled
+        choose_sub.scale_x = 1.3
+        choose_sub.operator(
+            "leveldesign.hotspot_palette",
+            text="Choose Hotspot",
+            icon='IMGDISPLAY',
+        )
+        fixed_sub = row.row(align=True)
+        fixed_sub.enabled = not panel_disabled and has_face_selection
         fixed_sub.operator(
             "leveldesign.toggle_fixed_hotspot",
             text="Fixed",
@@ -497,6 +487,15 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
             text="",
             icon=overlay_icon,
             emboss=False,
+        )
+
+        layout.separator()
+        randomise_row = layout.row()
+        randomise_row.enabled = not panel_disabled
+        randomise_row.operator(
+            "leveldesign.apply_hotspot",
+            text="Randomise Hotspots",
+            icon='UV_DATA',
         )
 
 
