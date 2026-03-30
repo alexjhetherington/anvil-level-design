@@ -2225,6 +2225,17 @@ def on_depsgraph_update(scene, depsgraph):
             from .operators.weld import sync_weld_props
             sync_weld_props(context, None)
 
+        # Invalidate fixed hotspot overlay for object-mode transforms
+        for update in depsgraph.updates:
+            if isinstance(update.id, bpy.types.Object):
+                obj = update.id
+                if obj.type == 'MESH' and obj.mode != 'EDIT':
+                    is_transform = getattr(update, 'is_updated_transform', False)
+                    if is_transform:
+                        from .operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+                        _invalidate_fixed_overlay()
+                        break
+
         # Handle mesh updates (UV lock, world-scale UVs)
         for update in depsgraph.updates:
             if isinstance(update.id, bpy.types.Object):
