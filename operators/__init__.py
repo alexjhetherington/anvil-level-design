@@ -16,6 +16,7 @@ from . import weld
 from . import vertex_paint_color_picker
 from . import overlap_check
 from . import grid_overlay
+from . import fixed_hotspot_overlay
 
 
 def register():
@@ -37,9 +38,11 @@ def register():
     vertex_paint_color_picker.register()
     overlap_check.register()
     grid_overlay.register()
+    fixed_hotspot_overlay.register()
 
 
 def unregister():
+    fixed_hotspot_overlay.unregister()
     grid_overlay.unregister()
     overlap_check.unregister()
     vertex_paint_color_picker.unregister()

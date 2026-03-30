@@ -1998,6 +1998,9 @@ def on_undo_post(scene):
     # Use a short timer to ensure the depsgraph update triggered by undo
     # has completed before we clear the flag
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
+    # Invalidate fixed hotspot overlay
+    from .operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+    _invalidate_fixed_overlay()
     # Refresh UI panels immediately
     try:
         context = bpy.context
@@ -2048,6 +2051,9 @@ def on_redo_post(scene):
     # Sync weld state and snapshot selection (shared with undo handler)
     _sync_weld_and_snapshot_selection()
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
+    # Invalidate fixed hotspot overlay
+    from .operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+    _invalidate_fixed_overlay()
     # Refresh UI panels immediately
     try:
         context = bpy.context
@@ -2296,6 +2302,10 @@ def on_depsgraph_update(scene, depsgraph):
                     if topology_changed:
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")
 
+                        # Invalidate fixed hotspot overlay so it rebuilds
+                        from .operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+                        _invalidate_fixed_overlay()
+
                         # Project new faces when faces were added or modal
                         # re-applied (duplicate IDs mean the mesh was rebuilt)
                         if not is_fresh_start:
@@ -2360,6 +2370,11 @@ def on_depsgraph_update(scene, depsgraph):
                     if not face_data_cache and context.mode == 'EDIT_MESH':
                         debug_log(f"[Depsgraph] Cache empty, rebuilding")
                         cache_face_data(context)
+
+                    # Invalidate fixed hotspot overlay for transform changes
+                    if is_geometry_update or is_transform_update:
+                        from .operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+                        _invalidate_fixed_overlay()
 
                     # Always run both: world-scale for unlocked layers, uv-lock for locked layers
                     debug_log(f"[Depsgraph] Applying world-scale UVs (cache size={len(face_data_cache)})")

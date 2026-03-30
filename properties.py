@@ -616,6 +616,13 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
+    # === Fixed Hotspot Overlay ===
+    show_fixed_hotspot_overlay: BoolProperty(
+        name="Show Fixed Hotspot Overlay",
+        description="Display a white overlay on faces marked as fixed hotspot",
+        default=False,
+    )
+
     # === Context Weld State ===
     weld_mode: EnumProperty(
         name="Weld Mode",

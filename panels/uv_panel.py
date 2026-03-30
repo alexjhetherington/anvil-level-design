@@ -190,6 +190,9 @@ class LEVELDESIGN_OT_toggle_fixed_hotspot(Operator):
         from ..handlers import update_ui_from_selection
         update_ui_from_selection(context)
 
+        from ..operators.fixed_hotspot_overlay import invalidate_overlay
+        invalidate_overlay()
+
         return {'FINISHED'}
 
 
@@ -479,12 +482,21 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
         else:
             is_fixed = False
         row = layout.row()
-        row.enabled = has_face_selection
-        row.operator(
+        fixed_sub = row.row()
+        fixed_sub.enabled = has_face_selection
+        fixed_sub.operator(
             "leveldesign.toggle_fixed_hotspot",
             text="Fixed",
             icon='CHECKBOX_HLT' if is_fixed else 'CHECKBOX_DEHLT',
             depress=is_fixed,
+        )
+        props = context.scene.level_design_props
+        overlay_icon = 'HIDE_OFF' if props.show_fixed_hotspot_overlay else 'HIDE_ON'
+        row.operator(
+            "leveldesign.toggle_fixed_hotspot_overlay",
+            text="",
+            icon=overlay_icon,
+            emboss=False,
         )
 
 
