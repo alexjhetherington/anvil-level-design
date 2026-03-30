@@ -74,10 +74,13 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     local_view_forward = (rot @ view_forward).normalized()
 
     # Find active selected face for material/UV source (before creating new geometry)
+    # Ensure UV layer exists before creating geometry (creating layers invalidates BMesh refs)
     source_face = None
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.active
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.new("UVMap")
     if bm.faces.active is not None and bm.faces.active.is_valid and bm.faces.active.select:
         source_face = bm.faces.active
 
@@ -278,10 +281,6 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
         if mat_idx is None:
             me.materials.append(mat)
             mat_idx = len(me.materials) - 1
-
-        # Ensure UV layer exists
-        if uv_layer is None:
-            uv_layer = bm.loops.layers.uv.new("UVMap")
 
         for face in new_faces:
             if not face.is_valid:

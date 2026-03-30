@@ -1700,6 +1700,11 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
 
+        # Ensure layers exist before collecting face references (creating layers invalidates refs)
+        from ..utils import get_face_id_layer, get_fixed_hotspot_layer, save_face_selection, restore_face_selection
+        id_layer = get_face_id_layer(bm)
+        fixed_layer = get_fixed_hotspot_layer(bm)
+
         selected_faces = [f for f in bm.faces if f.select]
         if not selected_faces:
             self.report({'WARNING'}, "No faces selected")
@@ -1739,8 +1744,6 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
         }
 
         # Save and restore selection since apply_hotspots_to_mesh modifies it
-        from ..utils import get_face_id_layer, get_fixed_hotspot_layer, save_face_selection, restore_face_selection
-        id_layer = get_face_id_layer(bm)
         selected_ids, active_id = save_face_selection(bm, id_layer)
 
         props = context.scene.level_design_props
@@ -1752,7 +1755,6 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
 
         # Mark chosen faces as fixed
         if applied_count > 0:
-            fixed_layer = get_fixed_hotspot_layer(bm)
             for face in selected_faces:
                 face[fixed_layer] = 1
 

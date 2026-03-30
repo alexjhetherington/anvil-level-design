@@ -745,6 +745,12 @@ def _pick_source_from_cursor(op, context, event):
         return None
 
     bm_edit = bmesh.from_edit_mesh(edit_obj.data)
+    # Ensure layers exist before collecting face references (creating layers invalidates refs)
+    from ..utils import get_face_id_layer, get_render_active_uv_layer
+    uv_layer = get_render_active_uv_layer(bm_edit, edit_obj.data)
+    if uv_layer is None:
+        bm_edit.loops.layers.uv.verify()
+    get_face_id_layer(bm_edit)
     bm_edit.faces.ensure_lookup_table()
     selected_faces = [f for f in bm_edit.faces if f.select]
     if not selected_faces:
@@ -881,6 +887,9 @@ class apply_image_to_face(ModalPaintBase, Operator):
         uv_layer = get_render_active_uv_layer(bm, me)
         if uv_layer is None:
             uv_layer = bm.loops.layers.uv.verify()
+
+        # Ensure layers exist before collecting face references (creating layers invalidates refs)
+        get_face_id_layer(bm)
 
         new_is_hotspottable = is_texture_hotspottable(self._image.name)
 
