@@ -2,14 +2,14 @@
 
 ## 1.5.0
 - BREAKING CHANGE (hotspot definitions)
-- Adjust Anvil panels for clarity
 - Significantly(!) improve hotspot performance
-- Fix edge selection edge case (2 overlapping front faces) 
-- Hotspots can now be used without an external file
-- The hotspots external file path can be chosen
-- Set front face orientation to transparent 
 - Manually select hotspots
 - Fixed hotspots won't be changed by automatic hotspotting
+- Adjust Anvil panels for clarity
+- Hotspots can now be used without an external file
+- The hotspots external file path can be chosen
+- Fix edge selection edge case (2 overlapping front faces) 
+- Set front face orientation to transparent on addon start
 
 ## 1.4.7
 - Shift-G toggles between snap modes
