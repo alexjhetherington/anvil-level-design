@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
-## 1.4.8
+## 1.5.0
+- BREAKING CHANGE (hotspot definitions)
 - Adjust Anvil panels for clarity
 - Significantly(!) improve hotspot performance
 - Fix edge selection edge case (2 overlapping front faces) 
