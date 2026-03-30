@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+## 1.5.1
+- Add vignette to texture snapping modes
+
 ## 1.5.0
 - BREAKING CHANGE (hotspot definitions)
 - Significantly(!) improve hotspot performance
