@@ -6,6 +6,9 @@
 - Fix edge selection edge case (2 overlapping front faces) 
 - Hotspots can now be used without an external file
 - The hotspots external file path can be chosen
+- Set front face orientation to transparent 
+- Manually select hotspots
+- Fixed hotspots won't be changed by automatic hotspotting
 
 ## 1.4.7
 - Shift-G toggles between snap modes

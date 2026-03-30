@@ -6,7 +6,7 @@ Anvil Level Design (Anvil LD) is an addon for blender that combines various tool
 
 Anvil LD is particularly inspired by Trenchbroom.
 
-Anvil LD is a hobby project. It is likely buggy.
+Anvil LD is a hobby project. AI is used.
 
 Chat with me in Discord: https://discord.gg/hHFZbDzR57
 
@@ -91,9 +91,9 @@ Hotspot maps are defined in the Image Editor:
 1. Open your texture atlas in Hotspot Mapping workspace
 2. Click the Hotspot Edit tool in the left sidebar
 2. In the Anvil panel (N key), click "Assign Hotspottable" to mark the texture as a hotspot source
-3. Add lines in the image to split the texture into hotspots
-4. Click and drag on the image to define rectangular hotspot areas
-5. Hotspots can be resized by dragging edges
+3. Add lines in the image to split the texture into hotspots.
+4. Hold ctrl to add a non grid line
+5. Hotspots can be resized by dragging lines
 
 Hotspot data is stored in the .blend file. An external json can optionally be defined so hotspot info can be shared across projects.
 
@@ -112,9 +112,13 @@ Each hotspot has an orientation type that controls which faces it can be applied
 
 In the 3D viewport, the Anvil panel provides hotspot controls.
 
-You can manually apply hotspots to selected faces (or all faces if none are selected or the object is in edit mode) using the Apply Hotspot button.
+You can manually trigger the hotspot selection logic to selected faces (or all faces if none are selected or the object is in edit mode) using the Randomise Hotspots button.
 
-You can toggle auto applying hotspots when making geometry edits; this only adjusts hotspots on moved geometry.
+You can toggle auto applying random hotspots when making geometry edits; this only adjusts hotspots on moved geometry.
+
+If you like a hotspot you can enabled the 'fixed' property on selected faces to stop Randomise Hotspots changing it.
+
+The 'Choose Hotspot' button will allow you to manually select a 'fixed' hotspot.
 
 ##### Allow Combined Faces & Seam Mode
 
