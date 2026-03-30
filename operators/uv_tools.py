@@ -1354,6 +1354,11 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         self.mouse_x = event.mouse_region_x
         self.mouse_y = event.mouse_region_y
 
+        # Register vignette draw handler
+        self._draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_vignette, (context,), 'WINDOW', 'POST_PIXEL'
+        )
+
         context.window_manager.modal_handler_add(self)
         self._update_status_text(context)
 
@@ -1372,6 +1377,46 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         context.workspace.status_text_set(
             f"W: Top    A: Left    S: Bottom    D: Right    Q: V-Fit    E: H-Fit    R: Reset Scale    LMB: Confirm    Esc: Cancel{fit_indicator}"
         )
+
+    def _draw_vignette(self, context):
+        """Draw a bottom-edge vignette bar with label to indicate Face UV Mode."""
+        # Only draw in perspective 3D views
+        space = context.space_data
+        if not space or space.type != 'VIEW_3D' or space.region_3d.is_perspective == False:
+            return
+
+        import gpu
+        import blf
+        from gpu_extras.batch import batch_for_shader
+
+        region = context.region
+        w = region.width
+        bar_height = 28
+
+        gpu.state.blend_set('ALPHA')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.uniform_float("color", (0.0, 0.0, 0.0, 0.7))
+
+        verts = [(0, 0), (w, 0), (w, bar_height), (0, bar_height)]
+        batch = batch_for_shader(shader, 'TRI_FAN', {"pos": verts})
+        batch.draw(shader)
+
+        gpu.state.blend_set('NONE')
+
+        # Draw label text centered in the bar
+        font_id = 0
+        label = "Face Snapping Mode"
+        blf.size(font_id, 13)
+        blf.color(font_id, 1.0, 1.0, 1.0, 0.8)
+        tw, th = blf.dimensions(font_id, label)
+        blf.position(font_id, (w - tw) / 2, (bar_height - th) / 2, 0)
+        blf.draw(font_id, label)
+
+    def _remove_draw_handler(self):
+        """Remove the vignette draw handler if active."""
+        if self._draw_handler is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler, 'WINDOW')
+            self._draw_handler = None
 
     def _calculate_aspect_locked_fit_scale(self, face, uv_layer, fit_mode, current_scale_u, current_scale_v):
         """Calculate uniform scale for aspect-locked fit.
@@ -1668,13 +1713,17 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             # Clear pre-fit scales on confirm (they're now the real scales)
             self.pre_fit_scale_u = None
             self.pre_fit_scale_v = None
+            self._remove_draw_handler()
             context.workspace.status_text_set(None)
+            context.area.tag_redraw()
             return {'FINISHED'}
 
         # Escape - revert and exit
         if event.type == 'ESC':
             self._revert_transform(context)
+            self._remove_draw_handler()
             context.workspace.status_text_set(None)
+            context.area.tag_redraw()
             return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
