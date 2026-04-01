@@ -129,6 +129,52 @@ def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, o
         bmesh.update_edit_mesh(me)
 
 
+def apply_affine_to_face(face, uv_layer, M, t, me):
+    """Apply an affine transform to a face's UVs.
+
+    Computes UV = M @ local_2d + t for each vertex, where local_2d is the
+    vertex position in face-local 2D space (relative to first loop vertex).
+
+    Args:
+        face: BMesh face to apply UVs to.
+        uv_layer: BMesh UV layer.
+        M: 2x2 Matrix mapping face-local 2D to UV.
+        t: 2D Vector offset.
+        me: Mesh data (for bmesh.update_edit_mesh).
+    """
+    from .utils import get_face_local_axes
+    from mathutils import Vector
+
+    try:
+        loops = list(face.loops)
+    except (ReferenceError, RuntimeError, OSError):
+        return
+
+    if len(loops) < 2:
+        return
+
+    face_axes = get_face_local_axes(face)
+    if not face_axes:
+        return
+    local_x, local_y = face_axes
+
+    first_vert = loops[0].vert.co
+
+    for loop in loops:
+        delta = loop.vert.co - first_vert
+        x = delta.dot(local_x)
+        y = delta.dot(local_y)
+
+        xy = Vector((x, y))
+        uv = M @ xy + t
+
+        loop[uv_layer].uv.x = uv.x
+        loop[uv_layer].uv.y = uv.y
+
+    if me.is_editmode:
+        bmesh.update_edit_mesh(me)
+
+
 def apply_scale_to_selected_faces(context):
     """Apply scale from panel to selected faces, preserving each face's rotation and offset."""
     if get_updating_from_selection() or context.mode != 'EDIT_MESH':

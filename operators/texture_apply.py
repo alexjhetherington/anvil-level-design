@@ -226,6 +226,201 @@ def set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matr
     )
 
 
+def _transfer_affine_across_edge(M_source, source_axes, target_axes,
+                                  shared_edge_verts, source_face, target_face,
+                                  source_normal, target_normal):
+    """Transfer an affine matrix from source face to target face via a shared edge.
+
+    Uses the shared edge as a bridge: decomposes the source matrix into
+    edge-parallel and edge-perpendicular components, then re-expresses those
+    in the target face's local 2D coordinate system.
+
+    Args:
+        M_source: 2x2 Matrix mapping source local 2D → UV.
+        source_axes: (local_x, local_y) of source face (3D Vectors).
+        target_axes: (local_x, local_y) of target face (3D Vectors).
+        shared_edge_verts: Tuple of 2 BMVert on the shared edge.
+        source_face: Source BMFace (for centroid calculation).
+        target_face: Target BMFace (for centroid calculation).
+        source_normal: Source face normal (3D Vector).
+        target_normal: Target face normal (3D Vector).
+
+    Returns:
+        2x2 Matrix mapping target local 2D → UV, or None on failure.
+    """
+    from mathutils import Matrix
+
+    src_x, src_y = source_axes
+    tgt_x, tgt_y = target_axes
+
+    # Edge direction in 3D
+    e_3d = (shared_edge_verts[1].co - shared_edge_verts[0].co).normalized()
+
+    # Edge direction in each face's local 2D
+    e_s = Vector((e_3d.dot(src_x), e_3d.dot(src_y)))
+    e_t = Vector((e_3d.dot(tgt_x), e_3d.dot(tgt_y)))
+
+    if e_s.length < 1e-8 or e_t.length < 1e-8:
+        return None
+
+    # Perpendicular to edge in each face's plane, using normal x edge.
+    # This gives a consistent direction: for coplanar faces both perpendiculars
+    # point the same way in 3D; for corners they naturally "unfold".
+    p_s_3d = source_normal.cross(e_3d)
+    if p_s_3d.length < 1e-8:
+        return None
+    p_s_3d.normalize()
+    p_s = Vector((p_s_3d.dot(src_x), p_s_3d.dot(src_y)))
+
+    p_t_3d = target_normal.cross(e_3d)
+    if p_t_3d.length < 1e-8:
+        return None
+    p_t_3d.normalize()
+    p_t = Vector((p_t_3d.dot(tgt_x), p_t_3d.dot(tgt_y)))
+
+    # Build basis matrices (columns = edge dir, perp dir)
+    B_source = Matrix(((e_s.x, p_s.x), (e_s.y, p_s.y)))
+    B_target = Matrix(((e_t.x, p_t.x), (e_t.y, p_t.y)))
+
+    try:
+        B_target_inv = B_target.inverted()
+    except ValueError:
+        return None
+
+    # M_target = M_source @ B_source @ inv(B_target)
+    return M_source @ B_source @ B_target_inv
+
+
+def set_uv_from_other_face_affine(source_face, target_face, uv_layer, ppm, me,
+                                   shared_edge, bm,
+                                   source_uv_layer=None, source_me=None):
+    """Transfer UV from source face to target face using affine transform.
+
+    Extracts the affine transform from the source tessellation triangle
+    touching the shared edge and transfers it to the target face via an
+    edge-based basis change.
+
+    Args:
+        source_face: BMesh face to copy UV from.
+        target_face: BMesh face to apply UV to.
+        uv_layer: BMesh UV layer (target).
+        ppm: Pixels per meter setting.
+        me: Mesh data for target face.
+        shared_edge: BMEdge shared between source and target.
+        bm: BMesh instance (for tessellation and cache).
+        source_uv_layer: UV layer for source face (defaults to uv_layer).
+        source_me: Mesh data for source face (defaults to me).
+
+    Returns:
+        True on success, False on failure.
+    """
+    from ..utils import extract_affine_from_face, get_face_local_axes
+    from ..properties import apply_affine_to_face
+
+    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
+
+    shared_edge_verts = (shared_edge.verts[0], shared_edge.verts[1])
+
+    # Get tessellation from bmesh
+    loop_triangles = bm.calc_loop_triangles()
+
+    # Extract affine from source face using triangle on shared edge
+    affine_result = extract_affine_from_face(
+        source_face, src_uv, shared_edge_verts, loop_triangles
+    )
+    if affine_result is None:
+        return False
+
+    M_source, t_source, source_axes = affine_result
+
+    source_normal = source_face.normal.normalized()
+    target_normal = target_face.normal.normalized()
+    target_axes = get_face_local_axes(target_face)
+    if not target_axes:
+        return False
+
+    # Transfer affine across the shared edge
+    M_target = _transfer_affine_across_edge(
+        M_source, source_axes, target_axes,
+        shared_edge_verts, source_face, target_face,
+        source_normal, target_normal,
+    )
+    if M_target is None:
+        return False
+
+    # Compute offset by anchoring to a shared vertex
+    anchor_vert = shared_edge_verts[0]
+    anchor_uv = None
+    for loop in source_face.loops:
+        if loop.vert == anchor_vert:
+            anchor_uv = loop[src_uv].uv.copy()
+            break
+    if anchor_uv is None:
+        return False
+
+    # Shared vert's position in target face's local 2D
+    tgt_x, tgt_y = target_axes
+    target_first_vert = list(target_face.loops)[0].vert.co
+    delta = anchor_vert.co - target_first_vert
+    anchor_local_2d = Vector((delta.dot(tgt_x), delta.dot(tgt_y)))
+
+    t_target = anchor_uv - M_target @ anchor_local_2d
+
+    debug_log(f"[AffineUV] face {target_face.index} | M=[{M_target[0][0]:.4f},{M_target[0][1]:.4f};"
+              f"{M_target[1][0]:.4f},{M_target[1][1]:.4f}] t=({t_target.x:.4f},{t_target.y:.4f})")
+
+    apply_affine_to_face(target_face, uv_layer, M_target, t_target, me)
+    cache_single_face(target_face, bm, ppm, me)
+
+    return True
+
+
+def _dispatch_set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_matrix,
+                           bm=None, source_uv_layer=None, source_me=None,
+                           source_to_target=None):
+    """Choose and apply the best UV transfer method for the given faces.
+
+    Affine transformation is in theory a superset of the functionality that
+    scalar transformation (using our scale / offset / rotation abstraction)
+    offers.  It has not been well tested, so we use it only in cases we
+    *know* that scalar transformation will fail.
+
+    Signature matches set_uv_from_other_face for use as a drop-in callback.
+    """
+    from ..utils import needs_affine_transfer
+
+    src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
+
+    # Check whether affine is needed and whether we have a shared edge
+    use_affine = False
+    shared_edge = None
+    if source_to_target is None and needs_affine_transfer(source_face, src_uv):
+        source_edges = set(source_face.edges)
+        target_edges = set(target_face.edges)
+        shared_edges = source_edges & target_edges
+        if shared_edges:
+            shared_edge = next(iter(shared_edges))
+            use_affine = True
+
+    if use_affine:
+        debug_log("Level Design Tools: Using affine UV transfer")
+        success = set_uv_from_other_face_affine(
+            source_face, target_face, uv_layer, ppm, me,
+            shared_edge, bm,
+            source_uv_layer=source_uv_layer, source_me=source_me,
+        )
+        if success:
+            return True
+        debug_log("Level Design Tools: Affine UV transfer failed, falling back to scalar")
+
+    debug_log("Level Design Tools: Using scalar UV transfer")
+    return set_uv_from_other_face(
+        source_face, target_face, uv_layer, ppm, me, obj_matrix,
+        bm=bm, source_uv_layer=source_uv_layer, source_me=source_me,
+        source_to_target=source_to_target,
+    )
+
+
 def _get_top_edge_index(face, obj_matrix):
     """Return the loop index of the edge highest in world space.
 
@@ -514,7 +709,7 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
             uv_func(
                 source_face, target_face, target_uv,
                 op._ppm, other_me, hit_other_obj.matrix_world,
-                source_uv_layer=source_uv, source_me=me,
+                bm=bm, source_uv_layer=source_uv, source_me=me,
                 source_to_target=source_to_target,
             )
 
@@ -543,7 +738,7 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
 
     target_face.material_index = op._mat_index
 
-    uv_func(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix)
+    uv_func(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix, bm=bm)
 
     op._painted_face_indices.add(face_index)
 
@@ -700,10 +895,10 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
             source_to_target = hit_other_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
 
-            set_uv_from_other_face(
+            _dispatch_set_uv_from_other_face(
                 source_face, target_face, target_uv,
                 op._ppm, other_me, hit_other_obj.matrix_world,
-                source_uv_layer=source_uv, source_me=me,
+                bm=bm, source_uv_layer=source_uv, source_me=me,
                 source_to_target=source_to_target,
             )
 
@@ -729,7 +924,7 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
     # No material change — only UV transform
 
-    set_uv_from_other_face(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix)
+    _dispatch_set_uv_from_other_face(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix, bm=bm)
 
     op._painted_face_indices.add(face_index)
 
@@ -867,7 +1062,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
         _discard_other_bmeshes(self)
 
     def paint_sample(self, context, mouse_2d, region, rv3d):
-        _paint_sample_impl(self, context, mouse_2d, region, rv3d, set_uv_from_other_face)
+        _paint_sample_impl(self, context, mouse_2d, region, rv3d, _dispatch_set_uv_from_other_face)
 
     def paint_finish(self, context):
         _flush_other_bmeshes(self)

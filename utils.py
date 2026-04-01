@@ -3,7 +3,7 @@ import re
 import bpy
 import bmesh
 import math
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 
 DEBUG_KEEP_HOTSPOT_SEAMS = False
@@ -637,6 +637,268 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
         'offset_x': normalize_offset(offset_x),
         'offset_y': normalize_offset(offset_y)
     }
+
+
+def _is_quad_rectangular(points_2d, tolerance=0.01):
+    """Check if 4 points in 2D form a rectangle (all angles ~90 degrees).
+
+    Args:
+        points_2d: List of 4 (x, y) tuples.
+        tolerance: Maximum allowed absolute cosine of each corner angle.
+
+    Returns:
+        True if all four corner angles are within tolerance of 90 degrees.
+    """
+    if len(points_2d) != 4:
+        return False
+    for i in range(4):
+        px, py = points_2d[(i - 1) % 4]
+        cx, cy = points_2d[i]
+        nx, ny = points_2d[(i + 1) % 4]
+        e1x, e1y = px - cx, py - cy
+        e2x, e2y = nx - cx, ny - cy
+        len1 = math.sqrt(e1x * e1x + e1y * e1y)
+        len2 = math.sqrt(e2x * e2x + e2y * e2y)
+        if len1 < 1e-8 or len2 < 1e-8:
+            return False
+        cos_angle = (e1x * e2x + e1y * e2y) / (len1 * len2)
+        if abs(cos_angle) > tolerance:
+            return False
+    return True
+
+
+def needs_affine_transfer(face, uv_layer):
+    """Check whether affine UV transfer should be used for this face.
+
+    Returns True when the source face's UVs form a rectangle but the face
+    geometry does not.  In that case the scalar (scale/rotation/offset)
+    extraction cannot faithfully represent the mapping and the affine path
+    gives better results.
+
+    Args:
+        face: BMesh face (source).
+        uv_layer: BMesh UV layer.
+
+    Returns:
+        True if affine transfer is recommended, False otherwise.
+    """
+    loops = list(face.loops)
+    if len(loops) != 4:
+        return False
+
+    # Check if UVs form a rectangle
+    uvs = [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in loops]
+    if not _is_quad_rectangular(uvs):
+        return False
+
+    # Check if face geometry is also rectangular (in face-local 2D)
+    face_axes = get_face_local_axes(face)
+    if not face_axes:
+        return False
+    local_x, local_y = face_axes
+    first_vert = loops[0].vert.co
+    face_2d = []
+    for loop in loops:
+        delta = loop.vert.co - first_vert
+        face_2d.append((delta.dot(local_x), delta.dot(local_y)))
+
+    if _is_quad_rectangular(face_2d):
+        return False  # Both rectangular — scalar path works fine
+
+    return True
+
+
+def _solve_affine_3pt(local_2d, uvs, i0, i1, i2):
+    """Solve for exact affine transform from 3 vertex correspondences.
+
+    Args:
+        local_2d: List of (x, y) tuples for all face verts in local 2D.
+        uvs: List of (u, v) tuples for all face verts.
+        i0, i1, i2: Indices into local_2d/uvs for the 3 triangle vertices.
+
+    Returns:
+        (M, t) where M is a 2x2 Matrix and t is a 2D Vector, or None if degenerate.
+    """
+    x0, y0 = local_2d[i0]
+    x1, y1 = local_2d[i1]
+    x2, y2 = local_2d[i2]
+    u0, v0 = uvs[i0]
+    u1, v1 = uvs[i1]
+    u2, v2 = uvs[i2]
+
+    dx1 = x1 - x0
+    dy1 = y1 - y0
+    dx2 = x2 - x0
+    dy2 = y2 - y0
+    du1 = u1 - u0
+    dv1 = v1 - v0
+    du2 = u2 - u0
+    dv2 = v2 - v0
+
+    det = dx1 * dy2 - dx2 * dy1
+    if abs(det) < 1e-10:
+        return None
+
+    inv_det = 1.0 / det
+
+    a = (du1 * dy2 - du2 * dy1) * inv_det
+    b = (du2 * dx1 - du1 * dx2) * inv_det
+    c = (dv1 * dy2 - dv2 * dy1) * inv_det
+    d = (dv2 * dx1 - dv1 * dx2) * inv_det
+
+    M = Matrix(((a, b), (c, d)))
+    tx = u0 - a * x0 - b * y0
+    ty = v0 - c * x0 - d * y0
+    t = Vector((tx, ty))
+
+    return M, t
+
+
+def _solve_affine_least_squares(local_2d, uvs):
+    """Solve for best-fit affine transform from n vertex correspondences.
+
+    Minimises sum ||M @ xy_i + t - uv_i||^2 over all vertices.
+
+    Args:
+        local_2d: List of (x, y) tuples.
+        uvs: List of (u, v) tuples.
+
+    Returns:
+        (M, t) where M is a 2x2 Matrix and t is a 2D Vector, or None if degenerate.
+    """
+    n = len(local_2d)
+
+    # Build normal equations A^T A and A^T b for the system:
+    #   u_i = a * x_i + b * y_i + tx
+    #   v_i = c * x_i + d * y_i + ty
+    sxx = sxy = sx = syy = sy = 0.0
+    sxu = syu = su = sxv = syv = sv = 0.0
+
+    for i in range(n):
+        x, y = local_2d[i]
+        u, v = uvs[i]
+        sxx += x * x
+        sxy += x * y
+        sx += x
+        syy += y * y
+        sy += y
+        sxu += x * u
+        syu += y * u
+        su += u
+        sxv += x * v
+        syv += y * v
+        sv += v
+
+    # A^T A (3x3 symmetric)
+    ATA = Matrix((
+        (sxx, sxy, sx),
+        (sxy, syy, sy),
+        (sx, sy, n),
+    ))
+
+    try:
+        ATA_inv = ATA.inverted()
+    except ValueError:
+        return None
+
+    # Solve for u-row: [a, b, tx]
+    rhs_u = Vector((sxu, syu, su))
+    params_u = ATA_inv @ rhs_u
+
+    # Solve for v-row: [c, d, ty]
+    rhs_v = Vector((sxv, syv, sv))
+    params_v = ATA_inv @ rhs_v
+
+    M = Matrix(((params_u.x, params_u.y), (params_v.x, params_v.y)))
+    t = Vector((params_u.z, params_v.z))
+
+    return M, t
+
+
+def extract_affine_from_face(face, uv_layer, shared_edge_verts, loop_triangles):
+    """Extract affine transform (2x2 matrix + offset) mapping face-local 2D to UV.
+
+    When shared_edge_verts is provided and tessellation data is available, uses
+    the tessellation triangle touching that edge for an exact solve. Otherwise
+    uses least-squares across all vertices.
+
+    Args:
+        face: BMesh face to extract from.
+        uv_layer: BMesh UV layer.
+        shared_edge_verts: Tuple of 2 BMVert on the shared edge, or None.
+        loop_triangles: Result of bm.calc_loop_triangles(), or None.
+
+    Returns:
+        (M, t, local_axes) where M is a 2x2 Matrix, t is a 2D Vector,
+        and local_axes is (local_x, local_y), or None on failure.
+    """
+    face_axes = get_face_local_axes(face)
+    if not face_axes:
+        return None
+    local_x, local_y = face_axes
+
+    loops = list(face.loops)
+    if len(loops) < 3:
+        return None
+
+    # Build local 2D coords and UVs
+    first_vert = loops[0].vert.co
+    local_2d = []
+    uvs = []
+    vert_to_loop_idx = {}
+
+    for i, loop in enumerate(loops):
+        delta = loop.vert.co - first_vert
+        x = delta.dot(local_x)
+        y = delta.dot(local_y)
+        local_2d.append((x, y))
+        uvs.append((loop[uv_layer].uv.x, loop[uv_layer].uv.y))
+        vert_to_loop_idx[loop.vert.index] = i
+
+    # Try exact solve from tessellation triangle touching the shared edge
+    if shared_edge_verts is not None:
+        sv0_idx = shared_edge_verts[0].index
+        sv1_idx = shared_edge_verts[1].index
+
+        if sv0_idx in vert_to_loop_idx and sv1_idx in vert_to_loop_idx:
+            tri_indices = None
+
+            if loop_triangles is not None:
+                # Find Blender's tessellation triangle for this face that
+                # contains both shared edge vertices
+                for tri in loop_triangles:
+                    if tri[0].face != face:
+                        continue
+                    tri_vert_indices = {l.vert.index for l in tri}
+                    if sv0_idx in tri_vert_indices and sv1_idx in tri_vert_indices:
+                        tri_indices = tuple(
+                            vert_to_loop_idx[l.vert.index] for l in tri
+                        )
+                        break
+
+            if tri_indices is None:
+                # Fallback: fan triangulation from vertex 0
+                li0 = vert_to_loop_idx[sv0_idx]
+                li1 = vert_to_loop_idx[sv1_idx]
+                # Pick a third vertex that isn't on the shared edge
+                for i in range(len(loops)):
+                    if i != li0 and i != li1:
+                        tri_indices = (li0, li1, i)
+                        break
+
+            if tri_indices is not None:
+                result = _solve_affine_3pt(local_2d, uvs, *tri_indices)
+                if result is not None:
+                    return (result[0], result[1], (local_x, local_y))
+
+    # Least-squares across all vertices
+    if len(loops) == 3:
+        result = _solve_affine_3pt(local_2d, uvs, 0, 1, 2)
+    else:
+        result = _solve_affine_least_squares(local_2d, uvs)
+    if result is None:
+        return None
+    return (result[0], result[1], (local_x, local_y))
 
 
 def align_2d_shape_to_square(shape, shape_edge_index, square_edge_index):
