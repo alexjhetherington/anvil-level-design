@@ -13,6 +13,7 @@ from ..utils import (
     align_2d_shape_to_square,
     derive_transform_from_uvs,
     face_aligned_project,
+    get_face_local_axes,
     get_texture_dimensions_from_material,
     get_selected_faces_or_report,
     get_image_from_material,
@@ -1526,35 +1527,57 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
         self.last_texture_edge = self.texture_edge
         self.last_fit_mode = self.fit_mode
 
-        # Map texture_edge to square_edge_index: 0=bottom, 1=right, 2=top, 3=left
+        # Map texture_edge to target angle in UV space:
+        # BOTTOM = +U direction (0°), RIGHT = +V direction (90°),
+        # TOP = -U direction (180°), LEFT = -V direction (-90°)
+        target_angle_map = {'BOTTOM': 0.0, 'RIGHT': 90.0, 'TOP': 180.0, 'LEFT': -90.0}
+        target_angle_deg = target_angle_map[self.texture_edge]
+
+        # Map texture_edge to square_edge_index for align_2d_shape_to_square
         square_edge_map = {'BOTTOM': 0, 'RIGHT': 1, 'TOP': 2, 'LEFT': 3}
         square_edge_index = square_edge_map[self.texture_edge]
 
         # Update edge_index property
         props.edge_index = edge_index
 
-        # Get current UV shape
-        shape = [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in face.loops]
+        # Compute rotation directly from face geometry.
+        # The face edge direction in face-local 2D space tells us what rotation
+        # of the projection axes will make that edge align with the target
+        # texture direction. This avoids deriving rotation from potentially
+        # distorted UVs.
+        face_axes = get_face_local_axes(face)
+        if not face_axes:
+            return
+        face_local_x, face_local_y = face_axes
 
-        # Align the shape edge to the square edge
-        aligned = align_2d_shape_to_square(shape, edge_index, square_edge_index)
+        loops = list(face.loops)
+        n = len(loops)
+        v1 = loops[edge_index].vert.co
+        v2 = loops[(edge_index + 1) % n].vert.co
+        edge_3d = v2 - v1
 
-        # Apply the transformed UVs back
-        for i, loop in enumerate(face.loops):
-            loop[uv_layer].uv.x = aligned[i][0]
-            loop[uv_layer].uv.y = aligned[i][1]
+        # Project edge into face-local 2D
+        edge_local_x = edge_3d.dot(face_local_x)
+        edge_local_y = edge_3d.dot(face_local_y)
+        edge_angle_deg = math.degrees(math.atan2(edge_local_y, edge_local_x))
+
+        # rotation is applied to projection axes: a face-local vector at
+        # angle edge_angle should map to target_angle in UV space.
+        # Forward transform: u component ~ cos(rot)*x - sin(rot)*y
+        # An edge at angle A in face space appears at angle (A - rot) in UV space.
+        # We want (A - rot) = target_angle  =>  rot = A - target_angle
+        rotation = target_angle_deg - edge_angle_deg
 
         # Determine scale values
         if self.fit_mode:
-            # Calculate fit scale from aligned UVs
-            fit_scale = self._calculate_aspect_locked_fit_scale(
-                face, uv_layer, self.fit_mode,
-                props.texture_scale_u, props.texture_scale_v
-            )
-            scale_u = fit_scale
-            scale_v = fit_scale
+            # We need UVs applied first to calculate fit scale; use current scale as starting point
+            if self.pre_fit_scale_u is not None:
+                scale_u = self.pre_fit_scale_u
+                scale_v = self.pre_fit_scale_v
+            else:
+                scale_u = props.texture_scale_u
+                scale_v = props.texture_scale_v
         else:
-            # Use pre-fit scales if we have them (fit was disabled), otherwise current props
             if self.pre_fit_scale_u is not None:
                 scale_u = self.pre_fit_scale_u
                 scale_v = self.pre_fit_scale_v
@@ -1562,37 +1585,46 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
                 scale_u = props.texture_scale_u
                 scale_v = props.texture_scale_v
 
-        # Derive rotation and offset from the aligned UVs
-        transform = derive_transform_from_uvs(face, uv_layer, props.pixels_per_meter, me)
-        if transform:
-            rotation = transform['rotation']
-            offset_x = transform['offset_x']
-            offset_y = transform['offset_y']
+        # Apply clean UVs from scratch with the computed rotation
+        mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+        apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation,
+                         0.0, 0.0, mat, props.pixels_per_meter, me)
 
-            # Re-apply UVs with final scale (this recalculates from scratch)
-            mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+        # Now align the edge to the texture edge (handles offset/positioning)
+        shape = [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in face.loops]
+        aligned = align_2d_shape_to_square(shape, edge_index, square_edge_index)
+        for i, loop in enumerate(face.loops):
+            loop[uv_layer].uv.x = aligned[i][0]
+            loop[uv_layer].uv.y = aligned[i][1]
+
+        # Calculate fit scale if needed (now that UVs are applied)
+        if self.fit_mode:
+            fit_scale = self._calculate_aspect_locked_fit_scale(
+                face, uv_layer, self.fit_mode, scale_u, scale_v
+            )
+            scale_u = fit_scale
+            scale_v = fit_scale
+            # Re-apply with fit scale
             apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation,
-                             offset_x, offset_y, mat, props.pixels_per_meter, me)
-
-            # Re-align to fix positioning after scale change
+                             0.0, 0.0, mat, props.pixels_per_meter, me)
             shape = [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in face.loops]
             aligned = align_2d_shape_to_square(shape, edge_index, square_edge_index)
             for i, loop in enumerate(face.loops):
                 loop[uv_layer].uv.x = aligned[i][0]
                 loop[uv_layer].uv.y = aligned[i][1]
 
-            # Derive final transform after re-alignment
-            final_transform = derive_transform_from_uvs(face, uv_layer, props.pixels_per_meter, me)
-            if final_transform:
-                set_updating_from_selection(True)
-                try:
-                    props.texture_scale_u = scale_u
-                    props.texture_scale_v = scale_v
-                    props.texture_rotation = final_transform['rotation']
-                    props.texture_offset_x = final_transform['offset_x']
-                    props.texture_offset_y = final_transform['offset_y']
-                finally:
-                    set_updating_from_selection(False)
+        # Derive final offset from the aligned UVs
+        final_transform = derive_transform_from_uvs(face, uv_layer, props.pixels_per_meter, me)
+        if final_transform:
+            set_updating_from_selection(True)
+            try:
+                props.texture_scale_u = scale_u
+                props.texture_scale_v = scale_v
+                props.texture_rotation = final_transform['rotation']
+                props.texture_offset_x = final_transform['offset_x']
+                props.texture_offset_y = final_transform['offset_y']
+            finally:
+                set_updating_from_selection(False)
 
         # Update cache
         cache_single_face(face, bm, props.pixels_per_meter, me)
