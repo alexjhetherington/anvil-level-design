@@ -2,6 +2,8 @@
 
 ## 1.5.1
 - Add vignette to texture snapping modes
+- Add quad grid texture snapping
+- Alt-left click applies texture via affine mapping in some cases (should support applying skewed and distorted textures)
 
 ## 1.5.0
 - BREAKING CHANGE (hotspot definitions)
