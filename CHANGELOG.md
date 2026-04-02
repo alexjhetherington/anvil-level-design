@@ -5,6 +5,7 @@
 - Add quad grid texture snapping (T with a grid of quads selected)
 - Alt-left click applies texture via affine mapping in some cases (should support applying skewed and distorted textures)
 - Fix (I think) Face snapping (T on an individual face)  on irregular faces causing sheer 
+- Improve mapping of shader to texture file (helps with custom shaders)
 - Large code organisation changes (bug risk!)
 
 ## 1.5.0

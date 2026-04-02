@@ -9,9 +9,20 @@ _BLENDER_SUFFIX = re.compile(r'\.\d{3,}$')
 
 
 def get_image_from_material(mat):
-    """Return the first image used by a material, or None"""
+    """Return the image plugged into the Base Color of the Principled BSDF, or None.
+
+    Falls back to the first TEX_IMAGE node if no Principled BSDF is found.
+    """
     if not mat or not mat.use_nodes or not mat.node_tree:
         return None
+    for node in mat.node_tree.nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            base_color = node.inputs.get('Base Color')
+            if base_color and base_color.links:
+                linked_node = base_color.links[0].from_node
+                if linked_node.type == 'TEX_IMAGE' and linked_node.image:
+                    return linked_node.image
+            break
     for node in mat.node_tree.nodes:
         if node.type == 'TEX_IMAGE' and node.image:
             return node.image
