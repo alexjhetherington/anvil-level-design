@@ -1,5 +1,7 @@
 from . import texture_apply
-from . import uv_tools
+from . import hotspot_apply
+from . import face_uv_mode
+from . import grid_snapping_mode
 from . import grid_tools
 from . import walk_navigation
 from . import ortho_navigation
@@ -21,7 +23,9 @@ from . import fixed_hotspot_overlay
 
 def register():
     texture_apply.register()
-    uv_tools.register()
+    hotspot_apply.register()
+    face_uv_mode.register()
+    grid_snapping_mode.register()
     grid_tools.register()
     walk_navigation.register()
     ortho_navigation.register()
@@ -59,5 +63,7 @@ def unregister():
     ortho_navigation.unregister()
     walk_navigation.unregister()
     grid_tools.unregister()
-    uv_tools.unregister()
+    grid_snapping_mode.unregister()
+    face_uv_mode.unregister()
+    hotspot_apply.unregister()
     texture_apply.unregister()

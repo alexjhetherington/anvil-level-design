@@ -2,7 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Operator
 
-from ...utils import is_level_design_workspace
+from ...core.workspace_check import is_level_design_workspace
 from .paint_base import ModalPaintBase
 from .raycast import raycast_bvh_skip_backfaces
 from .operator import (

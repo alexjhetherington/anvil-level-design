@@ -7,7 +7,7 @@ used by cube_cut, box_builder, and future modal draw tools.
 
 import bpy
 
-from ...utils import is_level_design_workspace
+from ...core.workspace_check import is_level_design_workspace
 
 
 class LEVELDESIGN_OT_line_mode_activate(bpy.types.Operator):

@@ -2,8 +2,8 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..properties import apply_uv_to_face
-from ..utils import derive_transform_from_uvs
+from ..core.uv_projection import apply_uv_to_face
+from ..core.uv_projection import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, create_textured_cube, add_uv_layer, _get_context_override
 

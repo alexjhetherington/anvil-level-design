@@ -4,7 +4,7 @@ import math
 from mathutils import Vector
 
 from ..operators.cube_cut.geometry import execute_cube_cut
-from ..utils import derive_transform_from_uvs
+from ..core.uv_projection import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override
 

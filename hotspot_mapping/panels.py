@@ -8,7 +8,7 @@ import bpy
 from bpy.types import Panel
 
 from . import json_storage
-from ..utils import is_hotspot_mapping_workspace
+from ..core.workspace_check import is_hotspot_mapping_workspace
 
 
 class HOTSPOT_PT_main_panel(Panel):

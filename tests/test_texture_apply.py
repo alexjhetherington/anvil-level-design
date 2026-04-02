@@ -4,11 +4,11 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..utils import derive_transform_from_uvs
-from ..properties import apply_uv_to_face
+from ..core.uv_projection import derive_transform_from_uvs
+from ..core.uv_projection import apply_uv_to_face
 from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
-from ..utils import find_material_with_image, create_material_with_image
+from ..core.materials import find_material_with_image, create_material_with_image
 from ..operators.texture_apply import set_uv_from_other_face, stretch_uv_from_other_face
 
 

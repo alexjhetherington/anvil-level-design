@@ -4,8 +4,9 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..utils import derive_transform_from_uvs, get_image_from_material
-from .. import handlers as handlers_module
+from ..core.uv_projection import derive_transform_from_uvs
+from ..core.materials import get_image_from_material
+from ..handlers import file_browser as handlers_file_browser_module
 from ..handlers import set_active_image, apply_texture_from_file_browser
 from ..operators.box_builder.geometry import execute_box_builder
 from .base_test import AnvilTestCase
@@ -133,7 +134,7 @@ class BoxBuilderTest(AnvilTestCase):
 
         # Apply texture via the file browser route, mocking the file
         # browser selection to return our test texture path
-        with patch.object(handlers_module, 'get_selected_image_path',
+        with patch.object(handlers_file_browser_module, 'get_selected_image_path',
                           return_value=TEXTURE_PATH):
             apply_texture_from_file_browser()
 

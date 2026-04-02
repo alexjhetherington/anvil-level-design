@@ -8,7 +8,7 @@ from bpy_extras import view3d_utils
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-from ..utils import is_level_design_workspace
+from ..core.workspace_check import is_level_design_workspace
 from .backface_select.raycast import (
     raycast_bvh_skip_backfaces,
     is_face_backfacing,

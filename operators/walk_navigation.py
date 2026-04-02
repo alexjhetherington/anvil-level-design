@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Operator
 
-from ..utils import is_level_design_workspace
+from ..core.workspace_check import is_level_design_workspace
 
 
 # HACK: We manage CONFIRM keymap items in Blender's "View3D Walk Modal" keymap

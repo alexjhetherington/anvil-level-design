@@ -1,7 +1,7 @@
 import bmesh
 import bpy
 
-from ..utils import derive_transform_from_uvs
+from ..core.uv_projection import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override
 

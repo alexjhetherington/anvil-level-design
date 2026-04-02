@@ -12,7 +12,7 @@ from . import geometry
 from ..modal_draw.base_operator import ModalDrawBase
 from ..modal_draw import snapping
 from ..modal_draw import utils
-from ...utils import is_level_design_workspace
+from ...core.workspace_check import is_level_design_workspace
 from ..weld import set_weld_from_box_builder, set_weld_from_box_builder_object_mode
 
 

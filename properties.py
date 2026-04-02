@@ -1,9 +1,7 @@
 import bpy
 import bmesh
-import math
 import time
 from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty, EnumProperty, CollectionProperty
-
 
 # Flag to prevent recursive updates
 _updating_from_selection = False
@@ -57,124 +55,6 @@ class AnvilUVMapSettings(bpy.types.PropertyGroup):
     )
 
 
-def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, offset_y,
-                     mat, ppm, me):
-    """Apply UV coordinates to a single face from scratch with given parameters.
-
-    This is the low-level function that does the actual UV projection.
-    Order: rotate projection axes → project → scale → offset
-
-    Rotation is applied by rotating the projection axes in face space, which
-    avoids distortion with non-square textures. Scale is applied in texture space,
-    meaning scale_u always affects the texture's horizontal axis and scale_v
-    always affects the texture's vertical axis, regardless of rotation.
-
-    Args:
-        face: BMesh face to apply UVs to
-        uv_layer: BMesh UV layer
-        scale_u, scale_v: Texture scale factors
-        rotation_deg: Rotation in degrees
-        offset_x, offset_y: UV offset
-        mat: Material to get texture dimensions from (can be None)
-        ppm: Pixels per meter setting
-        me: Mesh data (for bmesh.update_edit_mesh)
-    """
-    from .utils import get_face_local_axes, get_texture_dimensions_from_material
-
-    # Guard against invalid face data during modal operators (e.g., loop cut)
-    try:
-        loops = list(face.loops)
-    except (ReferenceError, RuntimeError, OSError):
-        return
-
-    if len(loops) < 2:
-        return
-
-    face_axes = get_face_local_axes(face)
-    if not face_axes:
-        return
-    face_local_x, face_local_y = face_axes
-
-    # Get texture dimensions from material
-    tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
-
-    # Rotate the projection axes in face space
-    # This determines which face direction maps to texture U vs V
-    rotation_rad = math.radians(rotation_deg)
-    cos_rot = math.cos(rotation_rad)
-    sin_rot = math.sin(rotation_rad)
-
-    # Rotated projection axes (3D vectors in face plane)
-    proj_x = face_local_x * cos_rot - face_local_y * sin_rot
-    proj_y = face_local_x * sin_rot + face_local_y * cos_rot
-
-    first_vert = loops[0].vert.co
-
-    for loop in loops:
-        delta = loop.vert.co - first_vert
-
-        # Project onto rotated axes
-        x = delta.dot(proj_x)
-        y = delta.dot(proj_y)
-
-        # Convert to UV with scale (texture-based since x is along texture U direction)
-        u = x / (scale_u * tex_meters_u)
-        v = y / (scale_v * tex_meters_v)
-
-        # Offset
-        loop[uv_layer].uv.x = u + offset_x
-        loop[uv_layer].uv.y = v + offset_y
-
-    if me.is_editmode:
-        bmesh.update_edit_mesh(me)
-
-
-def apply_affine_to_face(face, uv_layer, M, t, me):
-    """Apply an affine transform to a face's UVs.
-
-    Computes UV = M @ local_2d + t for each vertex, where local_2d is the
-    vertex position in face-local 2D space (relative to first loop vertex).
-
-    Args:
-        face: BMesh face to apply UVs to.
-        uv_layer: BMesh UV layer.
-        M: 2x2 Matrix mapping face-local 2D to UV.
-        t: 2D Vector offset.
-        me: Mesh data (for bmesh.update_edit_mesh).
-    """
-    from .utils import get_face_local_axes
-    from mathutils import Vector
-
-    try:
-        loops = list(face.loops)
-    except (ReferenceError, RuntimeError, OSError):
-        return
-
-    if len(loops) < 2:
-        return
-
-    face_axes = get_face_local_axes(face)
-    if not face_axes:
-        return
-    local_x, local_y = face_axes
-
-    first_vert = loops[0].vert.co
-
-    for loop in loops:
-        delta = loop.vert.co - first_vert
-        x = delta.dot(local_x)
-        y = delta.dot(local_y)
-
-        xy = Vector((x, y))
-        uv = M @ xy + t
-
-        loop[uv_layer].uv.x = uv.x
-        loop[uv_layer].uv.y = uv.y
-
-    if me.is_editmode:
-        bmesh.update_edit_mesh(me)
-
-
 def apply_scale_to_selected_faces(context):
     """Apply scale from panel to selected faces, preserving each face's rotation and offset."""
     if get_updating_from_selection() or context.mode != 'EDIT_MESH':
@@ -187,7 +67,7 @@ def apply_scale_to_selected_faces(context):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    from .utils import get_render_active_uv_layer
+    from .core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         return
@@ -202,7 +82,8 @@ def apply_scale_to_selected_faces(context):
         return
 
     from .handlers import cache_single_face
-    from .utils import derive_transform_from_uvs, face_has_hotspot_material
+    from .core.uv_projection import derive_transform_from_uvs, apply_uv_to_face
+    from .core.hotspot_queries import face_has_hotspot_material
 
     for face in selected_faces:
         # Skip faces with hotspottable materials
@@ -234,7 +115,7 @@ def apply_rotation_to_selected_faces(context):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    from .utils import get_render_active_uv_layer
+    from .core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         return
@@ -248,7 +129,8 @@ def apply_rotation_to_selected_faces(context):
         return
 
     from .handlers import cache_single_face
-    from .utils import derive_transform_from_uvs, face_has_hotspot_material
+    from .core.uv_projection import derive_transform_from_uvs, apply_uv_to_face
+    from .core.hotspot_queries import face_has_hotspot_material
 
     for face in selected_faces:
         # Skip faces with hotspottable materials
@@ -280,7 +162,7 @@ def apply_offset_to_selected_faces(context):
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
 
-    from .utils import get_render_active_uv_layer
+    from .core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         return
@@ -295,7 +177,8 @@ def apply_offset_to_selected_faces(context):
         return
 
     from .handlers import cache_single_face
-    from .utils import derive_transform_from_uvs, face_has_hotspot_material
+    from .core.uv_projection import derive_transform_from_uvs, apply_uv_to_face
+    from .core.hotspot_queries import face_has_hotspot_material
 
     for face in selected_faces:
         # Skip faces with hotspottable materials

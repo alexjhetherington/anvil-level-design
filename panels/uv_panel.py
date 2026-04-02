@@ -1,16 +1,16 @@
 import bpy
 from bpy.types import Panel, Operator
 
-from ..utils import (
-    get_selected_face_count,
+from ..core.face_id import get_selected_face_count
+from ..core.materials import (
     get_texture_node_from_material,
     find_material_with_image,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
-    is_level_design_workspace,
-    object_has_hotspot_material,
 )
+from ..core.workspace_check import is_level_design_workspace
+from ..core.hotspot_queries import object_has_hotspot_material
 from ..operators.grid_tools import get_unit_label, get_snap_mode_icon
 from ..handlers import (
     get_active_image,
@@ -96,7 +96,7 @@ class LEVELDESIGN_OT_set_active_render_uv(Operator):
             uv_map.active_render = (uv_map.name == self.uv_name)
 
         # Sync settings now that we're in an operator context (writing allowed)
-        from ..utils import sync_uv_map_settings
+        from ..core.uv_layers import sync_uv_map_settings
         sync_uv_map_settings(obj)
 
         return {'FINISHED'}
@@ -115,7 +115,7 @@ class LEVELDESIGN_OT_toggle_uv_lock(Operator):
         if not obj or obj.type != 'MESH':
             return {'CANCELLED'}
 
-        from ..utils import sync_uv_map_settings
+        from ..core.uv_layers import sync_uv_map_settings
         sync_uv_map_settings(obj)
 
         for setting in obj.anvil_uv_map_settings:
@@ -167,7 +167,7 @@ class LEVELDESIGN_OT_toggle_fixed_hotspot(Operator):
 
     def execute(self, context):
         import bmesh
-        from ..utils import get_fixed_hotspot_layer
+        from ..core.face_id import get_fixed_hotspot_layer
 
         obj = context.object
         me = obj.data

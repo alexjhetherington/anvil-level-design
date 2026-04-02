@@ -6,7 +6,7 @@ to ensure surfaces are genus 0 (topologically a disk) before unwrapping.
 """
 
 import math
-from ..utils import debug_log
+from ..core.logging import debug_log
 
 
 def get_face_angle(face1, face2):

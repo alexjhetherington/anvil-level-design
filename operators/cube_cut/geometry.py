@@ -12,7 +12,10 @@ import bmesh
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-from ...utils import compute_uv_projection_from_face, apply_uv_projection_to_face, debug_log, compute_normal_from_verts, get_all_uv_layers
+from ...core.logging import debug_log
+from ...core.geometry import compute_normal_from_verts
+from ...core.uv_projection import compute_uv_projection_from_face, apply_uv_projection_to_face
+from ...core.uv_layers import get_all_uv_layers
 from ...handlers import cache_face_data
 
 

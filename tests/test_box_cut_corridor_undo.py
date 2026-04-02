@@ -6,7 +6,7 @@ from ..handlers import set_active_image
 from ..operators.box_builder.geometry import execute_box_builder
 from ..operators.cube_cut.geometry import execute_cube_cut
 from ..operators.weld import set_weld_from_box_builder, set_weld_from_edge_selection
-from ..utils import derive_transform_from_uvs
+from ..core.uv_projection import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
 

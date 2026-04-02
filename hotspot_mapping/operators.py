@@ -10,7 +10,7 @@ import bpy
 from bpy.props import StringProperty, BoolProperty
 
 from . import json_storage
-from ..utils import debug_log
+from ..core.logging import debug_log
 
 
 class HOTSPOT_OT_assign_hotspottable(bpy.types.Operator):

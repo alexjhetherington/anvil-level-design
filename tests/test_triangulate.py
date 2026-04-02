@@ -1,8 +1,8 @@
 import bmesh
 import bpy
 
-from ..utils import derive_transform_from_uvs
-from ..properties import apply_uv_to_face
+from ..core.uv_projection import derive_transform_from_uvs
+from ..core.uv_projection import apply_uv_to_face
 from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
 
@@ -17,7 +17,7 @@ def _create_three_face_horizontal_plane(name, rot_left, rot_center, rot_right):
 
     Returns the object in object mode with a textured material applied.
     """
-    from ..utils import create_material_with_image, find_material_with_image
+    from ..core.materials import create_material_with_image, find_material_with_image
 
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()

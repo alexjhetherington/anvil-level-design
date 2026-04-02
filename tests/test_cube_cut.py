@@ -2,7 +2,7 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..utils import derive_transform_from_uvs
+from ..core.uv_projection import derive_transform_from_uvs
 from ..operators.cube_cut.geometry import execute_cube_cut
 from .base_test import AnvilTestCase
 from .helpers import create_textured_cube, add_uv_layer_face_aligned, _get_context_override

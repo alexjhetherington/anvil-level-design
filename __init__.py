@@ -17,7 +17,7 @@ from . import operators
 from . import panels
 from . import workspace
 from . import hotspot_mapping
-from .utils import is_level_design_workspace
+from .core.workspace_check import is_level_design_workspace
 
 _MINIMUM_BLENDER_VERSION = bl_info["blender"]
 _VERSION_OK = bpy.app.version >= _MINIMUM_BLENDER_VERSION

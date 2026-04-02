@@ -2,7 +2,8 @@ import bpy
 import bmesh
 from bpy.types import Operator
 
-from ..utils import is_level_design_workspace, get_render_active_uv_layer
+from ..core.workspace_check import is_level_design_workspace
+from ..core.uv_layers import get_render_active_uv_layer
 
 
 class LEVELDESIGN_OT_select_invalid_uvs(Operator):

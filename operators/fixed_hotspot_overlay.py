@@ -11,7 +11,9 @@ import gpu
 from bpy.types import Operator
 from gpu_extras.batch import batch_for_shader
 
-from ..utils import is_level_design_workspace, get_fixed_hotspot_layer, debug_log
+from ..core.logging import debug_log
+from ..core.workspace_check import is_level_design_workspace
+from ..core.face_id import get_fixed_hotspot_layer
 
 
 # ---------------------------------------------------------------------------

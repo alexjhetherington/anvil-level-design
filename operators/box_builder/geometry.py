@@ -10,7 +10,10 @@ from mathutils import Vector
 
 from ..texture_apply import set_uv_from_other_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
-from ...utils import find_material_with_image, create_material_with_image, face_aligned_project, debug_log, get_render_active_uv_layer
+from ...core.logging import debug_log
+from ...core.materials import find_material_with_image, create_material_with_image
+from ...core.uv_projection import face_aligned_project
+from ...core.uv_layers import get_render_active_uv_layer
 
 
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,

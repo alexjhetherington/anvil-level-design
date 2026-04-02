@@ -4,26 +4,24 @@ import math
 from bpy.types import Operator
 from bpy_extras import view3d_utils
 
-from ..utils import is_level_design_workspace, debug_log
-from mathutils import Vector
-from mathutils.bvhtree import BVHTree
-
-from ..utils import (
+from ..core.logging import debug_log
+from ..core.workspace_check import is_level_design_workspace
+from ..core.face_id import get_face_id_layer, save_face_selection, restore_face_selection
+from ..core.geometry import normalize_offset
+from ..core.materials import (
     find_material_with_image,
     create_material_with_image,
     get_texture_dimensions_from_material,
-    get_face_local_axes,
-    derive_transform_from_uvs,
-    normalize_offset,
     get_image_from_material,
+)
+from ..core.uv_projection import get_face_local_axes, derive_transform_from_uvs, apply_uv_to_face
+from ..core.hotspot_queries import (
     face_has_hotspot_material,
     any_connected_face_has_hotspot,
     get_all_hotspot_faces,
-    get_face_id_layer,
-    save_face_selection,
-    restore_face_selection,
 )
-from ..properties import apply_uv_to_face
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 from ..handlers import (
     cache_single_face, get_active_image, set_active_image, redraw_ui_panels,
     update_ui_from_selection, update_active_image_from_face,
@@ -314,8 +312,8 @@ def set_uv_from_other_face_affine(source_face, target_face, uv_layer, ppm, me,
     Returns:
         True on success, False on failure.
     """
-    from ..utils import extract_affine_from_face, get_face_local_axes
-    from ..properties import apply_affine_to_face
+    from ..core.uv_projection import extract_affine_from_face, get_face_local_axes
+    from ..core.uv_projection import apply_affine_to_face
 
     src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
 
@@ -387,7 +385,7 @@ def _dispatch_set_uv_from_other_face(source_face, target_face, uv_layer, ppm, me
 
     Signature matches set_uv_from_other_face for use as a drop-in callback.
     """
-    from ..utils import needs_affine_transfer
+    from ..core.uv_projection import needs_affine_transfer
 
     src_uv = source_uv_layer if source_uv_layer is not None else uv_layer
 
@@ -698,7 +696,7 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
 
             target_face.material_index = other_mat_index
 
-            from ..utils import get_render_active_uv_layer
+            from ..core.uv_layers import get_render_active_uv_layer
             source_uv = get_render_active_uv_layer(bm, me)
             if source_uv is None:
                 source_uv = bm.loops.layers.uv.verify()
@@ -728,7 +726,7 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
     target_face = bm.faces[face_index]
     source_face = bm.faces[op._source_face_index]
 
-    from ..utils import get_render_active_uv_layer
+    from ..core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.verify()
@@ -887,7 +885,7 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
             # No material change — only UV transform
 
-            from ..utils import get_render_active_uv_layer
+            from ..core.uv_layers import get_render_active_uv_layer
             source_uv = get_render_active_uv_layer(bm, me)
             if source_uv is None:
                 source_uv = bm.loops.layers.uv.verify()
@@ -917,7 +915,7 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
     target_face = bm.faces[face_index]
     source_face = bm.faces[op._source_face_index]
 
-    from ..utils import get_render_active_uv_layer
+    from ..core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.verify()
@@ -941,7 +939,8 @@ def _pick_source_from_cursor(op, context, event):
 
     bm_edit = bmesh.from_edit_mesh(edit_obj.data)
     # Ensure layers exist before collecting face references (creating layers invalidates refs)
-    from ..utils import get_face_id_layer, get_render_active_uv_layer
+    from ..core.face_id import get_face_id_layer
+    from ..core.uv_layers import get_render_active_uv_layer
     uv_layer = get_render_active_uv_layer(bm_edit, edit_obj.data)
     if uv_layer is None:
         bm_edit.loops.layers.uv.verify()
@@ -1071,14 +1070,14 @@ class apply_image_to_face(ModalPaintBase, Operator):
             return
 
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
-        from .uv_tools import apply_hotspots_to_mesh
+        from .hotspot_apply import apply_hotspots_to_mesh
 
         obj = self._paint_obj
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()
 
-        from ..utils import get_render_active_uv_layer
+        from ..core.uv_layers import get_render_active_uv_layer
         uv_layer = get_render_active_uv_layer(bm, me)
         if uv_layer is None:
             uv_layer = bm.loops.layers.uv.verify()
@@ -1191,7 +1190,7 @@ class pick_image_from_face(Operator):
 
     def invoke(self, context, event):
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
-        from .uv_tools import apply_hotspots_to_mesh
+        from .hotspot_apply import apply_hotspots_to_mesh
 
         pick_result = _pick_source_from_cursor(self, context, event)
         if pick_result is None:
@@ -1200,7 +1199,7 @@ class pick_image_from_face(Operator):
 
         edit_obj = context.object
         me = edit_obj.data
-        from ..utils import get_render_active_uv_layer
+        from ..core.uv_layers import get_render_active_uv_layer
         uv_layer = get_render_active_uv_layer(bm_edit, me)
         if uv_layer is None:
             uv_layer = bm_edit.loops.layers.uv.verify()
@@ -1330,7 +1329,7 @@ class stretch_pick_image_from_face(Operator):
 
         edit_obj = context.object
         me = edit_obj.data
-        from ..utils import get_render_active_uv_layer
+        from ..core.uv_layers import get_render_active_uv_layer
         uv_layer = get_render_active_uv_layer(bm_edit, me)
         if uv_layer is None:
             uv_layer = bm_edit.loops.layers.uv.verify()
@@ -1445,7 +1444,7 @@ class pick_uv_transform_from_face(Operator):
 
         edit_obj = context.object
         me = edit_obj.data
-        from ..utils import get_render_active_uv_layer
+        from ..core.uv_layers import get_render_active_uv_layer
         uv_layer = get_render_active_uv_layer(bm_edit, me)
         if uv_layer is None:
             uv_layer = bm_edit.loops.layers.uv.verify()

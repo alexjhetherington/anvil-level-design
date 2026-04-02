@@ -19,7 +19,10 @@ import bpy
 import bmesh
 from mathutils import Vector
 
-from ..utils import is_level_design_workspace, debug_log, are_verts_coplanar, get_render_active_uv_layer, compute_normal_from_verts
+from ..core.logging import debug_log
+from ..core.workspace_check import is_level_design_workspace
+from ..core.geometry import are_verts_coplanar, compute_normal_from_verts
+from ..core.uv_layers import get_render_active_uv_layer
 
 from .texture_apply import set_uv_from_other_face
 

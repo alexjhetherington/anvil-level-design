@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Operator
 
-from ..utils import (
+from ..core.materials import (
     find_material_with_image,
     get_texture_node_from_material,
     get_principled_bsdf_from_material,

@@ -12,7 +12,8 @@ from bpy.types import Operator
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from ..utils import is_level_design_workspace, debug_log
+from ..core.logging import debug_log
+from ..core.workspace_check import is_level_design_workspace
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ import os
 
 import bpy
 
-from .utils import LEVEL_DESIGN_WORKSPACE_NAME, HOTSPOT_MAPPING_WORKSPACE_NAME
+from .core.workspace_check import LEVEL_DESIGN_WORKSPACE_NAME, HOTSPOT_MAPPING_WORKSPACE_NAME
 
 
 # Workspace and scene setup flow

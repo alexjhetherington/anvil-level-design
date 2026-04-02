@@ -3,7 +3,7 @@ import unittest
 import bpy
 from mathutils import Quaternion, Vector
 
-from ..utils import LEVEL_DESIGN_WORKSPACE_NAME
+from ..core.workspace_check import LEVEL_DESIGN_WORKSPACE_NAME
 from ..workspace import create_level_design_workspace
 
 # Set by run_tests.py when --save flag is used

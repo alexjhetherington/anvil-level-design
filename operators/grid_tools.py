@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Operator
 
-from ..utils import is_level_design_workspace
+from ..core.workspace_check import is_level_design_workspace
 
 # Precalculated grid scale steps (doubling / halving)
 GRID_SCALES = [

@@ -3,8 +3,9 @@ import os
 import bpy
 import bmesh
 
-from ..utils import create_material_with_image, find_material_with_image, face_aligned_project
-from ..properties import apply_uv_to_face
+from ..core.materials import create_material_with_image, find_material_with_image
+from ..core.uv_projection import face_aligned_project
+from ..core.uv_projection import apply_uv_to_face
 
 TEXTURE_PATH = os.path.join(os.path.dirname(__file__), "dev_orange_wall.png")
 

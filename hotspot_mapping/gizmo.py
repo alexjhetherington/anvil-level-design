@@ -14,7 +14,8 @@ from gpu_extras.batch import batch_for_shader
 
 from . import json_storage
 from .properties import SNAP_SIZES
-from ..utils import debug_log, is_hotspot_mapping_workspace
+from ..core.logging import debug_log
+from ..core.workspace_check import is_hotspot_mapping_workspace
 
 
 # ---------------------------------------------------------------------------

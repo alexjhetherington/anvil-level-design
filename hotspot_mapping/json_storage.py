@@ -18,7 +18,7 @@ import bpy
 import json
 import os
 
-from ..utils import debug_log
+from ..core.logging import debug_log
 
 
 # JSON schema version
