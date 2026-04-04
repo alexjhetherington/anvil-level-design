@@ -7,6 +7,7 @@
 - Fix (I think) Face snapping (T on an individual face)  on irregular faces causing sheer 
 - Improve mapping of shader to texture file (helps with custom shaders)
 - Large code organisation changes (bug risk!)
+- Fix hotspot seam issues (introduced in 1.5.0)
 
 ## 1.5.0
 - BREAKING CHANGE (hotspot definitions)
