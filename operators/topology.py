@@ -361,7 +361,9 @@ def mark_seams_for_genus_zero(bm, group):
 def get_boundary_edges_for_group(group):
     """Get all boundary edges of a face group.
 
-    Boundary edges are edges that have only one face in the group.
+    Boundary edges are edges that have only one face in the group,
+    OR interior seam edges (both faces in group but marked as seam),
+    since seams also act as UV boundaries.
 
     Args:
         group: Group dict with 'faces'
@@ -376,6 +378,8 @@ def get_boundary_edges_for_group(group):
         for edge in face.edges:
             faces_in_group = sum(1 for f in edge.link_faces if f in faces)
             if faces_in_group == 1:
+                boundary_edges.add(edge)
+            elif faces_in_group == 2 and edge.seam:
                 boundary_edges.add(edge)
 
     return boundary_edges

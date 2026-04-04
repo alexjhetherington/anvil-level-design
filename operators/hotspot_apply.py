@@ -568,7 +568,9 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
 def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
     """Two-pass BFS grid UV generation with averaged row/column dimensions.
 
-    Pass 1: BFS to assign integer grid coordinates (col, row) to each vertex.
+    Pass 1: BFS to assign integer grid coordinates (col, row) to each loop.
+    Uses loops (not verts) so that seam-split vertices get independent grid
+    coordinates on each side of the seam (e.g. a ring of quads cut by a seam).
     Pass 2: Measure 3D edge lengths per row/column, average them, then assign
     UVs from cumulative averaged dimensions.  This produces consistent results
     regardless of which face the BFS starts from.
@@ -579,22 +581,32 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
         faces: list of quad BMFaces forming the grid
         uv_layer: BMesh UV layer to write to
         edge_faces: dict of edge -> list of faces (adjacency within the grid)
+
+    Returns:
+        True if all loops were assigned grid positions, False otherwise.
     """
     first_face = faces[0]
     first_loops = list(first_face.loops)
 
-    # --- Pass 1: BFS to assign grid coordinates to vertices ---
-    vert_pos = {}
-    vert_pos[first_loops[0].vert] = (0, 0)
-    vert_pos[first_loops[1].vert] = (1, 0)
-    vert_pos[first_loops[2].vert] = (1, 1)
-    vert_pos[first_loops[3].vert] = (0, 1)
+    # --- Pass 1: BFS to assign grid coordinates per loop ---
+    # Keyed by loop so the same BMVert can have different grid coords on
+    # each side of a seam (different loops reference the same vert).
+    loop_pos = {}
+    loop_pos[first_loops[0]] = (0, 0)
+    loop_pos[first_loops[1]] = (1, 0)
+    loop_pos[first_loops[2]] = (1, 1)
+    loop_pos[first_loops[3]] = (0, 1)
+
+    # Helper: build vert -> loop lookup for a face
+    def vert_to_loop(face):
+        return {l.vert: l for l in face.loops}
 
     visited = {first_face}
     queue = [first_face]
 
     while queue:
         current = queue.pop(0)
+        cur_vtl = vert_to_loop(current)
 
         for edge in current.edges:
             for neighbor in edge_faces.get(edge, []):
@@ -602,57 +614,71 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
                     continue
 
                 sv0, sv1 = edge.verts
-                if sv0 not in vert_pos or sv1 not in vert_pos:
+                cur_l0 = cur_vtl.get(sv0)
+                cur_l1 = cur_vtl.get(sv1)
+                if cur_l0 not in loop_pos or cur_l1 not in loop_pos:
                     continue
 
-                p0 = vert_pos[sv0]
-                p1 = vert_pos[sv1]
-                shared = {sv0, sv1}
+                p0 = loop_pos[cur_l0]
+                p1 = loop_pos[cur_l1]
+                shared_verts = {sv0, sv1}
+
+                nb_vtl = vert_to_loop(neighbor)
+                nb_loops = list(neighbor.loops)
+
+                # Copy shared vert positions to neighbor's loops
+                loop_pos[nb_vtl[sv0]] = p0
+                loop_pos[nb_vtl[sv1]] = p1
 
                 # Determine extension direction from the current face
-                cur_verts_pos = [vert_pos[l.vert] for l in current.loops]
-                nb_loops = list(neighbor.loops)
+                cur_loops_pos = [loop_pos[l] for l in current.loops]
 
                 if p0[1] == p1[1]:
                     # Horizontal shared edge (same row)
                     shared_row = p0[1]
-                    cur_other_row = next(r for (_, r) in cur_verts_pos if r != shared_row)
+                    cur_other_row = next(r for (_, r) in cur_loops_pos if r != shared_row)
                     new_row = shared_row + (shared_row - cur_other_row)
 
                     for i, loop in enumerate(nb_loops):
-                        if loop.vert not in shared and loop.vert not in vert_pos:
+                        if loop.vert not in shared_verts and loop not in loop_pos:
                             prev_v = nb_loops[(i - 1) % 4].vert
                             next_v = nb_loops[(i + 1) % 4].vert
-                            adj = prev_v if prev_v in shared else next_v
-                            vert_pos[loop.vert] = (vert_pos[adj][0], new_row)
+                            adj_vert = prev_v if prev_v in shared_verts else next_v
+                            loop_pos[loop] = (loop_pos[nb_vtl[adj_vert]][0], new_row)
 
                 elif p0[0] == p1[0]:
                     # Vertical shared edge (same column)
                     shared_col = p0[0]
-                    cur_other_col = next(c for (c, _) in cur_verts_pos if c != shared_col)
+                    cur_other_col = next(c for (c, _) in cur_loops_pos if c != shared_col)
                     new_col = shared_col + (shared_col - cur_other_col)
 
                     for i, loop in enumerate(nb_loops):
-                        if loop.vert not in shared and loop.vert not in vert_pos:
+                        if loop.vert not in shared_verts and loop not in loop_pos:
                             prev_v = nb_loops[(i - 1) % 4].vert
                             next_v = nb_loops[(i + 1) % 4].vert
-                            adj = prev_v if prev_v in shared else next_v
-                            vert_pos[loop.vert] = (new_col, vert_pos[adj][1])
+                            adj_vert = prev_v if prev_v in shared_verts else next_v
+                            loop_pos[loop] = (new_col, loop_pos[nb_vtl[adj_vert]][1])
 
                 visited.add(neighbor)
                 queue.append(neighbor)
 
+    # Check all loops got grid positions (fails for non-grid topologies)
+    for face in faces:
+        for loop in face.loops:
+            if loop not in loop_pos:
+                return False
+
     # --- Pass 2: Measure, average, and assign UVs ---
 
     # Normalize grid coordinates to 0-based
-    min_col = min(c for c, r in vert_pos.values())
-    min_row = min(r for c, r in vert_pos.values())
+    min_col = min(c for c, r in loop_pos.values())
+    min_row = min(r for c, r in loop_pos.values())
     if min_col != 0 or min_row != 0:
-        vert_pos = {v: (c - min_col, r - min_row) for v, (c, r) in vert_pos.items()}
+        loop_pos = {l: (c - min_col, r - min_row) for l, (c, r) in loop_pos.items()}
 
-    max_col = max(c for c, r in vert_pos.values())
-    max_row = max(r for c, r in vert_pos.values())
-    num_cols = max_col  # face columns (vert indices go 0..num_cols)
+    max_col = max(c for c, r in loop_pos.values())
+    max_row = max(r for c, r in loop_pos.values())
+    num_cols = max_col  # face columns (loop indices go 0..num_cols)
     num_rows = max_row
 
     # Collect width/height measurements from each face
@@ -660,15 +686,17 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
     row_heights = [[] for _ in range(num_rows)]
 
     for face in faces:
-        fc = min(vert_pos[v][0] for v in face.verts)
-        fr = min(vert_pos[v][1] for v in face.verts)
+        face_loops = list(face.loops)
+        fc = min(loop_pos[l][0] for l in face_loops)
+        fr = min(loop_pos[l][1] for l in face_loops)
 
         h_lengths = []
         v_lengths = []
+        fl_vtl = vert_to_loop(face)
         for e in face.edges:
             ev0, ev1 = e.verts
-            gp0 = vert_pos[ev0]
-            gp1 = vert_pos[ev1]
+            gp0 = loop_pos[fl_vtl[ev0]]
+            gp1 = loop_pos[fl_vtl[ev1]]
             length = (ev0.co - ev1.co).length
 
             if gp0[1] == gp1[1]:
@@ -702,8 +730,10 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
     # Assign UVs
     for face in faces:
         for loop in face.loops:
-            gc, gr = vert_pos[loop.vert]
+            gc, gr = loop_pos[loop]
             loop[uv_layer].uv = Vector((cum_x[gc], cum_y[gr]))
+
+    return True
 
 
 def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
@@ -735,8 +765,22 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
         for edge in face.edges:
             edge_faces.setdefault(edge, []).append(face)
 
-    # Run shared BFS propagation
-    _bfs_propagate_grid_uvs(island, uv_layer, edge_faces)
+    # Build a seam-filtered adjacency for BFS: exclude interior seam edges
+    # so the grid walk doesn't wrap around (e.g. a ring of quads with a seam).
+    bfs_edge_faces = {}
+    for edge, faces_on_edge in edge_faces.items():
+        if edge.seam and len(faces_on_edge) == 2:
+            continue
+        bfs_edge_faces[edge] = faces_on_edge
+
+    # Run shared BFS propagation (using seam-filtered adjacency)
+    if not _bfs_propagate_grid_uvs(island, uv_layer, bfs_edge_faces):
+        debug_log(f"[try_make_multi_quad_into_rectangle] BFS grid failed (non-grid topology)")
+        return {
+            'success': False,
+            'aspect_ratio': 0.0,
+            'reason': 'not_rectangular',
+        }
 
     # Calculate final aspect ratio from resulting UVs
     min_u = float('inf')
@@ -763,15 +807,55 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
 
     # Verify the faces form a rectangular grid. A rectangular grid of quads
     # has exactly 4 corner vertices (vertices touching exactly 1 face in the
-    # island). An L-shape or other non-rectangular arrangement has more.
-    vert_face_count = {}
+    # island). Seam edges split a vertex in UV space, so a vertex on a seam
+    # can count as multiple UV corners (e.g. a ring of quads with one seam
+    # has 2 seam vertices each contributing 2 corners = 4 total).
+    # For each vertex, collect which island faces touch it
+    vert_faces = {}
     for face in island:
         for vert in face.verts:
-            vert_face_count[vert] = vert_face_count.get(vert, 0) + 1
+            vert_faces.setdefault(vert, []).append(face)
 
-    corner_count = sum(1 for count in vert_face_count.values() if count == 1)
+    # Build set of seam edges that are interior to the island (both faces present)
+    interior_seam_edges = set()
+    for edge, faces_on_edge in edge_faces.items():
+        if edge.seam and len(faces_on_edge) == 2:
+            interior_seam_edges.add(edge)
+
+    corner_count = 0
+    for vert, faces_touching in vert_faces.items():
+        # Group this vertex's faces by connectivity through non-seam edges.
+        # Two faces are in the same group if they share an edge at this vertex
+        # that is not a seam and is interior to the island.
+        face_set = set(faces_touching)
+        visited = set()
+        for face in faces_touching:
+            if face in visited:
+                continue
+            # BFS/flood from this face through non-seam edges at this vertex
+            group = []
+            queue = [face]
+            visited.add(face)
+            while queue:
+                current = queue.pop()
+                group.append(current)
+                for edge in current.edges:
+                    if vert not in edge.verts:
+                        continue
+                    if edge in interior_seam_edges:
+                        continue
+                    for neighbor in edge_faces.get(edge, []):
+                        if neighbor in visited or neighbor not in face_set:
+                            continue
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            # A group with exactly 1 face means this is a UV corner
+            if len(group) == 1:
+                corner_count += 1
 
     if corner_count != 4:
+        debug_log(f"[try_make_multi_quad_into_rectangle] Not rectangular: "
+                  f"corner_count={corner_count}, interior_seams={len(interior_seam_edges)}")
         return {
             'success': False,
             'aspect_ratio': 0.0,
@@ -853,9 +937,13 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     bpy.ops.uv.unwrap(method='CONFORMAL', margin=0.001)
     debug_log(f"[Hotspot Perf] Phase 2 - UV unwrap (CONFORMAL): {time.perf_counter() - t0:.4f}s")
 
-    # Phase 3: Detect UV islands and categorize by geometry type and size
+    # Phase 3: Use quad groups from Phase 1 directly as islands.
+    # (UV-connectivity detection would split groups at seam edges, since the
+    # unwrap produces different UV coords on each side of a seam.)
     t0 = time.perf_counter()
-    multi_quad_islands, single_quad_islands, ngon_islands = get_uv_islands(bm, hotspottable_faces, uv_layer)
+    multi_quad_islands = [list(g) for g in quad_groups if len(g) > 1]
+    single_quad_islands = [[f] for g in quad_groups if len(g) == 1 for f in g]
+    ngon_islands = [[f] for f in non_quad_faces]
     debug_log(f"[Hotspot] Found {len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon islands")
     debug_log(f"[Hotspot Perf] Phase 3 - Island detection: {time.perf_counter() - t0:.4f}s ({len(multi_quad_islands)} multi-quad, {len(single_quad_islands)} single-quad, {len(ngon_islands)} ngon)")
 
