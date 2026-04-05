@@ -1,5 +1,6 @@
 import bpy
 import bmesh
+import math
 import time
 from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty, EnumProperty, CollectionProperty
 
@@ -611,6 +612,16 @@ def register():
         subtype='FACTOR',
     )
 
+    # Per-object seam angle threshold for hotspot topology grouping (stored in radians, displayed as degrees)
+    bpy.types.Object.anvil_hotspot_seam_angle = FloatProperty(
+        name="Seam Angle",
+        description="Maximum angle between face normals before adding a seam. Lower values create more groups, higher values combine more faces",
+        default=math.radians(33),
+        min=0.0,
+        max=math.pi,
+        subtype='ANGLE',
+    )
+
     # Per-object auto hotspot toggle
     bpy.types.Object.anvil_auto_hotspot = BoolProperty(
         name="Auto Hotspot",
@@ -622,6 +633,7 @@ def register():
 
 def unregister():
     del bpy.types.Object.anvil_auto_hotspot
+    del bpy.types.Object.anvil_hotspot_seam_angle
     del bpy.types.Object.anvil_hotspot_size_weight
     del bpy.types.Object.anvil_allow_combined_faces
     del bpy.types.Object.anvil_uv_map_settings

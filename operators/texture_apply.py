@@ -592,6 +592,7 @@ def _invoke_apply_setup(op, context, event):
     op._auto_hotspot = obj.anvil_auto_hotspot
     op._allow_combined_faces = obj.anvil_allow_combined_faces
     op._size_weight = obj.anvil_hotspot_size_weight
+    op._seam_angle = obj.anvil_hotspot_seam_angle
     op._painted_face_indices = set()
     op._faces_previously_hotspottable = set()
 
@@ -1097,7 +1098,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                 apply_hotspots_to_mesh(
                     bm, me, all_hotspot_faces,
                     self._allow_combined_faces, self._obj_matrix,
-                    self._ppm, self._size_weight
+                    self._ppm, self._size_weight, self._seam_angle
                 )
 
                 restore_face_selection(bm, id_layer, selected_ids, active_id)
@@ -1123,7 +1124,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
                     apply_hotspots_to_mesh(
                         bm, me, all_hotspot_faces,
                         self._allow_combined_faces, self._obj_matrix,
-                        self._ppm, self._size_weight
+                        self._ppm, self._size_weight, self._seam_angle
                     )
 
                     restore_face_selection(bm, id_layer, selected_ids, active_id)
@@ -1252,10 +1253,11 @@ class pick_image_from_face(Operator):
 
                 allow_combined_faces = edit_obj.anvil_allow_combined_faces
                 size_weight = edit_obj.anvil_hotspot_size_weight
+                seam_angle = edit_obj.anvil_hotspot_seam_angle
 
                 apply_hotspots_to_mesh(
                     bm_edit, me, all_hotspot_faces, allow_combined_faces,
-                    edit_obj.matrix_world, ppm, size_weight
+                    edit_obj.matrix_world, ppm, size_weight, seam_angle
                 )
 
                 restore_face_selection(bm_edit, id_layer, selected_ids, active_id)
@@ -1274,10 +1276,11 @@ class pick_image_from_face(Operator):
 
                     allow_combined_faces = edit_obj.anvil_allow_combined_faces
                     size_weight = edit_obj.anvil_hotspot_size_weight
+                    seam_angle = edit_obj.anvil_hotspot_seam_angle
 
                     apply_hotspots_to_mesh(
                         bm_edit, me, all_hotspot_faces, allow_combined_faces,
-                        edit_obj.matrix_world, ppm, size_weight
+                        edit_obj.matrix_world, ppm, size_weight, seam_angle
                     )
 
                     restore_face_selection(bm_edit, id_layer, selected_ids, active_id)

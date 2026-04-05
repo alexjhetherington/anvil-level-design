@@ -12,9 +12,6 @@ from mathutils import Vector
 
 from .topology import get_quad_islands
 
-# Angle threshold for seam detection in hotspot mapping (in radians)
-SEAM_ANGLE = math.radians(30)
-
 # Angle threshold for floor/ceiling classification (10 degrees from vertical)
 FLOOR_CEILING_ANGLE_THRESHOLD = math.radians(10)
 
@@ -872,7 +869,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, uv_layer=None, override_hotspot=None):
+def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pixels_per_meter, size_weight, seam_angle, uv_layer=None, override_hotspot=None):
     import time
     t_total_start = time.perf_counter()
 
@@ -923,7 +920,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     # treats non-quads as blocking boundaries, and marks minimal cut graph seams
     t0 = time.perf_counter()
     debug_log(f"[Hotspot] Processing topology for {len(hotspottable_faces)} faces")
-    quad_groups, non_quad_faces = get_quad_islands(bm, hotspottable_faces, SEAM_ANGLE)
+    quad_groups, non_quad_faces = get_quad_islands(bm, hotspottable_faces, seam_angle)
     debug_log(f"[Hotspot] Created {len(quad_groups)} quad groups, {len(non_quad_faces)} non-quad faces")
     debug_log(f"[Hotspot Perf] Phase 1 - Topology (get_quad_islands): {time.perf_counter() - t0:.4f}s ({len(quad_groups)} groups, {len(non_quad_faces)} non-quads)")
 
@@ -1208,6 +1205,7 @@ class LEVELDESIGN_OT_apply_specific_hotspot(Operator):
         applied_count, skipped, _ = apply_hotspots_to_mesh(
             bm, me, selected_faces, obj.anvil_allow_combined_faces,
             obj.matrix_world, props.pixels_per_meter, obj.anvil_hotspot_size_weight,
+            obj.anvil_hotspot_seam_angle,
             override_hotspot=override,
         )
 
@@ -1532,9 +1530,10 @@ class LEVELDESIGN_OT_apply_hotspot(Operator):
         allow_combined_faces = obj.anvil_allow_combined_faces
         size_weight = obj.anvil_hotspot_size_weight
 
+        seam_angle = obj.anvil_hotspot_seam_angle
         applied_count, skipped_no_hotspot, skipped_not_quad = apply_hotspots_to_mesh(
             bm, me, faces_to_process, allow_combined_faces,
-            obj.matrix_world, props.pixels_per_meter, size_weight
+            obj.matrix_world, props.pixels_per_meter, size_weight, seam_angle
         )
 
         # Restore original face selection (only relevant if staying in edit mode)

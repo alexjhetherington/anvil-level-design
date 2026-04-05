@@ -1,5 +1,9 @@
 # Anvil Level Design Changelog
 
+# 1.5.2
+- Allow users to customise combine face angle limit (hotspotting)
+- Default seam angle is 33d
+
 ## 1.5.1
 - Add vignette to texture snapping modes
 - Add quad grid texture snapping (T with a grid of quads selected)

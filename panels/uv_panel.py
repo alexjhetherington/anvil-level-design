@@ -450,7 +450,8 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
                 depress=obj.anvil_allow_combined_faces,
             )
 
-            main_col.label(text="Random Selection Priority")
+            main_col.label(text="Constraints")
+            main_col.prop(obj, "anvil_hotspot_seam_angle", text="Combine Face Angle Limit", slider=True)
             main_col.prop(obj, "anvil_hotspot_size_weight", text="\u2190 Aspect / Area \u2192")
         else:
             main_col.label(text="No mesh object")

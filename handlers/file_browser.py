@@ -221,11 +221,12 @@ def apply_texture_from_file_browser():
 
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
+                seam_angle = obj.anvil_hotspot_seam_angle
 
                 debug_log(f"[FileBrowser] Applying hotspots to {len(all_hotspot_faces)} faces (all hotspot faces)")
                 apply_hotspots_to_mesh(
                     bm, obj.data, all_hotspot_faces, allow_combined_faces,
-                    obj.matrix_world, ppm, size_weight
+                    obj.matrix_world, ppm, size_weight, seam_angle
                 )
 
                 restore_face_selection(bm, id_layer, selected_ids, active_id)
@@ -242,11 +243,12 @@ def apply_texture_from_file_browser():
 
                 allow_combined_faces = obj.anvil_allow_combined_faces
                 size_weight = obj.anvil_hotspot_size_weight
+                seam_angle = obj.anvil_hotspot_seam_angle
 
                 debug_log(f"[FileBrowser] Re-hotspotting {len(all_hotspot_faces)} faces (island structure changed)")
                 apply_hotspots_to_mesh(
                     bm, obj.data, all_hotspot_faces, allow_combined_faces,
-                    obj.matrix_world, ppm, size_weight
+                    obj.matrix_world, ppm, size_weight, seam_angle
                 )
 
                 restore_face_selection(bm, id_layer, selected_ids, active_id)
