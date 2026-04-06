@@ -37,12 +37,19 @@ _VERTEX_SOURCE = (
     "  world_pos = position;"
     "  face_nrm = normal;"
     "  gl_Position = viewProjectionMatrix * vec4(position, 1.0);"
+    "  gl_Position.z -= 0.000001 * gl_Position.w;"
     "}"
 )
 
 _FRAGMENT_SOURCE = (
     "void main()"
     "{"
+    "  float dist_to_cam = length(world_pos - cam_pos);"
+    "  float fade = 1.0 - smoothstep(fade_start, fade_end, dist_to_cam);"
+    "  if (fade < 0.001) {"
+    "    discard;"
+    "  }"
+    ""
     "  vec3 dpdx = dFdx(world_pos);"
     "  vec3 dpdy = dFdy(world_pos);"
     ""
@@ -85,7 +92,7 @@ _FRAGMENT_SOURCE = (
     "    discard;"
     "  }"
     ""
-    "  FragColor = vec4(0.7, 0.7, 0.7, line_val * opacity);"
+    "  FragColor = vec4(0.7, 0.7, 0.7, line_val * opacity * fade);"
     "}"
 )
 
@@ -110,6 +117,9 @@ def _ensure_shader():
         shader_info.push_constant('FLOAT', "grid_size")
         shader_info.push_constant('FLOAT', "line_width")
         shader_info.push_constant('FLOAT', "opacity")
+        shader_info.push_constant('VEC3', "cam_pos")
+        shader_info.push_constant('FLOAT', "fade_start")
+        shader_info.push_constant('FLOAT', "fade_end")
         shader_info.vertex_in(0, 'VEC3', "position")
         shader_info.vertex_in(1, 'VEC3', "normal")
         shader_info.vertex_out(vert_out)
@@ -337,12 +347,19 @@ def _draw_grid_overlay():
     gpu.state.depth_mask_set(False)
     gpu.state.face_culling_set('NONE')
 
+    # Camera position for distance fade
+    view_matrix_inv = rv3d.view_matrix.inverted()
+    cam_location = view_matrix_inv.translation
+
     try:
         _shader.bind()
         _shader.uniform_float("viewProjectionMatrix", view_proj)
         _shader.uniform_float("grid_size", grid_size)
         _shader.uniform_float("line_width", 1.5)
         _shader.uniform_float("opacity", 0.3)
+        _shader.uniform_float("cam_pos", (cam_location.x, cam_location.y, cam_location.z))
+        _shader.uniform_float("fade_start", 50.0)
+        _shader.uniform_float("fade_end", 120.0)
         for batch in batches:
             batch.draw(_shader)
 
