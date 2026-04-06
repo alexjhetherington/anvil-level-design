@@ -80,13 +80,13 @@ def snap_to_grid_on_face(hit_location, face_normal, grid_size):
     return snapped
 
 
-def snap_relative_to_origin(point, origin, grid_size, local_x, local_y):
+def snap_relative_to_origin(point, origin, grid_size, local_x, local_y, plane_normal):
     """
-    Snap a point relative to an origin point using local axes.
+    Snap a point relative to an origin point using world-aligned axes.
 
-    This is used for second vertex and depth snapping.
-    Instead of snapping to absolute grid positions, we snap the
-    distance from the origin to grid increments.
+    This is used for second vertex snapping. Snaps along the same
+    world-aligned axes that the grid overlay uses, so the drawn
+    rectangle visually matches the grid on angled faces.
 
     NOTE: This method is intentionally isolated for future modifications.
 
@@ -94,25 +94,36 @@ def snap_relative_to_origin(point, origin, grid_size, local_x, local_y):
         point: The point to snap
         origin: The reference origin (first vertex)
         grid_size: Current grid size
-        local_x: Local X axis for the rectangle
-        local_y: Local Y axis for the rectangle
+        local_x: Local X axis for the rectangle (unused, kept for API consistency)
+        local_y: Local Y axis for the rectangle (unused, kept for API consistency)
+        plane_normal: The face normal, used to determine world-aligned snap axes
 
     Returns:
         Vector: Snapped position
     """
-    # Calculate offset from origin in local space
+    normal_abs = Vector([abs(n) for n in plane_normal])
+    n = plane_normal
     offset = point - origin
 
-    # Project onto local axes
-    dx = offset.dot(local_x)
-    dy = offset.dot(local_y)
+    # Snap along world-aligned axes (matching grid overlay), then solve
+    # for the dominant-normal axis using the plane equation: n · offset = 0
+    if normal_abs.x >= normal_abs.y and normal_abs.x >= normal_abs.z:
+        # X-dominant: snap Y and Z offsets, solve for X
+        dy = round(offset.y / grid_size) * grid_size
+        dz = round(offset.z / grid_size) * grid_size
+        dx = -(n.y * dy + n.z * dz) / n.x
+    elif normal_abs.y >= normal_abs.x and normal_abs.y >= normal_abs.z:
+        # Y-dominant: snap X and Z offsets, solve for Y
+        dx = round(offset.x / grid_size) * grid_size
+        dz = round(offset.z / grid_size) * grid_size
+        dy = -(n.x * dx + n.z * dz) / n.y
+    else:
+        # Z-dominant: snap X and Y offsets, solve for Z
+        dx = round(offset.x / grid_size) * grid_size
+        dy = round(offset.y / grid_size) * grid_size
+        dz = -(n.x * dx + n.y * dy) / n.z
 
-    # Snap the distances
-    snapped_dx = round(dx / grid_size) * grid_size
-    snapped_dy = round(dy / grid_size) * grid_size
-
-    # Reconstruct the snapped point
-    return origin + local_x * snapped_dx + local_y * snapped_dy
+    return origin + Vector((dx, dy, dz))
 
 
 def snap_depth_relative(depth, grid_size):
@@ -253,7 +264,7 @@ def calculate_second_vertex_snap(context, event, first_vertex, local_x, local_y,
     grid_size = utils.get_grid_size(context)
 
     if utils.is_snapping_enabled(context):
-        return snap_relative_to_origin(point, first_vertex, grid_size, local_x, local_y)
+        return snap_relative_to_origin(point, first_vertex, grid_size, local_x, local_y, plane_normal)
     else:
         return point
 
@@ -316,17 +327,26 @@ def calculate_width_snap(context, event, first_vertex, line_length, local_x, loc
     if point is None:
         return None
 
-    # Extract only the local_y component (width) relative to first_vertex
+    # Compute the second vertex with fixed line_length along local_x,
+    # variable width along local_y
     offset = point - first_vertex
     dy = offset.dot(local_y)
 
     grid_size = utils.get_grid_size(context)
 
     if utils.is_snapping_enabled(context):
-        dy = round(dy / grid_size) * grid_size
-
-    # Reconstruct: fixed line_length along local_x, variable width along local_y
-    return first_vertex + local_x * line_length + local_y * dy
+        # Snap using world-aligned axes to match grid overlay on angled faces.
+        # Compute the candidate second vertex, then snap it on the face plane.
+        candidate = first_vertex + local_x * line_length + local_y * dy
+        snapped = snap_relative_to_origin(
+            candidate, first_vertex, grid_size, local_x, local_y, plane_normal
+        )
+        # Preserve the fixed line_length along local_x
+        snapped_offset = snapped - first_vertex
+        snapped_dy = snapped_offset.dot(local_y)
+        return first_vertex + local_x * line_length + local_y * snapped_dy
+    else:
+        return first_vertex + local_x * line_length + local_y * dy
 
 
 def calculate_depth_from_mouse_3d(context, event, first_vertex, second_vertex, local_z, initial_mouse_pos):

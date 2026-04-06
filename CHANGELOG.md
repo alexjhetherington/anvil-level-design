@@ -4,6 +4,7 @@
 - Geometry grid is now triplanar
 - Improve z fighting on grid overlay
 - Improve edge selection highlighted when grid overlay is on
+- Cube cut / box builder snap to world aligned grid
 
 # 1.5.2
 - Allow users to customise combine face angle limit (hotspotting)
