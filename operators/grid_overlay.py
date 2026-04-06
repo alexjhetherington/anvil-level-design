@@ -34,6 +34,7 @@ _VERTEX_SOURCE = (
     "void main()"
     "{"
     "  world_pos = position;"
+    "  face_nrm = normal;"
     "  gl_Position = viewProjectionMatrix * vec4(position, 1.0);"
     "}"
 )
@@ -43,9 +44,6 @@ _FRAGMENT_SOURCE = (
     "{"
     "  vec3 dpdx = dFdx(world_pos);"
     "  vec3 dpdy = dFdy(world_pos);"
-    ""
-    "  vec3 face_normal = normalize(cross(dpdx, dpdy));"
-    "  vec3 abs_normal = abs(face_normal);"
     ""
     "  vec3 grid_coord = world_pos / grid_size;"
     "  vec3 grid_fract = fract(grid_coord + 0.5) - 0.5;"
@@ -64,15 +62,18 @@ _FRAGMENT_SOURCE = (
     "  float line_y = 1.0 - smoothstep(half_w - 0.5, half_w + 0.5, dist_y);"
     "  float line_z = 1.0 - smoothstep(half_w - 0.5, half_w + 0.5, dist_z);"
     ""
-    "  if (abs_normal.x >= abs_normal.y && abs_normal.x >= abs_normal.z) {"
-    "    line_x = 0.0;"
-    "  } else if (abs_normal.y >= abs_normal.x && abs_normal.y >= abs_normal.z) {"
-    "    line_y = 0.0;"
-    "  } else {"
-    "    line_z = 0.0;"
-    "  }"
+    "  vec3 w = pow(abs(face_nrm), vec3(4.0));"
+    "  float wsum = w.x + w.y + w.z;"
+    "  w /= max(wsum, 1e-8);"
     ""
-    "  float line_val = max(max(line_x, line_y), line_z);"
+    "  float grid_yz = max(line_y, line_z);"
+    "  float grid_xz = max(line_x, line_z);"
+    "  float grid_xy = max(line_x, line_y);"
+    "  float line_val = grid_yz * w.x + grid_xz * w.y + grid_xy * w.z;"
+    "  float any_line = max(max(line_x, line_y), line_z);"
+    "  if (any_line > 0.001) {"
+    "    line_val = max(line_val, 0.15 * any_line);"
+    "  }"
     ""
     "  if (line_val < 0.001) {"
     "    discard;"
@@ -96,6 +97,7 @@ def _ensure_shader():
     try:
         vert_out = gpu.types.GPUStageInterfaceInfo("grid_surface_interface")
         vert_out.smooth('VEC3', "world_pos")
+        vert_out.flat('VEC3', "face_nrm")
 
         shader_info = gpu.types.GPUShaderCreateInfo()
         shader_info.push_constant('MAT4', "viewProjectionMatrix")
@@ -103,6 +105,7 @@ def _ensure_shader():
         shader_info.push_constant('FLOAT', "line_width")
         shader_info.push_constant('FLOAT', "opacity")
         shader_info.vertex_in(0, 'VEC3', "position")
+        shader_info.vertex_in(1, 'VEC3', "normal")
         shader_info.vertex_out(vert_out)
         shader_info.fragment_out(0, 'VEC4', "FragColor")
 
@@ -170,10 +173,25 @@ def _collect_mesh_batches(depsgraph, shader):
         tri_idx = np.empty(tri_count * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get('vertices', tri_idx)
 
+        # Expand to per-triangle vertices (non-indexed) so each triangle
+        # can carry its own flat face normal.
+        tri_positions = world[tri_idx]  # (tri_count*3, 3)
+
+        # Compute face normals from triangle edges
+        tri_verts = tri_positions.reshape(tri_count, 3, 3)
+        edge1 = tri_verts[:, 1] - tri_verts[:, 0]
+        edge2 = tri_verts[:, 2] - tri_verts[:, 0]
+        normals = np.cross(edge1, edge2)
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = normals / np.maximum(lengths, 1e-8)
+
+        # Repeat each normal 3 times (once per vertex of the triangle)
+        tri_normals = np.repeat(normals, 3, axis=0)  # (tri_count*3, 3)
+
         batch = batch_for_shader(
             shader, 'TRIS',
-            {"position": world.tolist()},
-            indices=tri_idx.reshape(-1, 3).tolist(),
+            {"position": tri_positions.tolist(),
+             "normal": tri_normals.tolist()},
         )
         batches.append(batch)
         obj.to_mesh_clear()
