@@ -6,6 +6,7 @@ This avoids reading the viewport depth buffer, so Blender's floor
 grid and other overlays are not affected.
 """
 
+import bmesh
 import bpy
 import gpu
 import numpy as np
@@ -223,36 +224,54 @@ def _draw_edit_edges_on_top(context, depsgraph, region):
         return
 
     try:
-        vert_count = len(mesh.vertices)
-        edge_count = len(mesh.edges)
-        if vert_count == 0 or edge_count == 0:
+        # Use bmesh to access selection state
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table()
+
+        if not bm.verts or not bm.edges:
             return
 
-        # Vertex positions (local space)
-        cos = np.empty(vert_count * 3, dtype=np.float32)
-        mesh.vertices.foreach_get('co', cos)
-        cos = cos.reshape(-1, 3)
-
-        # Transform to world space
         mat = np.array(obj.matrix_world, dtype=np.float32)
-        ones = np.ones((vert_count, 1), dtype=np.float32)
-        cos_h = np.hstack((cos, ones))
-        world = (mat @ cos_h.T).T[:, :3]
 
-        # Expand edge indices into vertex pairs for LINES primitive
-        edge_idx = np.empty(edge_count * 2, dtype=np.int32)
-        mesh.edges.foreach_get('vertices', edge_idx)
-        edge_positions = world[edge_idx]  # (edge_count*2, 3)
+        sel_positions = []
+        unsel_positions = []
+
+        for edge in bm.edges:
+            v0 = np.array(edge.verts[0].co, dtype=np.float32)
+            v1 = np.array(edge.verts[1].co, dtype=np.float32)
+            # Transform to world space
+            p0 = (mat @ np.append(v0, 1.0))[:3]
+            p1 = (mat @ np.append(v1, 1.0))[:3]
+            pair = [p0.tolist(), p1.tolist()]
+            if edge.select:
+                sel_positions.extend(pair)
+            else:
+                unsel_positions.extend(pair)
 
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         shader.uniform_float("viewportSize", (region.width, region.height))
-        shader.uniform_float("lineWidth", 1.5)
-        shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
 
-        batch = batch_for_shader(
-            shader, 'LINES', {"pos": edge_positions.tolist()},
-        )
-        batch.draw(shader)
+        # Draw unselected edges
+        if unsel_positions:
+            shader.uniform_float("lineWidth", 1.0)
+            shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
+            batch = batch_for_shader(
+                shader, 'LINES', {"pos": unsel_positions},
+            )
+            batch.draw(shader)
+
+        # Draw selected edges in Blender's theme selection color
+        if sel_positions:
+            theme_3d = context.preferences.themes[0].view_3d
+            sel_color = theme_3d.edge_mode_select
+            shader.uniform_float("lineWidth", 1.0)
+            shader.uniform_float("color",
+                                 (sel_color[0], sel_color[1], sel_color[2], 1.0))
+            batch = batch_for_shader(
+                shader, 'LINES', {"pos": sel_positions},
+            )
+            batch.draw(shader)
     finally:
         eval_obj.to_mesh_clear()
 

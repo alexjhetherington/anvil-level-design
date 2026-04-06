@@ -2,6 +2,7 @@
 
 # 1.5.3
 - Geometry grid is now triplanar
+- Improve edge selection highlighted when grid view is on
 
 # 1.5.2
 - Allow users to customise combine face angle limit (hotspotting)
