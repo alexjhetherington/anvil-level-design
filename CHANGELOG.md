@@ -3,6 +3,7 @@
 # 1.6.0
 - Add UV TRANSFORM mode.
 - Shift+L adds connected island to selection
+- Default rotation snapping on 
 
 # 1.5.3
 - Geometry grid is now triplanar

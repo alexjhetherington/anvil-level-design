@@ -117,6 +117,7 @@ def setup_addon_workspaces():
     scene.unit_settings.system = 'NONE'
     scene.tool_settings.use_snap = True
     scene.tool_settings.snap_elements = {'INCREMENT'}
+    scene.tool_settings.use_snap_rotate = True
 
     # Set grid subdivisions to 1 on all 3D viewports
     for window in bpy.context.window_manager.windows:
