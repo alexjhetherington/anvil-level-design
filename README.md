@@ -82,6 +82,8 @@ Select a face and press T to enter Face Snapping UV Mode. In this mode by defaul
 
 Select multiple quad faces (1 island only) to enter Grid Snapping UV Mode. The controls are the same as above, but the snapping will apply across the quad grid.
 
+Press Shift-T to enter UV Transform Mode. You are able to move and resize the UV on your geometry via handles on a live preview.
+
 ### Hotspot Mapping
 
 Hotspot mapping automatically assigns UV coordinates by matching face shapes to predefined regions on a texture atlas. It allows you to quickly add details to models.

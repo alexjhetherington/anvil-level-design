@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
-# 1.5.4
+# 1.6.0
+- Add UV TRANSFORM mode.
 - Shift+L adds connected island to selection
 
 # 1.5.3
