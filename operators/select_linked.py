@@ -422,6 +422,8 @@ class LEVELDESIGN_OT_select_linked(Operator):
         ],
     )
 
+    extend: bpy.props.BoolProperty()
+
     @classmethod
     def poll(cls, context):
         if not is_level_design_workspace():
@@ -457,17 +459,21 @@ class LEVELDESIGN_OT_select_linked(Operator):
         bvh = BVHTree.FromBMesh(bm)
 
         if self.normal_mode == 'NONE':
-            # L key: plain linked flood-fill, mode-specific
+            # L / Shift+L: plain linked flood-fill, mode-specific
+            extend = self.extend
             if is_edge_mode:
                 return self._do_edge_linked(bm, me, bvh, ray_origin_local,
                                             ray_direction_local, region, rv3d,
-                                            obj.matrix_world, mouse_2d, me.materials)
+                                            obj.matrix_world, mouse_2d, me.materials,
+                                            extend)
             if is_vert_mode:
                 return self._do_vert_linked(bm, me, bvh, ray_origin_local,
                                             ray_direction_local, region, rv3d,
-                                            obj.matrix_world, mouse_2d, me.materials)
+                                            obj.matrix_world, mouse_2d, me.materials,
+                                            extend)
             return self._do_face_linked(bm, me, bvh, ray_origin_local,
-                                        ray_direction_local, obj.name, me.materials)
+                                        ray_direction_local, obj.name, me.materials,
+                                        extend)
 
         # Ctrl+L / Ctrl+Shift+L: normal-constrained, works in all modes
         if self.normal_mode == 'EXPAND':
@@ -479,14 +485,14 @@ class LEVELDESIGN_OT_select_linked(Operator):
                                       me.materials, select_mode)
 
     def _do_face_linked(self, bm, me, bvh, ray_origin_local, ray_direction_local,
-                        obj_name, materials):
-        """L key in face mode: deselect all, raycast for seed, flood-fill."""
+                        obj_name, materials, extend):
+        """L/Shift+L in face mode: raycast for seed, flood-fill."""
         _reset_linked_state()
 
-        # Always deselect and pick from raycast
-        for f in bm.faces:
-            f.select = False
-        bm.select_flush_mode()
+        if not extend:
+            for f in bm.faces:
+                f.select = False
+            bm.select_flush_mode()
 
         seed = _get_seed_face(bvh, ray_origin_local, ray_direction_local,
                               bm, materials)
@@ -495,7 +501,12 @@ class LEVELDESIGN_OT_select_linked(Operator):
             return {'FINISHED'}
 
         result = _flood_fill_faces(bm, {seed})
-        _select_face_indices(bm, result)
+        if extend:
+            for fi in result:
+                bm.faces[fi].select = True
+            bm.select_flush_mode()
+        else:
+            _select_face_indices(bm, result)
         bmesh.update_edit_mesh(me)
         return {'FINISHED'}
 
@@ -611,16 +622,16 @@ class LEVELDESIGN_OT_select_linked(Operator):
         return {'FINISHED'}
 
     def _do_edge_linked(self, bm, me, bvh, ray_origin_local, ray_direction_local,
-                        region, rv3d, obj_matrix, mouse_2d, materials):
-        """Edge mode: deselect all, raycast for seed, flood-fill linked edges."""
+                        region, rv3d, obj_matrix, mouse_2d, materials, extend):
+        """Edge mode: raycast for seed, flood-fill linked edges."""
         _reset_linked_state()
 
-        # Always deselect and pick from raycast
-        for e in bm.edges:
-            e.select = False
-        for v in bm.verts:
-            v.select = False
-        bm.select_flush_mode()
+        if not extend:
+            for e in bm.edges:
+                e.select = False
+            for v in bm.verts:
+                v.select = False
+            bm.select_flush_mode()
 
         seed = _get_seed_edge(bvh, ray_origin_local, ray_direction_local,
                               bm, materials, region, rv3d, obj_matrix, mouse_2d)
@@ -629,23 +640,28 @@ class LEVELDESIGN_OT_select_linked(Operator):
             return {'FINISHED'}
 
         result = _flood_fill_edges(bm, {seed})
-        for e in bm.edges:
-            e.select = (e.index in result)
-        bm.select_flush_mode()
+        if extend:
+            for ei in result:
+                bm.edges[ei].select = True
+            bm.select_flush_mode()
+        else:
+            for e in bm.edges:
+                e.select = (e.index in result)
+            bm.select_flush_mode()
         bmesh.update_edit_mesh(me)
         return {'FINISHED'}
 
     def _do_vert_linked(self, bm, me, bvh, ray_origin_local, ray_direction_local,
-                        region, rv3d, obj_matrix, mouse_2d, materials):
-        """Vert mode: deselect all, raycast for seed, flood-fill linked verts."""
+                        region, rv3d, obj_matrix, mouse_2d, materials, extend):
+        """Vert mode: raycast for seed, flood-fill linked verts."""
         _reset_linked_state()
 
-        # Always deselect and pick from raycast
-        for v in bm.verts:
-            v.select = False
-        for e in bm.edges:
-            e.select = False
-        bm.select_flush_mode()
+        if not extend:
+            for v in bm.verts:
+                v.select = False
+            for e in bm.edges:
+                e.select = False
+            bm.select_flush_mode()
 
         seed = _get_seed_vert(bvh, ray_origin_local, ray_direction_local,
                               bm, materials, region, rv3d, obj_matrix, mouse_2d)
@@ -654,9 +670,14 @@ class LEVELDESIGN_OT_select_linked(Operator):
             return {'FINISHED'}
 
         result = _flood_fill_verts(bm, {seed})
-        for v in bm.verts:
-            v.select = (v.index in result)
-        bm.select_flush_mode()
+        if extend:
+            for vi in result:
+                bm.verts[vi].select = True
+            bm.select_flush_mode()
+        else:
+            for v in bm.verts:
+                v.select = (v.index in result)
+            bm.select_flush_mode()
         bmesh.update_edit_mesh(me)
         return {'FINISHED'}
 
@@ -678,6 +699,18 @@ def register():
         head=True
     )
     kmi.properties.normal_mode = 'NONE'
+    kmi.properties.extend = False
+    _addon_keymaps.append((km, kmi))
+
+    # Shift+L — add linked island to selection
+    kmi = km.keymap_items.new(
+        LEVELDESIGN_OT_select_linked.bl_idname,
+        'L', 'PRESS',
+        shift=True,
+        head=True
+    )
+    kmi.properties.normal_mode = 'NONE'
+    kmi.properties.extend = True
     _addon_keymaps.append((km, kmi))
 
     # Ctrl+L — select linked by normal (expand)

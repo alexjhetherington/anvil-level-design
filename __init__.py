@@ -178,7 +178,10 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                     elif kmi_addon.idname == "leveldesign.select_linked":
                                         if (hasattr(kmi.properties, "normal_mode") and
                                             hasattr(kmi_addon.properties, "normal_mode") and
-                                            kmi.properties.normal_mode == kmi_addon.properties.normal_mode):
+                                            kmi.properties.normal_mode == kmi_addon.properties.normal_mode and
+                                            hasattr(kmi.properties, "extend") and
+                                            hasattr(kmi_addon.properties, "extend") and
+                                            kmi.properties.extend == kmi_addon.properties.extend):
                                             kmi_user = kmi
                                             break
                                     elif kmi_addon.idname == "leveldesign.align_uv":
@@ -230,10 +233,13 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             display_name = f"{base_name} - {kmi_addon.properties.view_type.title()}"
                         elif kmi_addon.idname == "leveldesign.select_linked":
                             mode = getattr(kmi_addon.properties, "normal_mode", "NONE")
+                            extend = getattr(kmi_addon.properties, "extend", False)
                             if mode == 'EXPAND':
                                 suffix = "Expand"
                             elif mode == 'SHRINK':
                                 suffix = "Shrink"
+                            elif extend:
+                                suffix = "Extend"
                             else:
                                 suffix = "Linked"
                             display_name = f"Select Linked ({suffix})"

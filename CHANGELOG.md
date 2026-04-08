@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.5.4
+- Shift+L adds connected island to selection
+
 # 1.5.3
 - Geometry grid is now triplanar
 - Improve z fighting on grid overlay

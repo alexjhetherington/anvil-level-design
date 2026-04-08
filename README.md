@@ -171,7 +171,9 @@ Ctrl Left mouse paint selects, which is similar to circle select (hold and drag 
 
 Anvil also has its own select connected. Press L while hovering your cursor over a 3d element so select all connected elements.
 
-Press Ctrl-L while hovering your cursor over a 3d element to select all connect elements with matching normals. Press Ctrl-L to add to the selection all faces at normals that are closest to facing the seed face normal. Continued Ctrl-Ls will select further faces. Ctrl-Shift-L will go back a step
+Press Ctrl-L while hovering your cursor over a 3d element to select all connect elements with matching normals. Press Ctrl-L to add to the selection all faces at normals that are closest to facing the seed face normal. Continued Ctrl-Ls will select further faces. Ctrl-Shift-L will go back a step.
+
+Shift-L will add a connected island to the selection.
 
 #### Weld
 
@@ -234,7 +236,7 @@ The grid size is relative to the blender scene length unit (i.e. if you choose u
 
 Shift-G toggles between incremental and grid snap. Generally incremental snap is the most useful, but some operators (especially slides) behave more consistently with grid snapping.
 
-Alt-G toggles the face overlay grid
+Alt-G toggles the face overlay grid.
 
 ### Exporting
 
