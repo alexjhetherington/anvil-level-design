@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.1
+- Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
+
 # 1.6.0
 - Add UV TRANSFORM mode.
 - Shift+L adds connected island to selection

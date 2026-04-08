@@ -268,9 +268,12 @@ If you need non-PBR custom materials use in-engine approaches
 * For Godot - Write an import script to create/find and set external materials for each model material
 * For Unreal - tbd (I'm not an unreal dev)
 
-#### Scaled GLB
+#### New Gltf export settings
 
-A new import mode is provided; scaled GLB. This allows you to globally adjust the scale when exporting as GLB.
+There is an Anvil panel on the default gltf export screen. It adds:
+* Scale
+* Apply Modifiers
+* Separate Loose Meshes (into different objects, valuable for culling)
 
 The quick export button exports the scene with previously used settings, skipping popups.
 
