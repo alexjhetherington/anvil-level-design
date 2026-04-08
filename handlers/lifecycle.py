@@ -206,6 +206,25 @@ def on_save_post(dummy):
         bpy.ops.wm.save_mainfile()
 
 
+def _apply_addon_defaults_to_scene():
+    """Copy addon preference defaults to the current scene's properties."""
+    prefs = bpy.context.preferences.addons.get(__package__.rsplit('.', 1)[0])
+    if not prefs:
+        return
+    pref = prefs.preferences
+    props = bpy.context.scene.level_design_props
+
+    props.pixels_per_meter = pref.pref_pixels_per_meter
+    props.default_interpolation = pref.pref_default_interpolation
+    props.default_texture_as_alpha = pref.pref_default_texture_as_alpha
+    props.default_vertex_colors = pref.pref_default_vertex_colors
+    props.default_roughness = pref.pref_default_roughness
+    props.default_metallic = pref.pref_default_metallic
+    props.default_emission_strength = pref.pref_default_emission_strength
+    props.default_emission_color = pref.pref_default_emission_color[:]
+    props.default_specular = pref.pref_default_specular
+
+
 @persistent
 def on_load_post(dummy):
     """Handler called after a .blend file is loaded."""
@@ -220,6 +239,10 @@ def on_load_post(dummy):
     reset_file_browser()
     _file_loaded_into_edit_depsgraph = True
     reset_mode_tracking()
+
+    # Apply addon preferences as defaults for new (unsaved) files
+    if not bpy.data.filepath:
+        _apply_addon_defaults_to_scene()
 
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
     bpy.app.timers.register(start_file_browser_watcher, first_interval=0.2)

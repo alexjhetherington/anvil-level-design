@@ -61,6 +61,8 @@ The currently selected image is previewed in the side panel; here the texture tr
 
 Default material settings for new textures could be adjusted on the Anvil (Settings) panel.
 
+Default default material settings for new .blend files could be adjusted in the Anvil addon preferences.
+
 Various options for material settings are presented for convenience (e.g. enabling transparency and vertex colours). They target .glb export and may or may not be suitable for your use case.
 
 Fix Alpha Bleed is a utility tool that edits the source image to set transparent pixels to a specified colour, to fix some cases of visible edges on transparent cutout materials (the blender 'premultiply alpha' setting can fix this without editing the source image, but .GLB exports don't support this flag).

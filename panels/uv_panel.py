@@ -771,14 +771,6 @@ class LEVELDESIGN_PT_texture_settings_panel(Panel):
         sub.scale_x = 0.4
         sub.operator("leveldesign.double_pixels", text="x2")
 
-        layout.separator()
-
-        in_object_mode = context.mode == 'OBJECT'
-        row = layout.row()
-        row.enabled = in_object_mode
-        row.operator("leveldesign.cleanup_unused_materials", icon='BRUSH_DATA')
-        if not in_object_mode:
-            layout.label(text="(Requires Object Mode)", icon='INFO')
 
 
 class LEVELDESIGN_PT_default_material_settings_panel(Panel):
@@ -926,6 +918,15 @@ class LEVELDESIGN_PT_debug_panel(Panel):
             depress=context.scene.level_design_props.debug_logging,
             icon='CONSOLE',
         )
+
+        in_object_mode = context.mode == 'OBJECT'
+        row = layout.row()
+        row.enabled = in_object_mode
+        row.operator("leveldesign.cleanup_unused_materials", icon='BRUSH_DATA')
+        if not in_object_mode:
+            layout.label(text="(Requires Object Mode)", icon='INFO')
+
+        layout.separator()
 
         from ..operators.overlap_check import is_overlap_check_active, get_overlap_count
         active = is_overlap_check_active()

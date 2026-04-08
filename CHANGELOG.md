@@ -2,6 +2,7 @@
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
+- Add default default material settings to addon preferences (allows you to define the default material settings for new .blend files)
 
 # 1.6.0
 - Add UV TRANSFORM mode.

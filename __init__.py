@@ -85,8 +85,125 @@ class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_pref_double_pixels(bpy.types.Operator):
+    bl_idname = "leveldesign.pref_double_pixels"
+    bl_label = "x2"
+    bl_description = "Double default pixels per meter"
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        prefs.pref_pixels_per_meter = min(int(prefs.pref_pixels_per_meter * 2), 4096)
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_pref_halve_pixels(bpy.types.Operator):
+    bl_idname = "leveldesign.pref_halve_pixels"
+    bl_label = "/2"
+    bl_description = "Halve default pixels per meter"
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        prefs.pref_pixels_per_meter = max(int(prefs.pref_pixels_per_meter / 2), 1)
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_set_pref_interpolation(bpy.types.Operator):
+    """Set the default interpolation mode in preferences"""
+    bl_idname = "leveldesign.set_pref_interpolation"
+    bl_label = "Set Pref Interpolation"
+
+    interpolation: bpy.props.StringProperty()
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        prefs.pref_default_interpolation = self.interpolation
+        return {'FINISHED'}
+
+
 class LevelDesignPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+
+    # === New File Defaults ===
+    pref_pixels_per_meter: bpy.props.IntProperty(
+        name="Pixels per Meter",
+        description="Default pixels per meter for new files. Per-file setting is in Anvil (Settings) > Texture Settings",
+        default=128,
+        min=1,
+        max=4096,
+    )
+
+    pref_default_interpolation: bpy.props.EnumProperty(
+        name="Default Interpolation",
+        description="Default interpolation mode for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        items=[
+            ('Closest', "Closest", "No interpolation (pixelated)"),
+            ('Linear', "Linear", "Linear interpolation (smooth)"),
+        ],
+        default='Linear',
+    )
+
+    pref_default_texture_as_alpha: bpy.props.BoolProperty(
+        name="Texture as Alpha",
+        description="Default texture-as-alpha for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=False,
+    )
+
+    pref_default_vertex_colors: bpy.props.BoolProperty(
+        name="Vertex Colors",
+        description="Default vertex colors for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=False,
+    )
+
+    pref_default_roughness: bpy.props.FloatProperty(
+        name="Roughness",
+        description="Default roughness for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    pref_default_metallic: bpy.props.FloatProperty(
+        name="Metallic",
+        description="Default metallic for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    pref_default_emission_strength: bpy.props.FloatProperty(
+        name="Emission Strength",
+        description="Default emission strength for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    pref_default_emission_color: bpy.props.FloatVectorProperty(
+        name="Emission Color",
+        description="Default emission color for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        subtype='COLOR',
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+    )
+
+    pref_default_specular: bpy.props.FloatProperty(
+        name="Specular",
+        description="Default specular (IOR Level) for new files. Per-file setting is in Anvil (Settings) > Default Material Settings",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+
+    show_pref_experimental: bpy.props.BoolProperty(
+        name="Experimental Settings",
+        default=False,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -100,6 +217,75 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.operator("leveldesign.create_hotspot_mapping_workspace")
         row.enabled = not workspace.hotspot_mapping_workspace_exists()
+
+        # New File Defaults section
+        layout.separator()
+        layout.label(text="New File Defaults")
+        box = layout.box()
+        box.label(text="Applied to new (unsaved) files. Per-file overrides in Anvil (Settings) sidebar.", icon='INFO')
+
+        box.separator()
+        box.label(text="Texture Settings:")
+        row = box.row(align=True)
+        sub = row.row(align=True)
+        sub.scale_x = 0.4
+        sub.operator("leveldesign.pref_halve_pixels", text="/2")
+        row.prop(self, "pref_pixels_per_meter")
+        sub = row.row(align=True)
+        sub.scale_x = 0.4
+        sub.operator("leveldesign.pref_double_pixels", text="x2")
+
+        box.separator()
+        box.label(text="Default Material Settings:")
+
+        row = box.row(align=True)
+        row.operator(
+            "leveldesign.set_pref_interpolation",
+            text="Closest",
+            depress=(self.pref_default_interpolation == 'Closest'),
+        ).interpolation = 'Closest'
+        row.operator(
+            "leveldesign.set_pref_interpolation",
+            text="Linear",
+            depress=(self.pref_default_interpolation == 'Linear'),
+        ).interpolation = 'Linear'
+
+        row = box.row()
+        row.prop(
+            self, "pref_default_texture_as_alpha",
+            text="Texture as Alpha",
+            icon='CHECKBOX_HLT' if self.pref_default_texture_as_alpha else 'CHECKBOX_DEHLT',
+        )
+        row = box.row()
+        row.prop(
+            self, "pref_default_vertex_colors",
+            text="Vertex Colors",
+            icon='CHECKBOX_HLT' if self.pref_default_vertex_colors else 'CHECKBOX_DEHLT',
+        )
+        box.prop(self, "pref_default_roughness")
+        box.prop(self, "pref_default_metallic")
+
+        # Experimental settings (collapsible)
+        box.separator()
+        row = box.row()
+        row.prop(
+            self, "show_pref_experimental",
+            icon='DISCLOSURE_TRI_DOWN' if self.show_pref_experimental else 'DISCLOSURE_TRI_RIGHT',
+            emboss=False,
+        )
+        if self.show_pref_experimental:
+            sub = box.box()
+            col = sub.column(align=True)
+            col.scale_y = 0.7
+            col.label(text="These settings may change in future")
+            col.label(text="versions of Anvil as they are not")
+            col.label(text="widely supported on game engine import.")
+            sub.separator()
+            sub.prop(self, "pref_default_emission_strength")
+            row = sub.row(align=True)
+            row.label(text="Emission Color")
+            row.prop(self, "pref_default_emission_color", text="")
+            sub.prop(self, "pref_default_specular")
 
         # Keybindings section
         layout.separator()
@@ -344,6 +530,9 @@ def register():
         )
 
     bpy.utils.register_class(LEVELDESIGN_OT_restore_default_keybindings)
+    bpy.utils.register_class(LEVELDESIGN_OT_pref_double_pixels)
+    bpy.utils.register_class(LEVELDESIGN_OT_pref_halve_pixels)
+    bpy.utils.register_class(LEVELDESIGN_OT_set_pref_interpolation)
     bpy.utils.register_class(LevelDesignPreferences)
 
     # Make face orientation front face transparent so only back faces are highlighted
@@ -372,6 +561,9 @@ def unregister():
     handlers.unregister()
     properties.unregister()
     bpy.utils.unregister_class(LevelDesignPreferences)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_set_pref_interpolation)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_pref_halve_pixels)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_pref_double_pixels)
     bpy.utils.unregister_class(LEVELDESIGN_OT_restore_default_keybindings)
 
 
