@@ -138,6 +138,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.cube_cut": "Tools",
             "leveldesign.context_weld": "Tools",
             "leveldesign.toggle_grid_overlay": "Tools",
+            "leveldesign.uv_transform_modal": "UV",
+            "leveldesign.snapping_mode_dispatch": "UV",
         }
 
         wm = context.window_manager
@@ -267,6 +269,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             display_name = "Fit to Face"
                         elif kmi_addon.idname == "leveldesign.select_invalid_uvs":
                             display_name = "Select Invalid UVs"
+                        elif kmi_addon.idname == "leveldesign.snapping_mode_dispatch":
+                            display_name = "Face / Grid Snapping Mode"
                         elif is_vp_menu:
                             display_name = "Vertex Paint Color Menu"
                         else:

@@ -19,6 +19,7 @@ from . import vertex_paint_color_picker
 from . import overlap_check
 from . import grid_overlay
 from . import fixed_hotspot_overlay
+from . import uv_transform_modal
 
 
 def register():
@@ -43,9 +44,11 @@ def register():
     overlap_check.register()
     grid_overlay.register()
     fixed_hotspot_overlay.register()
+    uv_transform_modal.register()
 
 
 def unregister():
+    uv_transform_modal.unregister()
     fixed_hotspot_overlay.unregister()
     grid_overlay.unregister()
     overlap_check.unregister()
