@@ -18,6 +18,7 @@ from . import panels
 from . import workspace
 from . import hotspot_mapping
 from .core.workspace_check import is_level_design_workspace
+from .operators.gltf_export_extension import glTF2ExportUserExtension
 
 _MINIMUM_BLENDER_VERSION = bl_info["blender"]
 _VERSION_OK = bpy.app.version >= _MINIMUM_BLENDER_VERSION

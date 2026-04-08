@@ -6,6 +6,7 @@ from . import grid_tools
 from . import walk_navigation
 from . import ortho_navigation
 from . import glb_export
+from . import gltf_export_extension
 from . import material_tools
 from . import pixels_per_meter
 from . import modal_draw
@@ -31,6 +32,7 @@ def register():
     walk_navigation.register()
     ortho_navigation.register()
     glb_export.register()
+    gltf_export_extension.register()
     material_tools.register()
     pixels_per_meter.register()
     modal_draw.register()
@@ -62,6 +64,7 @@ def unregister():
     modal_draw.unregister()
     pixels_per_meter.unregister()
     material_tools.unregister()
+    gltf_export_extension.unregister()
     glb_export.unregister()
     ortho_navigation.unregister()
     walk_navigation.unregister()

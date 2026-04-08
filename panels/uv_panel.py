@@ -878,17 +878,16 @@ class LEVELDESIGN_PT_export_panel(Panel):
 
         col = layout.column()
         col.enabled = has_last_export
-        col.operator("leveldesign.export_glb_quick", icon='EXPORT')
+        col.operator("leveldesign.export_gltf_quick", icon='EXPORT')
 
         if has_last_export:
             import os
 
             filename = os.path.basename(props.last_export_filepath)
             layout.label(text=f"File: {filename}", icon='FILE')
-            layout.label(text=f"Scale: {props.last_export_scale}")
         else:
             layout.label(text="No previous export", icon='INFO')
-            layout.label(text="Use File > Export > GLB Scaled first")
+            layout.label(text="Use File > Export > glTF 2.0 first")
 
 
 class LEVELDESIGN_OT_toggle_debug_logging(Operator):

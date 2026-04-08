@@ -488,48 +488,47 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
-    # === Export Properties (last used settings) ===
+    # === Export Properties ===
     last_export_filepath: StringProperty(
         name="Last Export Path",
-        description="Path of the last GLB export",
+        description="Path of the last glTF export",
         default="",
         subtype='FILE_PATH',
     )
 
-    last_export_scale: FloatProperty(
-        name="Last Export Scale",
-        description="Scale used in last export",
+    # === glTF Exporter Extension (Anvil panel) ===
+    gltf_anvil_enabled: BoolProperty(
+        name="Enable Anvil Export",
+        description="Enable Anvil preprocessing when exporting via the standard glTF exporter",
+        default=True,
+    )
+
+    gltf_anvil_scale: FloatProperty(
+        name="Scale",
+        description="Scale factor to apply to exported geometry",
         default=1.0,
         min=0.001,
         max=1000.0,
+        soft_min=0.01,
+        soft_max=100.0,
     )
 
-    last_export_format: EnumProperty(
-        name="Last Export Format",
-        items=[
-            ('GLB', "GLB (.glb)", ""),
-            ('GLTF_SEPARATE', "GLTF + Bin + Textures", ""),
-            ('GLTF_EMBEDDED', "GLTF Embedded (.gltf)", ""),
-        ],
-        default='GLB',
-    )
-
-    last_export_textures: BoolProperty(
-        name="Last Export Textures",
-        description="Whether textures were included in last export",
+    gltf_anvil_apply_modifiers: BoolProperty(
+        name="Apply Modifiers (Anvil)",
+        description="Apply modifiers before exporting (preserves glTF extras, unlike the built-in option)",
         default=True,
     )
 
-    last_export_normals: BoolProperty(
-        name="Last Export Normals",
-        description="Whether normals were included in last export",
+    gltf_anvil_separate_loose: BoolProperty(
+        name="Separate Loose Meshes",
+        description="Separate disconnected mesh islands into individual objects for per-object culling",
         default=True,
     )
 
-    last_export_apply_modifiers: BoolProperty(
-        name="Last Export Apply Modifiers",
-        description="Whether modifiers were applied in last export",
-        default=True,
+    gltf_anvil_debug: BoolProperty(
+        name="Debug (Keep Export Scene)",
+        description="Keep the temporary export scene for inspection instead of deleting it",
+        default=False,
     )
 
     anvil_grid_scale: FloatProperty(
