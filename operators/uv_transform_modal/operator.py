@@ -45,11 +45,33 @@ from .interaction import (
 )
 
 
+def _get_undo_redo_keys(context):
+    """Get the keys bound to undo and redo operations."""
+    keys = set()
+    wm = context.window_manager
+    kc = wm.keyconfigs.user
+
+    if kc is None:
+        return {('Z', True, False, False), ('Z', True, True, False)}
+
+    for km in kc.keymaps:
+        for kmi in km.keymap_items:
+            if kmi.idname in ('ed.undo', 'ed.redo') and kmi.active:
+                keys.add((kmi.type, kmi.ctrl, kmi.shift, kmi.alt))
+
+    if not keys:
+        keys = {('Z', True, False, False), ('Z', True, True, False)}
+
+    return keys
+
+
 class MESH_OT_uv_transform_modal(Operator):
     """Interactively adjust UV scale, offset, and rotation with a ghost texture preview"""
     bl_idname = "leveldesign.uv_transform_modal"
     bl_label = "UV Transform"
     bl_options = {'REGISTER', 'UNDO'}
+
+    _active_instance = None
 
     @classmethod
     def poll(cls, context):
@@ -65,6 +87,13 @@ class MESH_OT_uv_transform_modal(Operator):
     # ------------------------------------------------------------------
 
     def invoke(self, context, event):
+        # If already in UV transform modal, ignore the second invocation
+        if MESH_OT_uv_transform_modal._active_instance is not None:
+            return {'CANCELLED'}
+
+        MESH_OT_uv_transform_modal._active_instance = self
+        self._cancelled = False
+
         obj = context.active_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
@@ -133,6 +162,9 @@ class MESH_OT_uv_transform_modal(Operator):
                 loop[uv_layer].uv.y -= snap_v
             bmesh.update_edit_mesh(me)
 
+        # Cache undo/redo key bindings for clean exit
+        self._undo_redo_keys = _get_undo_redo_keys(context)
+
         # Get material and texture info
         mat = me.materials[face.material_index] if face.material_index < len(me.materials) else None
         self._material = mat
@@ -192,11 +224,27 @@ class MESH_OT_uv_transform_modal(Operator):
     # ------------------------------------------------------------------
 
     def modal(self, context, event):
+        # Another invocation cancelled us - just exit
+        if self._cancelled:
+            return {'CANCELLED'}
+
+        # Exit if user left edit mode (e.g. pressed Tab)
+        if context.mode != 'EDIT_MESH':
+            self._cleanup(context)
+            return {'CANCELLED'}
+
         region = context.region
         rv3d = context.region_data
 
         if region is None or rv3d is None:
             return {'PASS_THROUGH'}
+
+        # Undo/redo - exit cleanly
+        if event.value == 'PRESS':
+            event_key = (event.type, event.ctrl, event.shift, event.alt)
+            if event_key in self._undo_redo_keys:
+                self._cleanup(context)
+                return {'CANCELLED'}
 
         mouse_pos = (event.mouse_region_x, event.mouse_region_y)
 
@@ -573,6 +621,9 @@ class MESH_OT_uv_transform_modal(Operator):
 
     def _cleanup(self, context):
         """Remove draw handlers and restore state."""
+        if MESH_OT_uv_transform_modal._active_instance is self:
+            MESH_OT_uv_transform_modal._active_instance = None
+
         if self._draw_handler_3d is not None:
             bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler_3d, 'WINDOW')
             self._draw_handler_3d = None

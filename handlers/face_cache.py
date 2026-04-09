@@ -2,7 +2,7 @@
 
 import bmesh
 
-from ..core.face_id import get_face_id_layer, assign_face_id, reindex_face_ids
+from ..core.face_id import FACE_ID_LAYER_NAME, get_face_id_layer, assign_face_id, reindex_face_ids
 from ..core.uv_projection import derive_transform_from_uvs
 from ..core.uv_layers import get_render_active_uv_layer
 from ..core.materials import get_image_from_material
@@ -117,8 +117,16 @@ def cache_single_face(face, bm, ppm=None, me=None):
     if face is None or not face.is_valid:
         return
 
-    # Ensure the face has a managed ID
+    # Ensure the face ID layer exists.  Creating a new BMesh custom-data
+    # layer invalidates all existing element references, so if the layer
+    # had to be created we must re-fetch the face by index.
+    face_index = face.index
+    layer_existed = bm.faces.layers.int.get(FACE_ID_LAYER_NAME) is not None
     id_layer = get_face_id_layer(bm)
+    if not layer_existed:
+        bm.faces.ensure_lookup_table()
+        face = bm.faces[face_index]
+
     face_id = assign_face_id(face, id_layer)
 
     cache_entry = {
