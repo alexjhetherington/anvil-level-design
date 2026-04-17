@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.6.2
+- Added hotspot tutorial (see examples/hotspot_tutorial.blend)
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
 - Fix regression: cancelling a transform modal causes UV warping
 

@@ -90,6 +90,8 @@ Press Shift-T to enter UV Transform Mode. You are able to move and resize the UV
 
 Hotspot mapping automatically assigns UV coordinates by matching face shapes to predefined regions on a texture atlas. It allows you to quickly add details to models.
 
+See 'examples/hotspot_tutorial.blend' for a visual explainer of the hotspotting process.
+
 #### Setting Up Hotspot Maps
 
 Hotspot maps are defined in the Image Editor:

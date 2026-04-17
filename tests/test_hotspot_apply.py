@@ -20,15 +20,18 @@ HOTSPOT_TEXTURE_PATH = os.path.join(os.path.dirname(__file__), "dev_hotspot.png"
 def _setup_hotspot_map():
     """Register dev_hotspot.png as hotspottable and add bisecting lines.
 
-    Creates a 2x2 grid on the 2048x2048 image:
-    - Horizontal line at y=512 (512px from top), spanning full width
-    - Vertical line at x=1536 (512px from right), spanning full height
+    Layout on the 1024x1024 image:
+    - Horizontal lines at y=128, 384, 704 (from top), full width
+    - Vertical line at x=512 spanning y=384..1024 (splits the bottom
+      two strips into left/right halves)
     """
     image = bpy.data.images.load(HOTSPOT_TEXTURE_PATH, check_existing=True)
     w, h = image.size[0], image.size[1]
     add_texture_as_hotspottable(image.name, w, h)
-    add_line(image.name, "h", 512, 0, w)
-    add_line(image.name, "v", w - 512, 0, h)
+    add_line(image.name, "h", 128, 0, w)
+    add_line(image.name, "h", 384, 0, w)
+    add_line(image.name, "h", 704, 0, w)
+    add_line(image.name, "v", w // 2, 384, h)
 
 
 def _apply_hotspot_material(obj):
@@ -133,11 +136,12 @@ class HotspotApplyTest(AnvilTestCase):
         """Apply hotspots to a cube and verify UVs are remapped into hotspot cells."""
         obj = _create_hotspot_cube("hotspot_cube")
 
-        # Verify hotspot map is set up correctly: 4 cells in a 2x2 grid
+        # Verify hotspot map is set up correctly: 2 full-width strips on top
+        # plus 2 half-width cells in each of the bottom two strips = 6 cells
         image = bpy.data.images.get("dev_hotspot.png")
         self.assertIsNotNone(image, "dev_hotspot.png should be loaded")
         hotspots = get_texture_hotspots(image.name)
-        self.assertEqual(len(hotspots), 4, "Should have 4 hotspot cells from 2x2 grid")
+        self.assertEqual(len(hotspots), 6, "Should have 6 hotspot cells")
 
         # Apply hotspots in object mode
         ctx = _get_context_override()
