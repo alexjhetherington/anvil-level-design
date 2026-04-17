@@ -15,9 +15,9 @@ from .raycast import (
 )
 
 # Screen-space pixel threshold for picking edges/verts on culled faces
-_PICK_THRESHOLD_PX = 15
-# Number of rays in the fan around the center ray
-_FAN_RAY_COUNT = 8
+_PICK_THRESHOLD_PX = 40
+# Fan ray rings: (ray_count, radius_in_pixels)
+_FAN_RINGS = [(8, 20), (16, 40)]
 
 
 def _nearest_vert_on_face(hit_point, face):
@@ -119,6 +119,59 @@ def _check_culled_face_element(face, is_edge_mode, region, rv3d, obj_matrix, mou
     return _screen_nearest_vert_on_face(face, region, rv3d, obj_matrix, mouse_2d)
 
 
+def _compute_front_face_plane(face, region, rv3d, obj_matrix):
+    """Compute a clipping plane from a front face.
+
+    Uses 3 vertices to define the plane.  When the face has more than 3
+    vertices (quads / ngons that may not be planar), the 3 vertices closest
+    to the camera are chosen so the plane best represents what the viewer
+    actually sees.
+
+    Returns (plane_point_world, plane_normal_world) with the normal pointing
+    toward the camera.
+    """
+    verts_world = [(v, obj_matrix @ v.co) for v in face.verts]
+
+    if len(verts_world) <= 3:
+        points = [vw for _, vw in verts_world]
+    else:
+        view_origin = view3d_utils.region_2d_to_origin_3d(
+            region, rv3d,
+            (region.width / 2, region.height / 2)
+        )
+        verts_world.sort(key=lambda pair: (pair[1] - view_origin).length_squared)
+        points = [verts_world[i][1] for i in range(3)]
+
+    edge1 = points[1] - points[0]
+    edge2 = points[2] - points[0]
+    plane_normal = edge1.cross(edge2).normalized()
+
+    # Ensure the normal points toward the camera (same side as the view)
+    view_origin = view3d_utils.region_2d_to_origin_3d(
+        region, rv3d,
+        (region.width / 2, region.height / 2)
+    )
+    if (view_origin - points[0]).dot(plane_normal) < 0:
+        plane_normal = -plane_normal
+
+    return points[0], plane_normal
+
+
+def _is_element_behind_plane(elem, is_edge_mode, obj_matrix, plane_point, plane_normal):
+    """Check if an edge/vert is behind a plane.
+
+    For vertices: behind if the world-space position is on the negative side.
+    For edges: behind if *both* verts are on the negative side.
+    """
+    if is_edge_mode:
+        for v in elem.verts:
+            if (obj_matrix @ v.co - plane_point).dot(plane_normal) >= 0:
+                return False
+        return True
+    else:
+        return (obj_matrix @ elem.co - plane_point).dot(plane_normal) < 0
+
+
 def _is_culled_backface(face, ray_direction_local, materials):
     """Check if a face is a backface with culling enabled."""
     return (is_face_backfacing(face.normal, ray_direction_local)
@@ -129,10 +182,7 @@ def _collect_fan_faces(bvh, bm, materials, region, rv3d, obj_matrix,
                        mouse_2d, max_iterations):
     """Cast fan rays around the cursor to find nearby faces.
 
-    Returns (culled_faces, front_faces) — two sets of face indices hit by
-    fan rays. Culled backfaces are walked through; the first front face on
-    each ray is also collected so edges/verts near the cursor but off the
-    face can still be picked.
+    Returns (culled_faces, front_faces) — two sets of face indices.
     """
     culled_faces = set()
     front_faces = set()
@@ -140,33 +190,34 @@ def _collect_fan_faces(bvh, bm, materials, region, rv3d, obj_matrix,
     matrix_inv = obj_matrix.inverted()
     rot_inv = matrix_inv.to_3x3()
 
-    for i in range(_FAN_RAY_COUNT):
-        angle = (2.0 * math.pi * i) / _FAN_RAY_COUNT
-        offset_x = math.cos(angle) * _PICK_THRESHOLD_PX
-        offset_y = math.sin(angle) * _PICK_THRESHOLD_PX
-        fan_coord = (mouse_2d.x + offset_x, mouse_2d.y + offset_y)
+    for ray_count, radius in _FAN_RINGS:
+        for i in range(ray_count):
+            angle = (2.0 * math.pi * i) / ray_count
+            offset_x = math.cos(angle) * radius
+            offset_y = math.sin(angle) * radius
+            fan_coord = (mouse_2d.x + offset_x, mouse_2d.y + offset_y)
 
-        fan_view = view3d_utils.region_2d_to_vector_3d(region, rv3d, fan_coord)
-        fan_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, fan_coord)
+            fan_view = view3d_utils.region_2d_to_vector_3d(region, rv3d, fan_coord)
+            fan_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, fan_coord)
 
-        origin_local = matrix_inv @ fan_origin
-        dir_local = (rot_inv @ fan_view).normalized()
+            origin_local = matrix_inv @ fan_origin
+            dir_local = (rot_inv @ fan_view).normalized()
 
-        # Walk through hits on this fan ray
-        origin = origin_local.copy()
-        for _ in range(max_iterations):
-            location, normal, face_index, distance = bvh.ray_cast(origin, dir_local)
-            if face_index is None:
+            # Walk through hits on this fan ray
+            origin = origin_local.copy()
+            for _ in range(max_iterations):
+                location, normal, face_index, distance = bvh.ray_cast(origin, dir_local)
+                if face_index is None:
+                    break
+
+                face = bm.faces[face_index]
+                if _is_culled_backface(face, dir_local, materials):
+                    culled_faces.add(face_index)
+                    origin = origin + dir_local * (distance + epsilon)
+                    continue
+                # Front face — collect it, then stop this fan ray
+                front_faces.add(face_index)
                 break
-
-            face = bm.faces[face_index]
-            if _is_culled_backface(face, dir_local, materials):
-                culled_faces.add(face_index)
-                origin = origin + dir_local * (distance + epsilon)
-                continue
-            # Front face — collect it, then stop this fan ray
-            front_faces.add(face_index)
-            break
 
     return culled_faces, front_faces
 
@@ -187,7 +238,7 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
     origin = ray_origin_local.copy()
     epsilon = 0.0001
 
-    # Track the best culled-face element found across center + fan rays
+    # Track the best element found across center + fan rays
     best_culled_elem = None
     best_culled_dist = float('inf')
     best_culled_face = None
@@ -225,15 +276,33 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
         # Front-facing hit
         front_face = face
         front_location = location
+
+        # Check elements on the front face too so it competes fairly
+        elem, screen_dist = _check_culled_face_element(
+            face, is_edge_mode, region, rv3d, obj_matrix, mouse_2d
+        )
+        if elem is not None and screen_dist < best_culled_dist:
+            best_culled_dist = screen_dist
+            best_culled_elem = elem
+            best_culled_face = face
         break
+
+    # Compute clipping plane from front face to filter elements behind it
+    clip_plane = None
+    if front_face is not None:
+        plane_point, plane_normal = _compute_front_face_plane(
+            front_face, region, rv3d, obj_matrix
+        )
+        clip_plane = (plane_point, plane_normal)
 
     # Phase 2: fan rays — find faces the center ray missed
     fan_culled, fan_front = _collect_fan_faces(
         bvh, bm, materials, region, rv3d, obj_matrix,
         mouse_2d, max_iterations=8
     )
+
     # Combine new culled and front faces not already handled by center ray
-    new_faces = fan_culled - center_culled_faces
+    new_faces = (fan_culled | fan_front) - center_culled_faces
     if front_face is not None:
         new_faces.discard(front_face.index)
 
@@ -242,10 +311,14 @@ def _raycast_element_aware(bvh, ray_origin_local, ray_direction_local,
         elem, screen_dist = _check_culled_face_element(
             face, is_edge_mode, region, rv3d, obj_matrix, mouse_2d
         )
-        if elem is not None and screen_dist < best_culled_dist:
-            best_culled_dist = screen_dist
-            best_culled_elem = elem
-            best_culled_face = face
+        if elem is not None:
+            if clip_plane is not None:
+                if _is_element_behind_plane(elem, is_edge_mode, obj_matrix, clip_plane[0], clip_plane[1]):
+                    continue
+            if screen_dist < best_culled_dist:
+                best_culled_dist = screen_dist
+                best_culled_elem = elem
+                best_culled_face = face
 
     # Decide: use nearby element if within threshold, otherwise front face
     if best_culled_elem is not None and best_culled_dist <= _PICK_THRESHOLD_PX:

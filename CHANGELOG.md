@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.2
+- Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
+
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
 - Add default default material settings to addon preferences (allows you to define the default material settings for new .blend files)
