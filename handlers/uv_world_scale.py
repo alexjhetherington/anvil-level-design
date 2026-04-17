@@ -148,7 +148,7 @@ def apply_world_scale_uvs(obj, scene):
                     break
 
             if not has_moved:
-                if in_modal_operation:
+                if in_modal_operation or modal_just_ended:
                     restored = False
                     for uv_layer in unlocked_layers:
                         layer_data = get_cached_layer_data(face_id, uv_layer.name)
