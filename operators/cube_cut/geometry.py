@@ -10,7 +10,7 @@ Custom intersection algorithm that:
 
 import bmesh
 from mathutils import Vector
-from mathutils.geometry import intersect_line_plane
+from mathutils.geometry import intersect_line_plane, intersect_line_line_2d
 
 from ...core.logging import debug_log
 from ...core.geometry import compute_normal_from_verts
@@ -513,7 +513,12 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
                 uv_projections[layer.name] = proj
         material_index = face.material_index
 
-        face_data_list.append((new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index))
+        # Snapshot the host polygon's edges so the bridge picker can
+        # test segment-visibility against the original boundary. These
+        # survive the 'FACES_ONLY' delete below.
+        host_edges = list(face.edges)
+
+        face_data_list.append((new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index, host_edges))
         faces_to_delete.append(face)
         debug_log(f"[CubeCut] Captured data for face {face.index}: {len(new_verts)} new_verts, {len(verts_on_original_exterior)} exterior, {len(verts_in_original_interior)} interior, uv_layers={len(uv_projections)}")
 
@@ -527,8 +532,8 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
     bm.edges.ensure_lookup_table()
 
     newly_created_faces = []
-    for new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index in face_data_list:
-        new_faces = _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, cuboid, me, ppm, vert_plane_map)
+    for new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, uv_projections, material_index, host_edges in face_data_list:
+        new_faces = _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, cuboid, me, ppm, vert_plane_map, host_edges)
         if new_faces:
             for new_face in new_faces:
                 # Apply material from original face
@@ -1039,7 +1044,41 @@ def _should_delete_vertex_for_face(vertex, face, cuboid):
     return False  # Outside cuboid, keep it
 
 
-def _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, cuboid, me, ppm, vert_plane_map):
+def _segment_visible_in_polygon(a, b, edges, face_normal):
+    """True if segment a-b doesn't strictly cross any edge in `edges`,
+    other than touching at a shared endpoint. Checks in the face plane
+    via projection onto the 2D axes dominant relative to face_normal.
+    """
+    normal_abs = Vector((abs(face_normal.x), abs(face_normal.y), abs(face_normal.z)))
+    if normal_abs.x >= normal_abs.y and normal_abs.x >= normal_abs.z:
+        def to_2d(p):
+            return Vector((p.y, p.z))
+    elif normal_abs.y >= normal_abs.z:
+        def to_2d(p):
+            return Vector((p.x, p.z))
+    else:
+        def to_2d(p):
+            return Vector((p.x, p.y))
+
+    a2 = to_2d(a.co)
+    b2 = to_2d(b.co)
+    for e in edges:
+        if not e.is_valid:
+            continue
+        h1 = e.verts[0]
+        h2 = e.verts[1]
+        # Edges adjacent to the candidate endpoint legitimately touch
+        # the segment at `b`; that's not a crossing.
+        if b is h1 or b is h2:
+            continue
+        if a is h1 or a is h2:
+            continue
+        if intersect_line_line_2d(a2, b2, to_2d(h1.co), to_2d(h2.co)) is not None:
+            return False
+    return True
+
+
+def _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original_interior, face_normal, cuboid, me, ppm, vert_plane_map, host_edges):
     import math
 
     debug_log(f"[CubeCut] _verts_to_faces: new_verts={[v.co[:] for v in new_verts]}")
@@ -1133,12 +1172,17 @@ def _verts_to_faces(bm, new_verts, verts_on_original_exterior, verts_in_original
         dot_val = max(-1.0, min(1.0, bisector.dot(dir1)))
         half_angle = math.acos(dot_val)
 
-        # Find the exterior vertex closest to the "away" direction
+        # Find the exterior vertex closest to the "away" direction that
+        # is also visible from the interior vert (the bridge segment must
+        # stay inside the host polygon — no crossing the host boundary).
         best_vert = None
         best_dot = -2.0  # Will look for highest dot product with away_dir
 
         for ext_vert in verts_on_original_exterior:
             if ext_vert == interior_vert:
+                continue
+            if not _segment_visible_in_polygon(interior_vert, ext_vert, host_edges, face_normal):
+                debug_log(f"[CubeCut]   Skipping bridge to {ext_vert.co[:]} - not visible from {interior_vert.co[:]}")
                 continue
             dir_to_ext = (ext_vert.co - interior_vert.co).normalized()
             dot = dir_to_ext.dot(away_dir)

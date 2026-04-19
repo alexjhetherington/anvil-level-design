@@ -4,6 +4,7 @@
 - Added hotspot tutorial (see examples/hotspot_tutorial.blend)
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
 - Fix regression: cancelling a transform modal causes UV warping
+- Fix for corrupted faces after cube-cutting convex geometry
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export

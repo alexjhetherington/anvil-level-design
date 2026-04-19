@@ -79,14 +79,14 @@ def create_textured_cube(name, scale_u, scale_v, face_aligned=False):
     obj.select_set(True)
 
     if face_aligned:
-        _apply_material_face_aligned(obj)
+        _apply_material_face_aligned(obj, 1.0)
     else:
         _apply_material(obj, scale_u, scale_v)
 
     return obj
 
 
-def _apply_material_face_aligned(obj):
+def _apply_material_face_aligned(obj, scale):
     """Load dev_orange_wall.png and apply it with face-aligned projection."""
     image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
 
@@ -107,7 +107,7 @@ def _apply_material_face_aligned(obj):
 
     for face in bm.faces:
         face.material_index = mat_index
-        face_aligned_project(face, uv_layer, mat, ppm)
+        face_aligned_project(face, uv_layer, mat, ppm, scale=scale)
 
     bmesh.update_edit_mesh(obj.data)
     with bpy.context.temp_override(**ctx):

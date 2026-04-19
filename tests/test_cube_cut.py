@@ -5,7 +5,12 @@ from mathutils import Vector
 from ..core.uv_projection import derive_transform_from_uvs
 from ..operators.cube_cut.geometry import execute_cube_cut
 from .base_test import AnvilTestCase
-from .helpers import create_textured_cube, add_uv_layer_face_aligned, _get_context_override
+from .helpers import (
+    create_textured_cube,
+    add_uv_layer_face_aligned,
+    _get_context_override,
+    _apply_material_face_aligned,
+)
 
 
 def _face_key(face):
@@ -311,4 +316,113 @@ class CubeCutTest(AnvilTestCase):
         bmesh.update_edit_mesh(obj.data)
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_cube_cut_in_concave_ngon_face_produces_expected_geometry(self):
+        """Cutting a rectangle out of a concave U-shaped n-gon produces
+        the expected set of vertices and edges.
+
+        The host face is a 14x8 rectangle at X=0 with a 4x6 rectangular
+        notch cut out of its bottom. The cube cut takes a 2x1 slice from
+        the solid band above the notch. The bridge from the bottom-right
+        cut corner must reach (10, 6) (the top-right of the notch) rather
+        than (14, 0), which is the closest exterior vert by angle but is
+        occluded by the notch.
+        """
+        # U-shape at X=0: outer rectangle Y=[0,14], Z=[0,8] with a notch
+        # at Y=[6,10], Z=[0,6]. Winding gives face normal = (-1, 0, 0).
+        mesh = bpy.data.meshes.new("u_face")
+        bm_new = bmesh.new()
+        loop = [
+            (0, 6, 6), (0, 6, 0), (0, 0, 0), (0, 0, 8),
+            (0, 14, 8), (0, 14, 0), (0, 10, 0), (0, 10, 6),
+        ]
+        verts = [bm_new.verts.new(p) for p in loop]
+        bm_new.faces.new(verts)
+        bm_new.to_mesh(mesh)
+        bm_new.free()
+
+        obj = bpy.data.objects.new("u_face", mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        _apply_material_face_aligned(obj, 5.0)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(mesh)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select = True
+        bmesh.update_edit_mesh(mesh)
+
+        # Cut a 2x1 rectangle at Y=[5,7], Z=[6.5,7.5] (solid band above
+        # the notch). These parameters match the user's reproduction.
+        with bpy.context.temp_override(**ctx):
+            success, msg = execute_cube_cut(
+                bpy.context,
+                Vector((0.0, 7.0, 7.5)),
+                Vector((0.0, 5.0, 6.5)),
+                0.0,
+                Vector((0.0, -1.0, 0.0)),
+                Vector((0.0, 0.0, -1.0)),
+                Vector((-1.0, 0.0, 0.0)),
+            )
+
+        self.assertTrue(success, msg)
+
+        bm = bmesh.from_edit_mesh(mesh)
+
+        def r(v):
+            return (round(v.co.x, 4), round(v.co.y, 4), round(v.co.z, 4))
+
+        verts_actual = sorted(r(v) for v in bm.verts if v.is_valid)
+        edges_actual = sorted(
+            tuple(sorted((r(e.verts[0]), r(e.verts[1]))))
+            for e in bm.edges if e.is_valid
+        )
+
+        bmesh.update_edit_mesh(mesh)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        expected_verts = [
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 8.0),
+            (0.0, 5.0, 6.5),
+            (0.0, 5.0, 7.5),
+            (0.0, 6.0, 0.0),
+            (0.0, 6.0, 6.0),
+            (0.0, 7.0, 6.5),
+            (0.0, 7.0, 7.5),
+            (0.0, 10.0, 0.0),
+            (0.0, 10.0, 6.0),
+            (0.0, 14.0, 0.0),
+            (0.0, 14.0, 8.0),
+        ]
+        expected_edges = [
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 8.0)),
+            ((0.0, 0.0, 0.0), (0.0, 5.0, 6.5)),
+            ((0.0, 0.0, 0.0), (0.0, 6.0, 0.0)),
+            ((0.0, 0.0, 8.0), (0.0, 5.0, 7.5)),
+            ((0.0, 0.0, 8.0), (0.0, 14.0, 8.0)),
+            ((0.0, 5.0, 6.5), (0.0, 5.0, 7.5)),
+            ((0.0, 5.0, 6.5), (0.0, 6.0, 6.0)),
+            ((0.0, 5.0, 6.5), (0.0, 7.0, 6.5)),
+            ((0.0, 5.0, 7.5), (0.0, 7.0, 7.5)),
+            ((0.0, 6.0, 0.0), (0.0, 6.0, 6.0)),
+            ((0.0, 6.0, 6.0), (0.0, 10.0, 6.0)),
+            ((0.0, 7.0, 6.5), (0.0, 7.0, 7.5)),
+            ((0.0, 7.0, 6.5), (0.0, 10.0, 6.0)),
+            ((0.0, 7.0, 7.5), (0.0, 14.0, 8.0)),
+            ((0.0, 10.0, 0.0), (0.0, 10.0, 6.0)),
+            ((0.0, 10.0, 0.0), (0.0, 14.0, 0.0)),
+            ((0.0, 10.0, 6.0), (0.0, 14.0, 8.0)),
+            ((0.0, 14.0, 0.0), (0.0, 14.0, 8.0)),
+        ]
+
+        self.assertEqual(verts_actual, expected_verts)
+        self.assertEqual(edges_actual, expected_edges)
         obj.data.update()
