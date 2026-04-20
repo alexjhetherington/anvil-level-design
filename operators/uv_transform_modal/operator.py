@@ -32,7 +32,9 @@ from .interaction import (
     compute_handle_positions,
     hit_test_handles,
     compute_scale_offset_from_corner_drag,
+    compute_scale_offset_from_edge_drag,
     recompute_offset_for_fixed_corner,
+    recompute_offset_for_fixed_edge,
     snap_adjacent_corners_to_face,
     snap_scale_to_parallel_face_edges,
     compute_offset_from_drag,
@@ -452,7 +454,10 @@ class MESH_OT_uv_transform_modal(Operator):
         if self._drag_type == 'corner':
             self._apply_corner_drag(current_3d, proj_x, proj_y, snapping)
 
-        elif self._drag_type == 'move':
+        elif self._drag_type == 'edge':
+            self._apply_edge_drag(current_3d, proj_x, proj_y, snapping)
+
+        elif self._drag_type in {'move_free', 'move_v', 'move_h'}:
             self._apply_move_drag(current_3d, proj_x, proj_y, snapping)
 
         elif self._drag_type == 'rotation':
@@ -528,7 +533,11 @@ class MESH_OT_uv_transform_modal(Operator):
         self._offset_y = new_oy
 
     def _apply_move_drag(self, current_3d, proj_x, proj_y, snapping):
-        """Handle move (offset) drag with snapping."""
+        """Handle move (offset) drag with optional axis lock and snapping.
+
+        drag_type 'move_v' locks the horizontal (U) offset; 'move_h' locks
+        the vertical (V) offset; 'move_free' is unconstrained.
+        """
         new_ox, new_oy = compute_offset_from_drag(
             self._drag_start_3d, current_3d,
             proj_x, proj_y,
@@ -536,6 +545,14 @@ class MESH_OT_uv_transform_modal(Operator):
             self._scale_u, self._scale_v,
             self._tex_meters_u, self._tex_meters_v
         )
+
+        lock_u = self._drag_type == 'move_v'
+        lock_v = self._drag_type == 'move_h'
+
+        if lock_u:
+            new_ox = self._drag_start_offset_x
+        if lock_v:
+            new_oy = self._drag_start_offset_y
 
         self._offset_x = new_ox
         self._offset_y = new_oy
@@ -561,13 +578,71 @@ class MESH_OT_uv_transform_modal(Operator):
                 )
             if snap_delta is not None:
                 # Convert the 3D delta to offset delta (negate for same
-                # reason as compute_offset_from_drag)
+                # reason as compute_offset_from_drag). Skip the locked axis
+                # so the snap can only move us along the allowed direction.
                 su = self._scale_u * self._tex_meters_u
                 sv = self._scale_v * self._tex_meters_v
-                if su > 0.0001:
+                if not lock_u and su > 0.0001:
                     self._offset_x -= snap_delta.dot(proj_x) / su
-                if sv > 0.0001:
+                if not lock_v and sv > 0.0001:
                     self._offset_y -= snap_delta.dot(proj_y) / sv
+
+    def _apply_edge_drag(self, current_3d, proj_x, proj_y, snapping):
+        """Handle edge (axis-locked resize) drag with snapping.
+
+        Edges 0/2 (bottom/top) resize along V only; edges 1/3 (right/left)
+        resize along U only. The opposite edge stays pinned.
+        """
+        dragged = current_3d
+
+        if snapping:
+            dragged, _snap_edge = snap_point_to_face_features(
+                dragged, self._snap_vertices, self._snap_edges,
+                VERTEX_SNAP_DISTANCE
+            )
+
+        new_su, new_sv, new_ox, new_oy = compute_scale_offset_from_edge_drag(
+            dragged, self._drag_index, self._drag_start_quad,
+            self._first_vert_world, proj_x, proj_y,
+            self._tex_meters_u, self._tex_meters_v,
+            self._drag_start_scale_u, self._drag_start_scale_v,
+            self._drag_start_offset_x, self._drag_start_offset_y,
+        )
+
+        # Parallel-face-edge snap on the active axis only; the locked axis
+        # must keep its drag-start value regardless of what the general
+        # snapper would suggest. snap_scale_to_parallel_face_edges works in
+        # corner-index terms, so map each edge to a corner on it so the
+        # function's opposite-corner lookup lands on the pinned edge.
+        #   edge 0 (bottom) → corner 0 (BL, opp=TR on top)
+        #   edge 1 (right)  → corner 2 (TR, opp=BL on left)
+        #   edge 2 (top)    → corner 2 (TR, opp=BL on bottom)
+        #   edge 3 (left)   → corner 3 (TL, opp=BR on right)
+        EDGE_TO_SNAP_CORNER = (0, 2, 2, 3)
+        if snapping:
+            snap_corner = EDGE_TO_SNAP_CORNER[self._drag_index]
+            snapped_su, snapped_sv = snap_scale_to_parallel_face_edges(
+                snap_corner, self._drag_start_quad,
+                proj_x, proj_y,
+                new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
+                self._snap_edges, VERTEX_SNAP_DISTANCE
+            )
+            if self._drag_index % 2 == 0:
+                new_sv = snapped_sv
+            else:
+                new_su = snapped_su
+
+            new_ox, new_oy = recompute_offset_for_fixed_edge(
+                self._drag_index, self._drag_start_quad,
+                self._first_vert_world, proj_x, proj_y,
+                new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
+                self._drag_start_offset_x, self._drag_start_offset_y,
+            )
+
+        self._scale_u = new_su
+        self._scale_v = new_sv
+        self._offset_x = new_ox
+        self._offset_y = new_oy
 
     def _apply_rotation_drag(self, current_3d, snapping):
         """Handle rotation drag with snapping."""

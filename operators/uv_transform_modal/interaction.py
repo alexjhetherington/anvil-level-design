@@ -16,6 +16,8 @@ HANDLE_RADIUS = 10
 DRAG_THRESHOLD = 4
 # Rotation handle distance factor (proportion of average quad half-size)
 ROTATION_HANDLE_DISTANCE = 0.25
+# Axis-constrained move handle distance (proportion of center→edge-midpoint)
+MOVE_AXIS_HANDLE_DISTANCE = 0.4
 
 
 def _project_to_screen(region, rv3d, point_3d):
@@ -70,8 +72,10 @@ def compute_handle_positions(quad_corners):
 
     Returns dict with:
         'corners': list of 4 corner positions (for scale handles)
-        'edge_midpoints': list of 4 edge midpoint positions (for offset/move)
-        'center': center of the quad
+        'edge_midpoints': list of 4 edge midpoint positions (for axis-locked resize)
+        'center': center of the quad (for unconstrained move)
+        'move_axis_v': vertical-only move handle (offset from center toward top edge)
+        'move_axis_h': horizontal-only move handle (offset from center toward right edge)
         'rotation': rotation handle position (offset from center along top edge normal)
     """
     bl, br, tr, tl = quad_corners
@@ -84,6 +88,11 @@ def compute_handle_positions(quad_corners):
         (tr + tl) * 0.5,  # top
         (tl + bl) * 0.5,  # left
     ]
+
+    # Axis-constrained move handles, offset partway from center toward an edge
+    # midpoint so the user can grab them distinctly from the free-move center.
+    move_axis_v = center + (edge_midpoints[2] - center) * MOVE_AXIS_HANDLE_DISTANCE
+    move_axis_h = center + (edge_midpoints[1] - center) * MOVE_AXIS_HANDLE_DISTANCE
 
     # Rotation handle: extend from center past the top midpoint
     top_mid = edge_midpoints[2]
@@ -98,6 +107,8 @@ def compute_handle_positions(quad_corners):
         'corners': list(quad_corners),
         'edge_midpoints': edge_midpoints,
         'center': center,
+        'move_axis_v': move_axis_v,
+        'move_axis_h': move_axis_h,
         'rotation': rotation_pos,
     }
 
@@ -113,7 +124,8 @@ def hit_test_handles(region, rv3d, mouse_pos, handle_positions):
 
     Returns:
         Tuple of (handle_type, handle_index) or (None, None).
-        handle_type is one of: 'corner', 'move', 'rotation'
+        handle_type is one of: 'corner', 'edge', 'move_free',
+        'move_v', 'move_h', 'rotation'.
     """
     mx, my = mouse_pos
     best_dist = HANDLE_RADIUS
@@ -139,13 +151,41 @@ def hit_test_handles(region, rv3d, mouse_pos, handle_positions):
                 best_type = 'corner'
                 best_index = i
 
-    # Test center handle (move)
+    # Test edge handles (axis-locked resize)
+    for i, pos in enumerate(handle_positions['edge_midpoints']):
+        screen = _project_to_screen(region, rv3d, pos)
+        if screen is not None:
+            dist = math.hypot(screen.x - mx, screen.y - my)
+            if dist < best_dist:
+                best_dist = dist
+                best_type = 'edge'
+                best_index = i
+
+    # Test axis-constrained move handles (checked before free-move center
+    # so they win when overlapping the center handle's hit radius)
+    screen = _project_to_screen(region, rv3d, handle_positions['move_axis_v'])
+    if screen is not None:
+        dist = math.hypot(screen.x - mx, screen.y - my)
+        if dist < best_dist:
+            best_dist = dist
+            best_type = 'move_v'
+            best_index = 0
+
+    screen = _project_to_screen(region, rv3d, handle_positions['move_axis_h'])
+    if screen is not None:
+        dist = math.hypot(screen.x - mx, screen.y - my)
+        if dist < best_dist:
+            best_dist = dist
+            best_type = 'move_h'
+            best_index = 0
+
+    # Test center handle (unconstrained move)
     screen = _project_to_screen(region, rv3d, handle_positions['center'])
     if screen is not None:
         dist = math.hypot(screen.x - mx, screen.y - my)
         if dist < best_dist:
             best_dist = dist
-            best_type = 'move'
+            best_type = 'move_free'
             best_index = 0
 
     return best_type, best_index
@@ -230,6 +270,102 @@ def recompute_offset_for_fixed_corner(corner_index, fixed_quad_corners,
 
     offset_x = fu - fixed_x / su
     offset_y = fv - fixed_y / sv
+
+    return offset_x, offset_y
+
+
+# Which corner on the opposite edge to use as the fixed reference for edge-drag.
+# edge 0 (bottom): opposite edge is top; fixed corner is TR (index 2)
+# edge 1 (right):  opposite edge is left; fixed corner is BL (index 0)
+# edge 2 (top):    opposite edge is bottom; fixed corner is BL (index 0)
+# edge 3 (left):   opposite edge is right; fixed corner is BR (index 1)
+_EDGE_FIXED_CORNER_IDX = [2, 0, 0, 1]
+
+# (axis, this_edge_uv_coord, fixed_edge_uv_coord) per edge
+_EDGE_UV_INFO = [
+    ('v', 0.0, 1.0),
+    ('u', 1.0, 0.0),
+    ('v', 1.0, 0.0),
+    ('u', 0.0, 1.0),
+]
+
+
+def compute_scale_offset_from_edge_drag(dragged_3d, edge_index, fixed_quad_corners,
+                                        first_vert_world, proj_x, proj_y,
+                                        tex_meters_u, tex_meters_v,
+                                        drag_start_scale_u, drag_start_scale_v,
+                                        drag_start_offset_x, drag_start_offset_y):
+    """Compute new scale/offset from an axis-locked edge drag.
+
+    Edges 0/2 (bottom/top) control scale_v; edges 1/3 (right/left) control
+    scale_u. The perpendicular scale/offset are held at their drag-start
+    values; the parallel offset is recomputed so the opposite edge stays
+    pinned to its original world-space position.
+
+    Returns (scale_u, scale_v, offset_x, offset_y).
+    """
+    CORNER_UVS = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    axis, drag_edge_coord, _fixed_edge_coord = _EDGE_UV_INFO[edge_index]
+
+    fixed_corner_idx = _EDGE_FIXED_CORNER_IDX[edge_index]
+    fixed_pos = fixed_quad_corners[fixed_corner_idx]
+    fu, fv = CORNER_UVS[fixed_corner_idx]
+
+    fixed_x = (fixed_pos - first_vert_world).dot(proj_x)
+    fixed_y = (fixed_pos - first_vert_world).dot(proj_y)
+    dragged_x = (dragged_3d - first_vert_world).dot(proj_x)
+    dragged_y = (dragged_3d - first_vert_world).dot(proj_y)
+
+    scale_u = drag_start_scale_u
+    scale_v = drag_start_scale_v
+    offset_x = drag_start_offset_x
+    offset_y = drag_start_offset_y
+
+    if axis == 'u':
+        delta_u = drag_edge_coord - fu  # ±1
+        su = (dragged_x - fixed_x) / delta_u
+        su = max(su, 0.001 * tex_meters_u)
+        scale_u = su / tex_meters_u
+        offset_x = fu - fixed_x / su
+    else:
+        delta_v = drag_edge_coord - fv  # ±1
+        sv = (dragged_y - fixed_y) / delta_v
+        sv = max(sv, 0.001 * tex_meters_v)
+        scale_v = sv / tex_meters_v
+        offset_y = fv - fixed_y / sv
+
+    return scale_u, scale_v, offset_x, offset_y
+
+
+def recompute_offset_for_fixed_edge(edge_index, fixed_quad_corners,
+                                    first_vert_world, proj_x, proj_y,
+                                    scale_u, scale_v,
+                                    tex_meters_u, tex_meters_v,
+                                    drag_start_offset_x, drag_start_offset_y):
+    """Recompute the axis-parallel offset after scale snapping.
+
+    Only the offset for the edge's active axis is recomputed; the
+    perpendicular offset is returned from drag_start (unchanged).
+    """
+    CORNER_UVS = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    axis, _drag_edge_coord, _fixed_edge_coord = _EDGE_UV_INFO[edge_index]
+
+    fixed_corner_idx = _EDGE_FIXED_CORNER_IDX[edge_index]
+    fixed_pos = fixed_quad_corners[fixed_corner_idx]
+    fu, fv = CORNER_UVS[fixed_corner_idx]
+
+    su = scale_u * tex_meters_u
+    sv = scale_v * tex_meters_v
+
+    offset_x = drag_start_offset_x
+    offset_y = drag_start_offset_y
+
+    if axis == 'u':
+        fixed_x = (fixed_pos - first_vert_world).dot(proj_x)
+        offset_x = fu - fixed_x / su
+    else:
+        fixed_y = (fixed_pos - first_vert_world).dot(proj_y)
+        offset_y = fv - fixed_y / sv
 
     return offset_x, offset_y
 

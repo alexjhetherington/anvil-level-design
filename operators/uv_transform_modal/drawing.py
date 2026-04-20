@@ -19,6 +19,9 @@ FACE_OUTLINE_COLOR = (1.0, 1.0, 1.0, 0.6)
 HANDLE_COLOR_CORNER = (1.0, 0.8, 0.0, 0.9)
 HANDLE_COLOR_MOVE = (0.3, 0.7, 1.0, 0.9)
 HANDLE_COLOR_ROTATION = (0.3, 1.0, 0.5, 0.9)
+# U axis (horizontal/left-right) — red. V axis (vertical/up-down) — purple.
+HANDLE_COLOR_AXIS_U = (1.0, 0.35, 0.3, 0.9)
+HANDLE_COLOR_AXIS_V = (0.75, 0.4, 1.0, 0.9)
 HANDLE_COLOR_HOVER = (1.0, 1.0, 1.0, 1.0)
 QUAD_OUTLINE_COLOR = (1.0, 1.0, 1.0, 0.35)
 
@@ -184,15 +187,53 @@ def draw_handles_3d(quad_corners, hover_type, hover_index):
         shader.uniform_float("color", color)
         batch.draw(shader)
 
+    def _draw_bar_3d(center, along_dir, across_dir, length_factor,
+                     width_factor, color):
+        """Draw a thin filled rectangle aligned to the face plane."""
+        half_len = avg_size * length_factor
+        half_wid = avg_size * width_factor
+        a = along_dir * half_len
+        b = across_dir * half_wid
+        p0 = center - a - b
+        p1 = center + a - b
+        p2 = center + a + b
+        p3 = center - a + b
+        positions = [p0[:], p1[:], p2[:], p0[:], p2[:], p3[:]]
+        batch = batch_for_shader(shader, 'TRIS', {"pos": positions})
+        shader.uniform_float("color", color)
+        batch.draw(shader)
+
     shader.bind()
 
-    # Corner handles (scale)
+    # Corner handles (scale both axes)
     for i, pos in enumerate(handle_info['corners']):
         color = HANDLE_COLOR_HOVER if (hover_type == 'corner' and hover_index == i) else HANDLE_COLOR_CORNER
         _draw_diamond_3d(pos, 0.03, color)
 
-    # Center handle (move)
-    color = HANDLE_COLOR_HOVER if hover_type == 'move' else HANDLE_COLOR_MOVE
+    # Edge handles (axis-locked resize). Even indices are horizontal edges
+    # (bottom/top) which scale V; odd indices are vertical edges which
+    # scale U. Draw as bars aligned with the edge they sit on.
+    for i, pos in enumerate(handle_info['edge_midpoints']):
+        if i % 2 == 0:  # horizontal edge → V axis resize
+            base_color = HANDLE_COLOR_AXIS_V
+            along = right_dir
+            across = up_dir
+        else:           # vertical edge → U axis resize
+            base_color = HANDLE_COLOR_AXIS_U
+            along = up_dir
+            across = right_dir
+        color = HANDLE_COLOR_HOVER if (hover_type == 'edge' and hover_index == i) else base_color
+        _draw_bar_3d(pos, along, across, 0.04, 0.012, color)
+
+    # Axis-constrained move handles (bars aligned with their active axis)
+    color = HANDLE_COLOR_HOVER if hover_type == 'move_v' else HANDLE_COLOR_AXIS_V
+    _draw_bar_3d(handle_info['move_axis_v'], up_dir, right_dir, 0.045, 0.012, color)
+
+    color = HANDLE_COLOR_HOVER if hover_type == 'move_h' else HANDLE_COLOR_AXIS_U
+    _draw_bar_3d(handle_info['move_axis_h'], right_dir, up_dir, 0.045, 0.012, color)
+
+    # Free-move center handle (unconstrained)
+    color = HANDLE_COLOR_HOVER if hover_type == 'move_free' else HANDLE_COLOR_MOVE
     _draw_diamond_3d(handle_info['center'], 0.035, color)
 
     # Rotation handle

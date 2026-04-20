@@ -12,7 +12,7 @@
 - Fix UV transform disabling itself forever in vertex / edge select modes
 - UV transform gizmo visible through faces
 - UV transform works with multiple selected faces
-- 
+- Add axis aligned transforms to UV transform
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
