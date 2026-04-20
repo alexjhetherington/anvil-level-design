@@ -9,6 +9,7 @@
 - Improve UV transform mode behaviour when edges and vertices are very close
 - Add UV transform edge-edge snapping
 - Add UV transform vertex snapping during move
+- Fix UV transform disabling itself forever in vertex / edge select modes
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export

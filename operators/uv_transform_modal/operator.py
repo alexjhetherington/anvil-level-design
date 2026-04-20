@@ -94,7 +94,6 @@ class MESH_OT_uv_transform_modal(Operator):
         if MESH_OT_uv_transform_modal._active_instance is not None:
             return {'CANCELLED'}
 
-        MESH_OT_uv_transform_modal._active_instance = self
         self._cancelled = False
 
         obj = context.active_object
@@ -213,6 +212,11 @@ class MESH_OT_uv_transform_modal(Operator):
         self._draw_handler_3d = bpy.types.SpaceView3D.draw_handler_add(
             self._draw_3d, (context,), 'WINDOW', 'POST_VIEW'
         )
+
+        # Claim the active-instance slot only after all validation has passed.
+        # Early returns above must not leak this class-level reference, or
+        # subsequent invocations would bail at the guard at the top.
+        MESH_OT_uv_transform_modal._active_instance = self
 
         context.window_manager.modal_handler_add(self)
         context.workspace.status_text_set(
