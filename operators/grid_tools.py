@@ -239,7 +239,7 @@ def register():
 
         kmi = km.keymap_items.new(
             "leveldesign.toggle_snap_mode", 'G', 'PRESS',
-            shift=True,
+            ctrl=True,
             head=True
         )
         addon_keymaps.append((km, kmi))

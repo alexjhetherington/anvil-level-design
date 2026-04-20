@@ -240,7 +240,7 @@ Use '[' and ']' to double and half the grid size.
 
 The grid size is relative to the blender scene length unit (i.e. if you choose unit inches, 1 Anvil grid unit will equal 1 inch).
 
-Shift-G toggles between incremental and grid snap. Generally incremental snap is the most useful, but some operators (especially slides) behave more consistently with grid snapping.
+Ctrl-G toggles between incremental and grid snap. Generally incremental snap is the most useful, but some operators (especially slides) behave more consistently with grid snapping.
 
 Alt-G toggles the face overlay grid.
 
