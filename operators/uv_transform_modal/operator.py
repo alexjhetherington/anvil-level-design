@@ -11,6 +11,7 @@ import bpy
 import gpu
 from bpy.types import Operator
 from mathutils import Vector
+from mathutils.geometry import intersect_ray_tri
 
 from bpy_extras.view3d_utils import region_2d_to_vector_3d, region_2d_to_origin_3d
 
@@ -23,6 +24,7 @@ from ...core.hotspot_queries import face_has_hotspot_material
 from ...handlers import cache_single_face
 from ...properties import set_updating_from_selection, sync_scale_tracking
 from ..modal_draw.utils import tag_redraw_all_3d_views, is_snapping_enabled
+from ..texture_apply import _dispatch_set_uv_from_other_face
 
 from . import drawing
 from .interaction import (
@@ -46,6 +48,71 @@ from .interaction import (
     ray_plane_intersection,
     VERTEX_SNAP_DISTANCE,
 )
+
+
+def _pick_primary_face_from_cursor(selected_faces, event, context, world_matrix):
+    """Raycast from the mouse position against the selected faces and return
+    the nearest hit. Returns None if the cursor is not over any selected face.
+    """
+    region = context.region
+    rv3d = context.region_data
+    if region is None or rv3d is None:
+        return None
+
+    coord = (event.mouse_region_x, event.mouse_region_y)
+    view_vector = region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+
+    matrix_inv = world_matrix.inverted()
+    ray_origin_local = matrix_inv @ ray_origin
+    ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+    best_dist = float('inf')
+    best_face = None
+    for face in selected_faces:
+        loops = list(face.loops)
+        if len(loops) < 3:
+            continue
+        v0 = loops[0].vert.co
+        # Fan triangulation — sufficient to detect a ray hit anywhere on the face
+        for i in range(1, len(loops) - 1):
+            v1 = loops[i].vert.co
+            v2 = loops[i + 1].vert.co
+            hit = intersect_ray_tri(
+                v0, v1, v2, ray_direction_local, ray_origin_local, True
+            )
+            if hit is not None:
+                dist = (hit - ray_origin_local).length
+                if dist < best_dist:
+                    best_dist = dist
+                    best_face = face
+                break
+    return best_face
+
+
+def _build_snap_targets(selected_faces, world_matrix):
+    """Collect deduped world-space vertices and edges from all selected faces.
+
+    Returns (vertices, edges):
+        vertices: list of Vector (one per unique BMVert used by any face)
+        edges:    list of (Vector, Vector) pairs (one per unique BMEdge)
+
+    BMesh elements are hashable by their underlying bmesh id, so BMVert and
+    BMEdge work directly as dict keys. Python id()/memory address is NOT
+    stable — bmesh wraps elements in transient Python objects.
+    """
+    vert_map = {}
+    edge_map = {}
+    for face in selected_faces:
+        for loop in face.loops:
+            v = loop.vert
+            if v not in vert_map:
+                vert_map[v] = world_matrix @ v.co
+            e = loop.edge
+            if e not in edge_map:
+                a, b = e.verts
+                edge_map[e] = (world_matrix @ a.co, world_matrix @ b.co)
+    return list(vert_map.values()), list(edge_map.values())
 
 
 def _get_undo_redo_keys(context):
@@ -99,17 +166,32 @@ class MESH_OT_uv_transform_modal(Operator):
         obj = context.active_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()
 
         selected_faces = [f for f in bm.faces if f.select]
-        if len(selected_faces) != 1:
-            self.report({'WARNING'}, "Select exactly one face")
+        if not selected_faces:
+            self.report({'WARNING'}, "Select at least one face")
             return {'CANCELLED'}
 
-        face = selected_faces[0]
+        for sf in selected_faces:
+            if face_has_hotspot_material(sf, me):
+                self.report({'WARNING'}, "Cannot use UV Transform on hotspot faces")
+                return {'CANCELLED'}
 
-        if face_has_hotspot_material(face, me):
-            self.report({'WARNING'}, "Cannot use UV Transform on hotspot faces")
-            return {'CANCELLED'}
+        self._world_matrix = obj.matrix_world.copy()
+
+        # Pick the primary face: prefer the selected face under the mouse
+        # cursor; fall back to the active face if it is selected; otherwise
+        # use the first selected face.
+        face = _pick_primary_face_from_cursor(
+            selected_faces, event, context, self._world_matrix
+        )
+        if face is None:
+            active = bm.faces.active
+            if active is not None and active.select:
+                face = active
+            else:
+                face = selected_faces[0]
 
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
@@ -127,7 +209,9 @@ class MESH_OT_uv_transform_modal(Operator):
 
         # Store face info
         self._face_index = face.index
-        self._world_matrix = obj.matrix_world.copy()
+        self._other_face_indices = [
+            sf.index for sf in selected_faces if sf.index != face.index
+        ]
 
         # Save initial transform for cancel revert
         self._saved_scale_u = transform['scale_u']
@@ -136,8 +220,12 @@ class MESH_OT_uv_transform_modal(Operator):
         self._saved_offset_x = transform['offset_x']
         self._saved_offset_y = transform['offset_y']
 
-        # Save initial UVs for cancel revert
-        self._saved_uvs = [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in face.loops]
+        # Save initial UVs for every selected face so cancel restores them all
+        self._saved_all_uvs = {
+            sf.index: [(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in sf.loops]
+            for sf in selected_faces
+        }
+        self._saved_uvs = self._saved_all_uvs[face.index]
 
         # Current working transform — adjust offset so the preview quad
         # overlaps the face.  UV tiling means shifting offset by an integer
@@ -151,8 +239,12 @@ class MESH_OT_uv_transform_modal(Operator):
         self._scale_u = transform['scale_u']
         self._scale_v = transform['scale_v']
         self._rotation = transform['rotation']
-        self._offset_x = transform['offset_x'] - snap_u
-        self._offset_y = transform['offset_y'] - snap_v
+        # Use the RAW (unwrapped) uvs[0] for the working offset; transform
+        # dict has already been normalized via normalize_offset, so composing
+        # it with snap_u loses the tile information for faces far from [0,1).
+        raw_uv0_x, raw_uv0_y = self._saved_uvs[0]
+        self._offset_x = raw_uv0_x - snap_u
+        self._offset_y = raw_uv0_y - snap_v
 
         # Apply the adjusted offset to the face UVs so they stay in sync
         # with the preview (texture appearance is identical since we shifted
@@ -183,7 +275,17 @@ class MESH_OT_uv_transform_modal(Operator):
         self._face_local_x, self._face_local_y = face_axes
         self._face_normal = face.normal.copy()
         self._first_vert_world = self._world_matrix @ face.loops[0].vert.co
-        self._face_corners_world = [self._world_matrix @ loop.vert.co for loop in face.loops]
+
+        # Outline corners for every selected face (used by the 3D draw handler)
+        self._all_face_corners_world = [
+            [self._world_matrix @ loop.vert.co for loop in sf.loops]
+            for sf in selected_faces
+        ]
+
+        # Snap target vertex / edge lists: union over all selected faces, deduped
+        self._snap_vertices, self._snap_edges = _build_snap_targets(
+            selected_faces, self._world_matrix
+        )
 
         # Transform face-local axes to world space (direction only)
         rot_scale = self._world_matrix.to_3x3()
@@ -191,9 +293,9 @@ class MESH_OT_uv_transform_modal(Operator):
         self._face_local_y_world = (rot_scale @ self._face_local_y).normalized()
         self._face_normal_world = (rot_scale @ self._face_normal).normalized()
 
-        # Pre-compute face edge angles for rotation snapping
+        # Pre-compute edge angles across all selected faces for rotation snapping
         self._face_edge_angles = compute_face_edge_angles(
-            self._face_corners_world,
+            self._snap_edges,
             self._face_local_x_world, self._face_local_y_world
         )
 
@@ -367,7 +469,8 @@ class MESH_OT_uv_transform_modal(Operator):
         # Snap dragged corner to face features (vertex/edge proximity)
         if snapping:
             dragged, snap_edge = snap_point_to_face_features(
-                dragged, self._face_corners_world, VERTEX_SNAP_DISTANCE
+                dragged, self._snap_vertices, self._snap_edges,
+                VERTEX_SNAP_DISTANCE
             )
 
         new_su, new_sv, new_ox, new_oy = compute_scale_offset_from_corner_drag(
@@ -383,7 +486,7 @@ class MESH_OT_uv_transform_modal(Operator):
                 self._drag_index, self._drag_start_quad,
                 self._first_vert_world, proj_x, proj_y,
                 new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
-                self._face_corners_world, VERTEX_SNAP_DISTANCE
+                self._snap_edges, VERTEX_SNAP_DISTANCE
             )
             # Edge-to-edge: snap preview edges to parallel face edges.
             # Covers the "preview larger than face" case where adjacent
@@ -392,7 +495,7 @@ class MESH_OT_uv_transform_modal(Operator):
                 self._drag_index, self._drag_start_quad,
                 proj_x, proj_y,
                 new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
-                self._face_corners_world, VERTEX_SNAP_DISTANCE
+                self._snap_edges, VERTEX_SNAP_DISTANCE
             )
 
         # Snap to 1:1 aspect ratio if close.
@@ -444,15 +547,16 @@ class MESH_OT_uv_transform_modal(Operator):
         if snapping:
             quad = self._compute_quad()
             snap_delta = snap_quad_vertices_to_face_vertices(
-                quad, self._face_corners_world, VERTEX_SNAP_DISTANCE
+                quad, self._snap_vertices, VERTEX_SNAP_DISTANCE
             )
             if snap_delta is None:
                 snap_delta = snap_quad_vertices_to_face(
-                    quad, self._face_corners_world, VERTEX_SNAP_DISTANCE
+                    quad, self._snap_vertices, self._snap_edges,
+                    VERTEX_SNAP_DISTANCE
                 )
             if snap_delta is None:
                 snap_delta = snap_quad_edges_to_parallel_face_edges(
-                    quad, self._face_corners_world,
+                    quad, self._snap_edges,
                     proj_x, proj_y, VERTEX_SNAP_DISTANCE
                 )
             if snap_delta is not None:
@@ -492,7 +596,8 @@ class MESH_OT_uv_transform_modal(Operator):
         self._offset_y = 0.5 - delta.dot(new_proj_y) / sv
 
     def _apply_transform(self, context):
-        """Apply the current working transform to the face UVs and update panel."""
+        """Apply the current working transform to the primary face UVs,
+        propagate to every other selected face, and update the panel."""
         obj = context.active_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
@@ -517,6 +622,20 @@ class MESH_OT_uv_transform_modal(Operator):
         )
 
         cache_single_face(face, bm, self._ppm, me)
+
+        # Propagate the primary face's UV settings to the other selected
+        # faces using the same transfer path that Alt+LMB uses.
+        # set_uv_from_source_params (called by the dispatch) handles caching.
+        for idx in self._other_face_indices:
+            if idx >= len(bm.faces):
+                continue
+            target = bm.faces[idx]
+            if not target.is_valid:
+                continue
+            _dispatch_set_uv_from_other_face(
+                face, target, uv_layer, self._ppm, me,
+                self._world_matrix, bm=bm,
+            )
 
         # Update panel properties
         props = context.scene.level_design_props
@@ -589,7 +708,10 @@ class MESH_OT_uv_transform_modal(Operator):
             # reachable when the face is partly hidden by other meshes.
             gpu.state.depth_test_set('NONE')
             drawing.draw_quad_outline(quad)
-            drawing.draw_face_outline(self._face_corners_world)
+            # Outline every selected face so the user can see all the
+            # available snap targets.
+            for corners in self._all_face_corners_world:
+                drawing.draw_face_outline(corners)
             drawing.draw_handles_3d(
                 quad, self._hover_type, self._hover_index
             )
@@ -603,7 +725,7 @@ class MESH_OT_uv_transform_modal(Operator):
     # ------------------------------------------------------------------
 
     def _revert(self, context):
-        """Restore the original UVs on cancel."""
+        """Restore the original UVs of every selected face on cancel."""
         obj = context.active_object
         if obj is None or obj.type != 'MESH':
             return
@@ -612,27 +734,32 @@ class MESH_OT_uv_transform_modal(Operator):
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()
 
-        if self._face_index >= len(bm.faces):
-            return
-
-        face = bm.faces[self._face_index]
-        if not face.is_valid:
-            return
-
         uv_layer = get_render_active_uv_layer(bm, me)
         if uv_layer is None:
             return
 
-        # Restore saved UVs
-        loops = list(face.loops)
-        for i, loop in enumerate(loops):
-            if i < len(self._saved_uvs):
-                loop[uv_layer].uv.x = self._saved_uvs[i][0]
-                loop[uv_layer].uv.y = self._saved_uvs[i][1]
+        for idx, saved_uvs in self._saved_all_uvs.items():
+            if idx >= len(bm.faces):
+                continue
+            face = bm.faces[idx]
+            if not face.is_valid:
+                continue
+            loops = list(face.loops)
+            for i, loop in enumerate(loops):
+                if i < len(saved_uvs):
+                    loop[uv_layer].uv.x = saved_uvs[i][0]
+                    loop[uv_layer].uv.y = saved_uvs[i][1]
 
         bmesh.update_edit_mesh(me)
 
-        # Restore panel properties
+        for idx in self._saved_all_uvs:
+            if idx >= len(bm.faces):
+                continue
+            face = bm.faces[idx]
+            if face.is_valid:
+                cache_single_face(face, bm, self._ppm, me)
+
+        # Restore panel properties to the primary face's pre-modal values
         props = context.scene.level_design_props
         set_updating_from_selection(True)
         try:
@@ -644,8 +771,6 @@ class MESH_OT_uv_transform_modal(Operator):
         finally:
             set_updating_from_selection(False)
             sync_scale_tracking(context)
-
-        cache_single_face(face, bm, self._ppm, me)
 
     def _normalize_and_apply(self, context):
         """Normalize offsets to [0,1) and re-apply so UVs are stored cleanly."""

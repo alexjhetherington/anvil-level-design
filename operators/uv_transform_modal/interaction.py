@@ -235,15 +235,12 @@ def recompute_offset_for_fixed_corner(corner_index, fixed_quad_corners,
 
 
 def _snap_scale_along_axis(adj_pos, fixed_pos, axis, perp_axis, delta_uv,
-                           face_corners_world, threshold, min_scale):
+                           face_edges, threshold, min_scale):
     """Find the best scale snap for an adjacent corner along one axis.
 
     The adjacent corner moves along a line: fixed_pos + d * axis (with a
     constant perpendicular offset of zero, since adjacent corners share one
     UV coordinate with the fixed corner).
-
-    For vertices: snap when the vertex's axis-distance from fixed_pos is
-    close to the corner's current axis-distance.
 
     For edges: find where the edge intersects the corner's movement line
     (fixed_pos + d * axis) so the snap target is stable regardless of
@@ -255,12 +252,7 @@ def _snap_scale_along_axis(adj_pos, fixed_pos, axis, perp_axis, delta_uv,
     best_snap = None
     best_delta = threshold
 
-    # Only snap to face edges (where they cross the corner's movement line),
-    # not to face vertices projected onto the axis.
-    n = len(face_corners_world)
-    for i in range(n):
-        a = face_corners_world[i]
-        b = face_corners_world[(i + 1) % n]
+    for a, b in face_edges:
         # Find where the edge crosses the movement line
         # Movement line: fixed_pos + d * axis (perp component = 0)
         # Edge: a + t * (b - a)
@@ -290,7 +282,7 @@ def snap_adjacent_corners_to_face(corner_index, fixed_quad_corners,
                                   first_vert_world, proj_x, proj_y,
                                   scale_u, scale_v,
                                   tex_meters_u, tex_meters_v,
-                                  face_corners_world, threshold):
+                                  face_edges, threshold):
     """Snap the two adjacent (non-fixed, non-dragged) corners to face features.
 
     When dragging a corner, the opposite corner is fixed and the two adjacent
@@ -331,7 +323,7 @@ def snap_adjacent_corners_to_face(corner_index, fixed_quad_corners,
     delta_u = drag_u - fixed_u  # always +1 or -1
     snapped_su = _snap_scale_along_axis(
         adj_su_pos, fixed_pos, proj_x, proj_y, delta_u,
-        face_corners_world, threshold, 0.001 * tex_meters_u
+        face_edges, threshold, 0.001 * tex_meters_u
     )
     if snapped_su is not None:
         scale_u = snapped_su / tex_meters_u
@@ -349,7 +341,7 @@ def snap_adjacent_corners_to_face(corner_index, fixed_quad_corners,
     delta_v = drag_v - fixed_v  # always +1 or -1
     snapped_sv = _snap_scale_along_axis(
         adj_sv_pos, fixed_pos, proj_y, proj_x, delta_v,
-        face_corners_world, threshold, 0.001 * tex_meters_v
+        face_edges, threshold, 0.001 * tex_meters_v
     )
     if snapped_sv is not None:
         scale_v = snapped_sv / tex_meters_v
@@ -529,7 +521,7 @@ def snap_edge_and_aspect(edge_a, edge_b, corner_index, fixed_quad_corners,
     return su / tex_meters_u, sv / tex_meters_v
 
 
-def snap_point_to_face_features(point_3d, face_corners_world, threshold):
+def snap_point_to_face_features(point_3d, face_vertices, face_edges, threshold):
     """Snap a 3D point to face vertices or edges if close enough.
 
     Vertices take priority over edges. Within each category the closest
@@ -540,7 +532,7 @@ def snap_point_to_face_features(point_3d, face_corners_world, threshold):
     # Vertex snap — find the closest vertex within threshold
     best_vert = None
     best_vert_dist = threshold
-    for vert in face_corners_world:
+    for vert in face_vertices:
         dist = (point_3d - vert).length
         if dist < best_vert_dist:
             best_vert_dist = dist
@@ -552,10 +544,7 @@ def snap_point_to_face_features(point_3d, face_corners_world, threshold):
     best_edge_point = None
     best_edge_pair = None
     best_edge_dist = threshold
-    n = len(face_corners_world)
-    for i in range(n):
-        a = face_corners_world[i]
-        b = face_corners_world[(i + 1) % n]
+    for a, b in face_edges:
         edge = b - a
         edge_len_sq = edge.length_squared
         if edge_len_sq < 1e-10:
@@ -574,7 +563,7 @@ def snap_point_to_face_features(point_3d, face_corners_world, threshold):
     return point_3d, None
 
 
-def snap_quad_vertices_to_face_vertices(quad_corners, face_corners_world, threshold):
+def snap_quad_vertices_to_face_vertices(quad_corners, face_vertices, threshold):
     """Snap the closest quad corner onto the closest face vertex.
 
     Returns the offset delta (Vector3) to apply, or None if no pair is
@@ -584,7 +573,7 @@ def snap_quad_vertices_to_face_vertices(quad_corners, face_corners_world, thresh
     best_delta = None
     best_dist = threshold
     for qc in quad_corners:
-        for fv in face_corners_world:
+        for fv in face_vertices:
             delta = fv - qc
             dist = delta.length
             if 1e-6 < dist < best_dist:
@@ -593,7 +582,7 @@ def snap_quad_vertices_to_face_vertices(quad_corners, face_corners_world, thresh
     return best_delta
 
 
-def snap_quad_vertices_to_face(quad_corners, face_corners_world, threshold):
+def snap_quad_vertices_to_face(quad_corners, face_vertices, face_edges, threshold):
     """Try to snap any quad vertex to a face vertex or edge.
 
     Returns the offset delta (Vector3) to apply, or None if no snap.
@@ -603,7 +592,7 @@ def snap_quad_vertices_to_face(quad_corners, face_corners_world, threshold):
     best_dist = threshold
 
     for qc in quad_corners:
-        snapped, _edge = snap_point_to_face_features(qc, face_corners_world, threshold)
+        snapped, _edge = snap_point_to_face_features(qc, face_vertices, face_edges, threshold)
         delta = snapped - qc
         dist = delta.length
         if dist > 1e-6 and dist < best_dist:
@@ -613,16 +602,13 @@ def snap_quad_vertices_to_face(quad_corners, face_corners_world, threshold):
     return best_delta
 
 
-def compute_face_edge_angles(face_corners_world, face_local_x, face_local_y):
-    """Compute the angles (in degrees) of all face edges in face-local space.
+def compute_face_edge_angles(face_edges, face_local_x, face_local_y):
+    """Compute the angles (in degrees) of each face edge in face-local space.
 
     Returns a list of angles, one per edge.
     """
     angles = []
-    n = len(face_corners_world)
-    for i in range(n):
-        a = face_corners_world[i]
-        b = face_corners_world[(i + 1) % n]
+    for a, b in face_edges:
         edge = b - a
         dx = edge.dot(face_local_x)
         dy = edge.dot(face_local_y)
@@ -653,7 +639,7 @@ def snap_rotation_to_face_edges(rotation, face_edge_angles):
 
 
 def _snap_scale_to_parallel_face_edge(fixed_pos, axis, perp_axis, delta_uv,
-                                      face_corners_world, current_scale_world,
+                                      face_edges, current_scale_world,
                                       threshold, min_scale_world):
     """Snap a preview edge (at axis-coord = current_scale_world * delta_uv)
     to a face edge that runs perpendicular to axis (i.e. parallel to perp_axis).
@@ -666,10 +652,7 @@ def _snap_scale_to_parallel_face_edge(fixed_pos, axis, perp_axis, delta_uv,
     current_dist = current_scale_world * delta_uv
     best_snap = None
     best_delta = threshold
-    n = len(face_corners_world)
-    for i in range(n):
-        a = face_corners_world[i]
-        b = face_corners_world[(i + 1) % n]
+    for a, b in face_edges:
         edge = b - a
         edge_len = edge.length
         if edge_len < 1e-10:
@@ -692,7 +675,7 @@ def snap_scale_to_parallel_face_edges(corner_index, fixed_quad_corners,
                                       proj_x, proj_y,
                                       scale_u, scale_v,
                                       tex_meters_u, tex_meters_v,
-                                      face_corners_world, threshold):
+                                      face_edges, threshold):
     """Snap scale by bringing a dragged-side preview edge flush with a
     parallel face edge.
 
@@ -713,7 +696,7 @@ def snap_scale_to_parallel_face_edges(corner_index, fixed_quad_corners,
     # scale_u controls the vertical preview edge (parallel to proj_y)
     snapped_su = _snap_scale_to_parallel_face_edge(
         fixed_pos, proj_x, proj_y, delta_u,
-        face_corners_world,
+        face_edges,
         scale_u * tex_meters_u,
         threshold, 0.001 * tex_meters_u,
     )
@@ -723,7 +706,7 @@ def snap_scale_to_parallel_face_edges(corner_index, fixed_quad_corners,
     # scale_v controls the horizontal preview edge (parallel to proj_x)
     snapped_sv = _snap_scale_to_parallel_face_edge(
         fixed_pos, proj_y, proj_x, delta_v,
-        face_corners_world,
+        face_edges,
         scale_v * tex_meters_v,
         threshold, 0.001 * tex_meters_v,
     )
@@ -734,7 +717,7 @@ def snap_scale_to_parallel_face_edges(corner_index, fixed_quad_corners,
 
 
 def _best_perp_snap_to_face_edge(preview_points, perp_axis,
-                                 face_corners_world, threshold):
+                                 face_edges, threshold):
     """Smallest perp-axis shift that brings one of preview_points onto a
     face edge running perpendicular to perp_axis (i.e. the preview edges
     at those points are parallel to the face edge).
@@ -743,11 +726,8 @@ def _best_perp_snap_to_face_edge(preview_points, perp_axis,
     """
     best_delta = None
     best_dist = threshold
-    n = len(face_corners_world)
     for point in preview_points:
-        for i in range(n):
-            a = face_corners_world[i]
-            b = face_corners_world[(i + 1) % n]
+        for a, b in face_edges:
             edge = b - a
             edge_len = edge.length
             if edge_len < 1e-10:
@@ -763,7 +743,7 @@ def _best_perp_snap_to_face_edge(preview_points, perp_axis,
     return best_delta
 
 
-def snap_quad_edges_to_parallel_face_edges(quad_corners, face_corners_world,
+def snap_quad_edges_to_parallel_face_edges(quad_corners, face_edges,
                                            proj_x, proj_y, threshold):
     """Translation that brings preview edges flush with parallel face edges.
 
@@ -781,10 +761,10 @@ def snap_quad_edges_to_parallel_face_edges(quad_corners, face_corners_world,
     right_mid = (br + tr) * 0.5
 
     delta_y = _best_perp_snap_to_face_edge(
-        [bottom_mid, top_mid], proj_y, face_corners_world, threshold,
+        [bottom_mid, top_mid], proj_y, face_edges, threshold,
     )
     delta_x = _best_perp_snap_to_face_edge(
-        [left_mid, right_mid], proj_x, face_corners_world, threshold,
+        [left_mid, right_mid], proj_x, face_edges, threshold,
     )
 
     if delta_x is None and delta_y is None:
