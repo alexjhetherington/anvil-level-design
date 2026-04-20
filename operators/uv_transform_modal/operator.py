@@ -578,11 +578,16 @@ class MESH_OT_uv_transform_modal(Operator):
             return
 
         gpu.state.blend_set('ALPHA')
-        gpu.state.depth_test_set('LESS_EQUAL')
         gpu.state.depth_mask_set(False)
 
         try:
+            # Ghost texture: depth-tested so it reads as lying on the face.
+            gpu.state.depth_test_set('LESS_EQUAL')
             drawing.draw_ghost_texture(quad, self._image)
+
+            # Gizmo overlays: drawn through geometry so the handles stay
+            # reachable when the face is partly hidden by other meshes.
+            gpu.state.depth_test_set('NONE')
             drawing.draw_quad_outline(quad)
             drawing.draw_face_outline(self._face_corners_world)
             drawing.draw_handles_3d(
