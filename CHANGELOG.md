@@ -7,6 +7,8 @@
 - Fix for corrupted faces after cube-cutting convex geometry
 - Move toggle grid snapping mode to ctrl+g, freeing shift+g for the blender default select hotkey
 - Improve UV transform mode behaviour when edges and vertices are very close
+- Add UV transform edge-edge snapping
+- Add UV transform vertex snapping during move
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export

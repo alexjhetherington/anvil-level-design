@@ -436,6 +436,7 @@ ASPECT_SNAP_THRESHOLD = 0.08    # scale ratio tolerance for 1:1 snap
 VERTEX_SNAP_DISTANCE = 0.05     # world-space distance for vertex snaps
 EDGE_SNAP_DISTANCE = 0.05       # world-space distance for edge snaps
 ROTATION_SNAP_DEGREES = 3.0     # degree tolerance for edge-angle snap
+PARALLEL_EDGE_TOLERANCE = 0.01  # sin(angle) tolerance for edge parallelism
 
 
 def snap_point_to_grid(point_3d, grid_size):
@@ -573,6 +574,25 @@ def snap_point_to_face_features(point_3d, face_corners_world, threshold):
     return point_3d, None
 
 
+def snap_quad_vertices_to_face_vertices(quad_corners, face_corners_world, threshold):
+    """Snap the closest quad corner onto the closest face vertex.
+
+    Returns the offset delta (Vector3) to apply, or None if no pair is
+    within threshold. Vertex-only; use as a higher-priority pass before
+    any edge-based snap.
+    """
+    best_delta = None
+    best_dist = threshold
+    for qc in quad_corners:
+        for fv in face_corners_world:
+            delta = fv - qc
+            dist = delta.length
+            if 1e-6 < dist < best_dist:
+                best_dist = dist
+                best_delta = delta
+    return best_delta
+
+
 def snap_quad_vertices_to_face(quad_corners, face_corners_world, threshold):
     """Try to snap any quad vertex to a face vertex or edge.
 
@@ -630,3 +650,149 @@ def snap_rotation_to_face_edges(rotation, face_edge_angles):
                 best_diff = abs(diff)
                 best_rot = rotation - diff
     return best_rot
+
+
+def _snap_scale_to_parallel_face_edge(fixed_pos, axis, perp_axis, delta_uv,
+                                      face_corners_world, current_scale_world,
+                                      threshold, min_scale_world):
+    """Snap a preview edge (at axis-coord = current_scale_world * delta_uv)
+    to a face edge that runs perpendicular to axis (i.e. parallel to perp_axis).
+
+    Such face edges have constant axis-coord; snapping aligns the preview edge
+    with that coord regardless of whether the edge spans the movement line.
+    All scales are in world units (scale * tex_meters).
+    Returns the snapped world-scale, or None.
+    """
+    current_dist = current_scale_world * delta_uv
+    best_snap = None
+    best_delta = threshold
+    n = len(face_corners_world)
+    for i in range(n):
+        a = face_corners_world[i]
+        b = face_corners_world[(i + 1) % n]
+        edge = b - a
+        edge_len = edge.length
+        if edge_len < 1e-10:
+            continue
+        # Accept only edges whose direction is (nearly) along perp_axis
+        if abs(edge.dot(axis) / edge_len) > PARALLEL_EDGE_TOLERANCE:
+            continue
+        face_axis_coord = (a - fixed_pos).dot(axis)
+        candidate = face_axis_coord / delta_uv
+        if candidate < min_scale_world:
+            continue
+        delta = abs(current_dist - face_axis_coord)
+        if delta < best_delta:
+            best_delta = delta
+            best_snap = candidate
+    return best_snap
+
+
+def snap_scale_to_parallel_face_edges(corner_index, fixed_quad_corners,
+                                      proj_x, proj_y,
+                                      scale_u, scale_v,
+                                      tex_meters_u, tex_meters_v,
+                                      face_corners_world, threshold):
+    """Snap scale by bringing a dragged-side preview edge flush with a
+    parallel face edge.
+
+    Complements snap_adjacent_corners_to_face for the case where a face edge
+    is parallel to a preview edge but lies outside the adjacent corner's
+    movement line — typical when the preview is much larger than the face.
+
+    Returns (scale_u, scale_v) — each axis possibly adjusted.
+    """
+    CORNER_UVS = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    opposite_index = (corner_index + 2) % 4
+    drag_u, drag_v = CORNER_UVS[corner_index]
+    fixed_u, fixed_v = CORNER_UVS[opposite_index]
+    fixed_pos = fixed_quad_corners[opposite_index]
+    delta_u = drag_u - fixed_u
+    delta_v = drag_v - fixed_v
+
+    # scale_u controls the vertical preview edge (parallel to proj_y)
+    snapped_su = _snap_scale_to_parallel_face_edge(
+        fixed_pos, proj_x, proj_y, delta_u,
+        face_corners_world,
+        scale_u * tex_meters_u,
+        threshold, 0.001 * tex_meters_u,
+    )
+    if snapped_su is not None:
+        scale_u = snapped_su / tex_meters_u
+
+    # scale_v controls the horizontal preview edge (parallel to proj_x)
+    snapped_sv = _snap_scale_to_parallel_face_edge(
+        fixed_pos, proj_y, proj_x, delta_v,
+        face_corners_world,
+        scale_v * tex_meters_v,
+        threshold, 0.001 * tex_meters_v,
+    )
+    if snapped_sv is not None:
+        scale_v = snapped_sv / tex_meters_v
+
+    return scale_u, scale_v
+
+
+def _best_perp_snap_to_face_edge(preview_points, perp_axis,
+                                 face_corners_world, threshold):
+    """Smallest perp-axis shift that brings one of preview_points onto a
+    face edge running perpendicular to perp_axis (i.e. the preview edges
+    at those points are parallel to the face edge).
+
+    Returns the signed perp shift, or None.
+    """
+    best_delta = None
+    best_dist = threshold
+    n = len(face_corners_world)
+    for point in preview_points:
+        for i in range(n):
+            a = face_corners_world[i]
+            b = face_corners_world[(i + 1) % n]
+            edge = b - a
+            edge_len = edge.length
+            if edge_len < 1e-10:
+                continue
+            # Face edge must run perpendicular to perp_axis
+            if abs(edge.dot(perp_axis) / edge_len) > PARALLEL_EDGE_TOLERANCE:
+                continue
+            face_perp = (a - point).dot(perp_axis)
+            dist = abs(face_perp)
+            if 1e-6 < dist < best_dist:
+                best_dist = dist
+                best_delta = face_perp
+    return best_delta
+
+
+def snap_quad_edges_to_parallel_face_edges(quad_corners, face_corners_world,
+                                           proj_x, proj_y, threshold):
+    """Translation that brings preview edges flush with parallel face edges.
+
+    Each preview axis (proj_x, proj_y) is snapped independently so orthogonal
+    alignments combine. Complements snap_quad_vertices_to_face when the
+    preview is larger than the face and no preview corner is near a face
+    vertex/edge intersection.
+
+    Returns a 3D Vector delta, or None if no snap.
+    """
+    bl, br, tr, tl = quad_corners
+    bottom_mid = (bl + br) * 0.5
+    top_mid = (tl + tr) * 0.5
+    left_mid = (bl + tl) * 0.5
+    right_mid = (br + tr) * 0.5
+
+    delta_y = _best_perp_snap_to_face_edge(
+        [bottom_mid, top_mid], proj_y, face_corners_world, threshold,
+    )
+    delta_x = _best_perp_snap_to_face_edge(
+        [left_mid, right_mid], proj_x, face_corners_world, threshold,
+    )
+
+    if delta_x is None and delta_y is None:
+        return None
+
+    delta = Vector((0.0, 0.0, 0.0))
+    if delta_x is not None:
+        delta = delta + proj_x * delta_x
+    if delta_y is not None:
+        delta = delta + proj_y * delta_y
+    return delta

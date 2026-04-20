@@ -32,12 +32,15 @@ from .interaction import (
     compute_scale_offset_from_corner_drag,
     recompute_offset_for_fixed_corner,
     snap_adjacent_corners_to_face,
+    snap_scale_to_parallel_face_edges,
     compute_offset_from_drag,
     compute_rotation_from_drag,
     snap_aspect_ratio,
     snap_edge_and_aspect,
     snap_point_to_face_features,
     snap_quad_vertices_to_face,
+    snap_quad_vertices_to_face_vertices,
+    snap_quad_edges_to_parallel_face_edges,
     compute_face_edge_angles,
     snap_rotation_to_face_edges,
     ray_plane_intersection,
@@ -378,6 +381,15 @@ class MESH_OT_uv_transform_modal(Operator):
                 new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
                 self._face_corners_world, VERTEX_SNAP_DISTANCE
             )
+            # Edge-to-edge: snap preview edges to parallel face edges.
+            # Covers the "preview larger than face" case where adjacent
+            # corners fall outside the face.
+            new_su, new_sv = snap_scale_to_parallel_face_edges(
+                self._drag_index, self._drag_start_quad,
+                proj_x, proj_y,
+                new_su, new_sv, self._tex_meters_u, self._tex_meters_v,
+                self._face_corners_world, VERTEX_SNAP_DISTANCE
+            )
 
         # Snap to 1:1 aspect ratio if close.
         # If the dragged corner is on a face edge, slide along the edge
@@ -421,12 +433,24 @@ class MESH_OT_uv_transform_modal(Operator):
         self._offset_x = new_ox
         self._offset_y = new_oy
 
-        # Vertex/edge snap: check if any quad corner is near a face feature
+        # Snap priority (highest first):
+        #   1. Quad corner onto face vertex (vertex-to-vertex)
+        #   2. Quad corner onto face edge (vertex-to-edge)
+        #   3. Preview edge onto parallel face edge (edge-to-edge)
         if snapping:
             quad = self._compute_quad()
-            snap_delta = snap_quad_vertices_to_face(
+            snap_delta = snap_quad_vertices_to_face_vertices(
                 quad, self._face_corners_world, VERTEX_SNAP_DISTANCE
             )
+            if snap_delta is None:
+                snap_delta = snap_quad_vertices_to_face(
+                    quad, self._face_corners_world, VERTEX_SNAP_DISTANCE
+                )
+            if snap_delta is None:
+                snap_delta = snap_quad_edges_to_parallel_face_edges(
+                    quad, self._face_corners_world,
+                    proj_x, proj_y, VERTEX_SNAP_DISTANCE
+                )
             if snap_delta is not None:
                 # Convert the 3D delta to offset delta (negate for same
                 # reason as compute_offset_from_drag)
