@@ -444,9 +444,10 @@ class MESH_OT_uv_transform_modal(Operator):
 
         new_rot = compute_rotation_from_drag(
             current_3d, drag_center,
-            self._face_local_x_world, self._face_local_y_world,
-            self._face_normal_world, self._drag_start_rotation
+            self._face_local_x_world, self._face_local_y_world
         )
+        if new_rot is None:
+            return
 
         # Snap to face edge angles if close
         if snapping:

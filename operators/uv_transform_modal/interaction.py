@@ -388,28 +388,25 @@ def compute_offset_from_drag(drag_start_3d, drag_current_3d,
     return start_offset_x + delta_offset_x, start_offset_y + delta_offset_y
 
 
-def compute_rotation_from_drag(drag_current_3d, quad_center,
-                               proj_x, proj_y, face_normal, start_rotation):
+def compute_rotation_from_drag(drag_current_3d, quad_center, proj_x, proj_y):
     """Compute new rotation from a rotation handle drag.
 
     Rotation is computed as the angle of the drag point relative to
-    the quad center, projected onto the face plane.
+    the quad center, projected onto the face plane. proj_x/proj_y are
+    the unrotated face-local axes so the returned angle is absolute.
+    Returns None if the drag point coincides with the quad center.
     """
     delta = drag_current_3d - quad_center
 
-    # Project onto face-local axes (before rotation was applied)
-    # We need the angle in the face plane
     dx = delta.dot(proj_x)
     dy = delta.dot(proj_y)
 
     if abs(dx) < 0.0001 and abs(dy) < 0.0001:
-        return start_rotation
+        return None
 
     # The rotation handle starts at the top of the quad (along +V),
     # which is 90 degrees from the +U axis
-    angle = math.degrees(math.atan2(dx, dy))
-
-    return angle
+    return math.degrees(math.atan2(dx, dy))
 
 
 def snap_value(value, snap_increment):
@@ -534,16 +531,26 @@ def snap_edge_and_aspect(edge_a, edge_b, corner_index, fixed_quad_corners,
 def snap_point_to_face_features(point_3d, face_corners_world, threshold):
     """Snap a 3D point to face vertices or edges if close enough.
 
-    Checks vertices first (higher priority), then edge projections.
+    Vertices take priority over edges. Within each category the closest
+    candidate within the threshold wins.
     Returns (snapped_point, edge_pair_or_none).
     edge_pair_or_none is (a, b) for edge snaps, None for vertex/no snap.
     """
-    # Vertex snap
+    # Vertex snap — find the closest vertex within threshold
+    best_vert = None
+    best_vert_dist = threshold
     for vert in face_corners_world:
-        if (point_3d - vert).length < threshold:
-            return vert.copy(), None
+        dist = (point_3d - vert).length
+        if dist < best_vert_dist:
+            best_vert_dist = dist
+            best_vert = vert
+    if best_vert is not None:
+        return best_vert.copy(), None
 
-    # Edge snap (project onto each edge, snap if close)
+    # Edge snap — find the closest edge within threshold
+    best_edge_point = None
+    best_edge_pair = None
+    best_edge_dist = threshold
     n = len(face_corners_world)
     for i in range(n):
         a = face_corners_world[i]
@@ -555,8 +562,13 @@ def snap_point_to_face_features(point_3d, face_corners_world, threshold):
         t = (point_3d - a).dot(edge) / edge_len_sq
         t = max(0.0, min(1.0, t))
         closest = a + edge * t
-        if (point_3d - closest).length < threshold:
-            return closest, (a, b)
+        dist = (point_3d - closest).length
+        if dist < best_edge_dist:
+            best_edge_dist = dist
+            best_edge_point = closest
+            best_edge_pair = (a, b)
+    if best_edge_point is not None:
+        return best_edge_point, best_edge_pair
 
     return point_3d, None
 
