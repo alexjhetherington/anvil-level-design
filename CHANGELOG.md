@@ -1,11 +1,13 @@
 # Anvil Level Design Changelog
 
 # 1.6.2
-- Added hotspot tutorial (see examples/hotspot_tutorial.blend)
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
+- Added hotspot tutorial (see examples/hotspot_tutorial.blend)
 - Fix regression: cancelling a transform modal causes UV warping
 - Fix for corrupted faces after cube-cutting convex geometry
 - Move toggle grid snapping mode to ctrl+g, freeing shift+g for the blender default select hotkey
+- Fix spin UV issues (Blender's in built spin triggers undo/redo every tick?!)
+- Add automerge selected vertices after spin (in some cases Blender's in built spin vertex merge does not work)
 - Improve UV transform mode behaviour when edges and vertices are very close
 - Add UV transform edge-edge snapping
 - Add UV transform vertex snapping during move
@@ -13,8 +15,6 @@
 - UV transform gizmo visible through faces
 - UV transform works with multiple selected faces
 - Add axis aligned transforms to UV transform
-- Fix spin UV issues (Blender's in built spin triggers undo/redo every tick?!)
-- Add automerge selected vertices after spin (in some cases Blender's in built spin vertex merge does not work)
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
