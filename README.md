@@ -314,6 +314,7 @@ For a more convenient experience I recommend you consider adjusting the followin
 * The way we run initial addon setup is edge case city. See comments in code.
 * It's not feasible to have paint mode respect backface culling due to the complexity of brush operators. It means you must be 'inside' a room to paint faces you can see, or hide backfaces. Which is additionally annoying (above needing to select them in the first place given we ignore them due to backface culling) because you cannot select / hide faces in painting modes. I'm currently experimenting with forcing face orientation to be on in vertex paint mode. Anvil sets the front face orientation colour to transparent. Or maybe adding a "hide all hidden-anyway-because-they-are-not-facing-you" faces button
 * We mostly do texture application and propogation via the scale / offset / rotation abstraction. Affine based texture application is more general; currently only alt-left click will use affine texture application, and only in some cases (this is really a note to myself to not forget about it!)
+* Blender's spin operator seems to trigger the undo/redo stack every frame...? We hack around that.
 
 ### GLTF / Godot Material Limitations
 
