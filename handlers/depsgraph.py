@@ -26,6 +26,50 @@ from .lifecycle import (
 )
 
 
+def _verts_near_selected(bm, epsilon):
+    """Return selected verts plus any un-selected verts within epsilon of one.
+
+    Spin's axis-duplicate verts are coincident with the original axis verts
+    but are not selected after the operator runs, so a merge limited to the
+    selection misses them. Widen the net by proximity.
+    """
+    selected = [v for v in bm.verts if v.select]
+    if not selected:
+        return []
+    eps_sq = epsilon * epsilon
+    selected_set = set(selected)
+    result = list(selected)
+    for v in bm.verts:
+        if v in selected_set:
+            continue
+        for sv in selected:
+            if (v.co - sv.co).length_squared < eps_sq:
+                result.append(v)
+                break
+    return result
+
+
+def _cleanup_spin_degenerate_faces(bm, me):
+    """Weld axis duplicates and delete zero-area faces left behind by mesh.spin.
+
+    When the spin axis coincides with an edge of the selection, each step emits
+    a zero-area wall quad at the axis. use_auto_merge (when on) welds the
+    duplicate axis verts but leaves the collapsed faces in place; when off,
+    duplicates remain entirely.
+    """
+    merge_epsilon = 1e-5
+    merge_verts = _verts_near_selected(bm, merge_epsilon)
+    if merge_verts:
+        bmesh.ops.remove_doubles(bm, verts=merge_verts, dist=merge_epsilon)
+
+    zero_area_faces = [f for f in bm.faces if f.is_valid and f.calc_area() < 1e-8]
+    if zero_area_faces:
+        bmesh.ops.delete(bm, geom=zero_area_faces, context='FACES')
+
+    if merge_verts or zero_area_faces:
+        bmesh.update_edit_mesh(me)
+
+
 @persistent
 def on_depsgraph_update(scene, depsgraph):
     """Consolidated depsgraph update handler"""
@@ -95,6 +139,10 @@ def on_depsgraph_update(scene, depsgraph):
                     if not bm.is_valid:
                         debug_log(f"[Depsgraph] Skip: BMesh not valid")
                         continue
+
+                    active_op = bpy.context.active_operator
+                    if is_geometry_update and active_op is not None and active_op.bl_idname == "MESH_OT_spin":
+                        _cleanup_spin_degenerate_faces(bm, me)
 
                     from .face_cache import last_face_count, last_vertex_count
                     current_face_count = len(bm.faces)

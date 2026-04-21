@@ -14,6 +14,7 @@
 - UV transform works with multiple selected faces
 - Add axis aligned transforms to UV transform
 - Fix spin UV issues (Blender's in built spin triggers undo/redo every tick?!)
+- Add automerge selected vertices after spin (in some cases Blender's in built spin vertex merge does not work)
 
 # 1.6.1
 - Move gltf export items into the default blender gltf export; remove Anvil's separate scaled export
