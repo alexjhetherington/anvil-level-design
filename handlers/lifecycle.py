@@ -55,6 +55,21 @@ def _clear_undo_flag():
     set_undo_in_progress(False)
 
 
+# Operators that abuse the undo stack as their redo-panel rollback mechanism.
+# When one of these is the active operator, an undo_pre/undo_post firing is
+# the operator adjusting itself, not a user-initiated undo. We must NOT set
+# the undo-in-progress flag, or the depsgraph handler will skip UV reprojection
+# and produce 0-area UVs.
+_UNDO_ABUSING_OPERATORS = {
+    "MESH_OT_spin",
+}
+
+
+def _active_operator_abuses_undo():
+    op = bpy.context.active_operator
+    return op is not None and op.bl_idname in _UNDO_ABUSING_OPERATORS
+
+
 def _sync_weld_and_snapshot_selection():
     """Sync weld state from BMesh/Mesh to scene props after undo/redo.
 
@@ -110,6 +125,8 @@ def _migrate_legacy_uv_lock():
 @persistent
 def on_undo_pre(scene):
     """Handler called before an undo operation."""
+    if _active_operator_abuses_undo():
+        return
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
 
@@ -149,6 +166,8 @@ def on_undo_post(scene):
 @persistent
 def on_redo_pre(scene):
     """Handler called before a redo operation."""
+    if _active_operator_abuses_undo():
+        return
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
 
