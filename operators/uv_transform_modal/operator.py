@@ -17,7 +17,7 @@ from bpy_extras.view3d_utils import region_2d_to_vector_3d, region_2d_to_origin_
 
 from ...core.logging import debug_log
 from ...core.workspace_check import is_level_design_workspace
-from ...core.materials import get_image_from_material, get_texture_dimensions_from_material
+from ...core.materials import get_image_from_material, get_texture_dimensions_from_material, get_texture_node_from_material
 from ...core.uv_projection import derive_transform_from_uvs, apply_uv_to_face, get_face_local_axes
 from ...core.uv_layers import get_render_active_uv_layer
 from ...core.hotspot_queries import face_has_hotspot_material
@@ -777,7 +777,11 @@ class MESH_OT_uv_transform_modal(Operator):
         try:
             # Ghost texture: depth-tested so it reads as lying on the face.
             gpu.state.depth_test_set('LESS_EQUAL')
-            drawing.draw_ghost_texture(quad, self._image)
+            tex_node = get_texture_node_from_material(self._material)
+            # Only 'Closest' maps to nearest; Linear/Cubic/Smart all use
+            # a filtered sampler.
+            use_linear_filter = tex_node is None or tex_node.interpolation != 'Closest'
+            drawing.draw_ghost_texture(quad, self._image, use_linear_filter)
 
             # Gizmo overlays: drawn through geometry so the handles stay
             # reachable when the face is partly hidden by other meshes.

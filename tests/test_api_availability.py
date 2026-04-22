@@ -64,6 +64,10 @@ class APIAvailabilityTest(AnvilTestCase):
         # gpu.state functions used by grid_overlay
         if not hasattr(gpu.state, "active_framebuffer_get"):
             missing.append("gpu.state.active_framebuffer_get")
+        # GPUTexture.filter_mode used by the UV transform modal's
+        # ghost texture preview to match the material's interpolation.
+        if not hasattr(gpu.types.GPUTexture, "filter_mode"):
+            missing.append("gpu.types.GPUTexture.filter_mode")
 
         self.assertEqual(
             missing, [],

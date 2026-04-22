@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.3 
+- UV Transform texture preview respect closest filtering
+
 # 1.6.2
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
 - Added hotspot tutorial (see examples/hotspot_tutorial.blend)

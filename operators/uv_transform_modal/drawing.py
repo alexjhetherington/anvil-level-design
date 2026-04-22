@@ -80,20 +80,26 @@ def _get_viewport_size():
     return (region.width, region.height)
 
 
-def draw_ghost_texture(quad_corners, blender_image):
+def draw_ghost_texture(quad_corners, blender_image, use_linear_filter):
     """Draw a semi-transparent textured quad in 3D space.
 
     Args:
         quad_corners: list of 4 Vector3 [BL, BR, TR, TL]
         blender_image: bpy.types.Image to sample from
+        use_linear_filter: True for linear interpolation, False for nearest
+            (point/closest) — matches the material's Image Texture
+            interpolation setting.
     """
     if blender_image is None:
         return
 
     shader = _ensure_image_shader()
 
-    # Get or create GPU texture from the Blender image
+    # Get or create GPU texture from the Blender image. The texture is
+    # cached/shared with other Blender consumers, so its sampler state
+    # must be re-applied every draw call rather than assumed.
     gpu_texture = gpu.texture.from_image(blender_image)
+    gpu_texture.filter_mode(use_linear_filter)
 
     # Build triangulated quad (two triangles: BL-BR-TR, BL-TR-TL)
     positions = [
