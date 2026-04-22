@@ -119,13 +119,15 @@ def setup_addon_workspaces():
     scene.tool_settings.snap_elements = {'INCREMENT'}
     scene.tool_settings.use_snap_rotate = True
 
-    # Set grid subdivisions to 1 on all 3D viewports
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
+    # Set grid subdivisions to 1 and enable edge length display on every
+    # 3D viewport across all workspace screens (not just the active one).
+    for screen in bpy.data.screens:
+        for area in screen.areas:
             if area.type == 'VIEW_3D':
                 for space in area.spaces:
                     if space.type == 'VIEW_3D':
                         space.overlay.grid_subdivisions = 1
+                        space.overlay.show_extra_edge_length = True
 
 
 def remove_addon_workspaces():
