@@ -4,7 +4,7 @@
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
 - Added hotspot tutorial (see examples/hotspot_tutorial.blend)
 - Fix regression: cancelling a transform modal causes UV warping
-- Fix for corrupted faces after cube-cutting convex geometry
+- Fix for corrupted faces after cube-cutting non-convex geometry
 - Move toggle grid snapping mode to ctrl+g, freeing shift+g for the blender default select hotkey
 - Fix spin UV issues (Blender's in built spin triggers undo/redo every tick?!)
 - Add automerge selected vertices after spin (in some cases Blender's in built spin vertex merge does not work)
