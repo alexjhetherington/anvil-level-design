@@ -2,6 +2,7 @@
 
 # 1.6.3 
 - UV Transform texture preview respect closest filtering
+- Fix switching to the Level Design workspace incorrectly applying textures in some cases
 
 # 1.6.2
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)

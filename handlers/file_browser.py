@@ -321,6 +321,9 @@ def _file_browser_watcher_timer():
     if not _file_browser_watcher_running:
         return None
 
+    if not is_level_design_workspace():
+        return 0.5
+
     try:
         context = bpy.context
 
