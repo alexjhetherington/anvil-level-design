@@ -205,6 +205,32 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         default=False,
     )
 
+    # === Viewport Defaults (applied on load, override startup.blend) ===
+    pref_default_unit_system: bpy.props.EnumProperty(
+        name="Unit System",
+        description="Scene unit system applied to new (unsaved) files on load",
+        items=[
+            ('NONE', "None", "No units"),
+            ('METRIC', "Metric", "Metric units"),
+            ('IMPERIAL', "Imperial", "Imperial units"),
+        ],
+        default='NONE',
+    )
+
+    pref_default_grid_subdivisions: bpy.props.IntProperty(
+        name="Grid Subdivisions",
+        description="Grid subdivisions applied to every 3D viewport on load",
+        default=1,
+        min=1,
+        max=1024,
+    )
+
+    pref_default_show_extra_edge_length: bpy.props.BoolProperty(
+        name="Show Edge Length",
+        description="Show selected edge lengths in every 3D viewport on load (Measurement overlay)",
+        default=True,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -223,6 +249,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         layout.label(text="New File Defaults")
         box = layout.box()
         box.label(text="Applied to new (unsaved) files. Per-file overrides in Anvil (Settings) sidebar.", icon='INFO')
+        box.label(text="Changes here will not affect the current file.")
 
         box.separator()
         box.label(text="Texture Settings:")
@@ -234,6 +261,15 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         sub = row.row(align=True)
         sub.scale_x = 0.4
         sub.operator("leveldesign.pref_double_pixels", text="x2")
+
+        box.separator()
+        box.label(text="Viewport Defaults:")
+        box.prop(self, "pref_default_grid_subdivisions")
+        box.prop(self, "pref_default_show_extra_edge_length")
+
+        box.separator()
+        box.label(text="Scene Settings:")
+        box.prop(self, "pref_default_unit_system")
 
         box.separator()
         box.label(text="Default Material Settings:")

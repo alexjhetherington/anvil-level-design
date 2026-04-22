@@ -113,21 +113,28 @@ def setup_addon_workspaces():
     bpy.ops.workspace.reorder_to_front()
 
     # Configure scene settings
+    prefs = bpy.context.preferences.addons.get(__package__)
+    pref = prefs.preferences if prefs else None
+
     scene = bpy.context.scene
-    scene.unit_settings.system = 'NONE'
+    scene.unit_settings.system = pref.pref_default_unit_system if pref else 'NONE'
     scene.tool_settings.use_snap = True
     scene.tool_settings.snap_elements = {'INCREMENT'}
     scene.tool_settings.use_snap_rotate = True
 
-    # Set grid subdivisions to 1 and enable edge length display on every
-    # 3D viewport across all workspace screens (not just the active one).
+    grid_subdivisions = pref.pref_default_grid_subdivisions if pref else 1
+    show_edge_length = pref.pref_default_show_extra_edge_length if pref else True
+
+    # Apply overlay defaults to every 3D viewport across all workspace screens
+    # (not just the active one, since Level Design/Hotspot Mapping workspaces
+    # bring their own screens in from workspaces.blend).
     for screen in bpy.data.screens:
         for area in screen.areas:
             if area.type == 'VIEW_3D':
                 for space in area.spaces:
                     if space.type == 'VIEW_3D':
-                        space.overlay.grid_subdivisions = 1
-                        space.overlay.show_extra_edge_length = True
+                        space.overlay.grid_subdivisions = grid_subdivisions
+                        space.overlay.show_extra_edge_length = show_edge_length
 
 
 def remove_addon_workspaces():
