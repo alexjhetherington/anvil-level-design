@@ -336,18 +336,18 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
 
     texture_scale_u: FloatProperty(
         name="Scale U",
-        description="Horizontal texture scale",
+        description="Horizontal texture scale. Negative values mirror the texture along U",
         default=1.0,
-        min=0.001,
+        min=-100.0,
         max=100.0,
         update=update_texture_scale,
     )
 
     texture_scale_v: FloatProperty(
         name="Scale V",
-        description="Vertical texture scale",
+        description="Vertical texture scale. Negative values mirror the texture along V",
         default=1.0,
-        min=0.001,
+        min=-100.0,
         max=100.0,
         update=update_texture_scale,
     )

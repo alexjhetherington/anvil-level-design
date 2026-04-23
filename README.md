@@ -86,9 +86,13 @@ Select multiple quad faces (1 island only) to enter Grid Snapping UV Mode. The c
 
 Press Shift-T to enter UV Transform Mode. You are able to move and resize the UV on your geometry via handles on a live preview. When multiple faces are select you may choose which face is the 'origin' by hovering over it with your cursor while pressing Shift-T.
 
+Dragging a resize handle through its opposite side mirrors the texture — the resulting Scale U or Scale V in the panel goes negative. You can also type a negative Scale U/V directly in the panel to flip a face.
+
 ### Hotspot Mapping
 
 Hotspot mapping automatically assigns UV coordinates by matching face shapes to predefined regions on a texture atlas. It allows you to quickly add details to models.
+
+Hotspot UVs are never mirrored — assigning a hotspot always produces a non-flipped mapping, regardless of the face's previous UV state. Mirrored textures (negative Scale U/V) are only supported on regular, non-hotspot faces.
 
 See 'examples/hotspot_tutorial.blend' for a visual explainer of the hotspotting process.
 

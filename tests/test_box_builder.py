@@ -65,10 +65,12 @@ class BoxBuilderTest(AnvilTestCase):
         # Face-aligned projection maps world coordinates onto the best
         # projection plane per face.  Rotation varies by orientation.
         # Key: (nx, ny, nz, cx, cy, cz)
+        # face_aligned_project keeps V pointing world-+Z on vertical faces and
+        # un-mirrors by flipping U on +Y and -X, so those two end up at 180°.
         expected = {
-            (0, -1, 0, 0.5, 0.0, 0.5):  (90.0, 0.0, 0.0),   # front
-            (0, 1, 0, 0.5, 1.0, 0.5):   (0.0, 0.0, 0.0),     # back
-            (-1, 0, 0, 0.0, 0.5, 0.5):  (0.0, 0.0, 0.0),     # left
+            (0, -1, 0, 0.5, 0.0, 0.5):  (90.0, 0.0, 0.0),    # front
+            (0, 1, 0, 0.5, 1.0, 0.5):   (180.0, 0.0, 0.0),   # back
+            (-1, 0, 0, 0.0, 0.5, 0.5):  (180.0, 0.0, 0.0),   # left
             (1, 0, 0, 1.0, 0.5, 0.5):   (90.0, 0.0, 0.0),    # right
             (0, 0, -1, 0.5, 0.5, 0.0):  (0.0, 0.0, 0.0),     # bottom
             (0, 0, 1, 0.5, 0.5, 1.0):   (90.0, 0.0, 0.0),    # top
@@ -159,9 +161,9 @@ class BoxBuilderTest(AnvilTestCase):
         # the same rotation/offset pattern as test_previous_texture.
         # Key: (nx, ny, nz, cx, cy, cz)
         expected = {
-            (0, -1, 0, 0.5, 0.0, 0.5):  (90.0, 0.0, 0.0),   # front
-            (0, 1, 0, 0.5, 1.0, 0.5):   (0.0, 0.0, 0.0),     # back
-            (-1, 0, 0, 0.0, 0.5, 0.5):  (0.0, 0.0, 0.0),     # left
+            (0, -1, 0, 0.5, 0.0, 0.5):  (90.0, 0.0, 0.0),    # front
+            (0, 1, 0, 0.5, 1.0, 0.5):   (180.0, 0.0, 0.0),   # back
+            (-1, 0, 0, 0.0, 0.5, 0.5):  (180.0, 0.0, 0.0),   # left
             (1, 0, 0, 1.0, 0.5, 0.5):   (90.0, 0.0, 0.0),    # right
             (0, 0, -1, 0.5, 0.5, 0.0):  (0.0, 0.0, 0.0),     # bottom
             (0, 0, 1, 0.5, 0.5, 1.0):   (90.0, 0.0, 0.0),    # top

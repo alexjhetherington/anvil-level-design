@@ -67,22 +67,35 @@ def face_aligned_project(face, uv_layer, mat, ppm, scale=1.0):
     abs_y = abs(normal.y)
     abs_z = abs(normal.z)
 
+    # Two goals, both handled at the source:
+    #   1. No mirroring: (U-axis × V-axis) must point along the outward normal.
+    #   2. Vertical faces stay upright: V always maps to world-Z on walls.
+    # We fix mirroring by flipping U (not V) so walls never end up upside-down.
+    # For horizontal faces there's no meaningful "up", so we flip V for -Z —
+    # arbitrary but keeps the code symmetric.
+    #
+    #   Z branch (X → U, Y → V): X × Y = +Z, negate V for -Z faces.
+    #   Y branch (X → U, Z → V): X × Z = -Y, so matches -Y; negate U for +Y.
+    #   X branch (Y → U, Z → V): Y × Z = +X, so matches +X; negate U for -X.
     if abs_z > abs_x and abs_z > abs_y:
+        v_sign = 1.0 if normal.z >= 0 else -1.0
         for loop in face.loops:
             loop[uv_layer].uv = (
                 loop.vert.co.x * uv_per_meter_u,
-                loop.vert.co.y * uv_per_meter_v,
+                loop.vert.co.y * uv_per_meter_v * v_sign,
             )
     elif abs_y > abs_x:
+        u_sign = -1.0 if normal.y >= 0 else 1.0
         for loop in face.loops:
             loop[uv_layer].uv = (
-                loop.vert.co.x * uv_per_meter_u,
+                loop.vert.co.x * uv_per_meter_u * u_sign,
                 loop.vert.co.z * uv_per_meter_v,
             )
     else:
+        u_sign = 1.0 if normal.x >= 0 else -1.0
         for loop in face.loops:
             loop[uv_layer].uv = (
-                loop.vert.co.y * uv_per_meter_u,
+                loop.vert.co.y * uv_per_meter_u * u_sign,
                 loop.vert.co.z * uv_per_meter_v,
             )
 
@@ -218,10 +231,10 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
         scale_u = su_tu / tu
 
         # From vertex i: v_i = (x_i * sin + y_i * cos) / (sv * tv) = y_i * cos / (sv * tv)
-        # sv * tv = y_i * cos / v_i
+        # sv * tv = y_i * cos / v_i — keep sign so mirrored faces yield negative scale_v.
         if abs(v_i) > epsilon:
             sv_tv = y_i * cos_rot / v_i
-            scale_v = abs(sv_tv) / tv
+            scale_v = sv_tv / tv
         else:
             scale_v = scale_u  # Fallback to uniform
 
@@ -240,10 +253,10 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
         scale_v = sv_tv / tv
 
         # From vertex i: u_i = (x_i * cos - y_i * sin) / (su * tu) = -y_i * sin / (su * tu)
-        # su * tu = -y_i * sin / u_i
+        # su * tu = -y_i * sin / u_i — keep sign so mirrored faces yield negative scale_u.
         if abs(u_i) > epsilon:
             su_tu = -y_i * sin_rot / u_i
-            scale_u = abs(su_tu) / tu
+            scale_u = su_tu / tu
         else:
             scale_u = scale_v  # Fallback to uniform
 
@@ -269,9 +282,10 @@ def derive_transform_from_uvs(face, uv_layer, ppm, me):
             B = L / math.sqrt(denom_sq)
             A = r * B
 
-            # su = A / tu, sv = B / tv
-            scale_u = abs(A) / tu
-            scale_v = abs(B) / tv
+            # su = A / tu, sv = B / tv — keep sign so mirrored UVs
+            # produce a negative scale on one axis.
+            scale_u = A / tu
+            scale_v = B / tv
 
             # rotation = atan2(dv, du * r)
             rotation = math.degrees(math.atan2(dv, du * r))
@@ -736,6 +750,13 @@ def apply_uv_to_face(face, uv_layer, scale_u, scale_v, rotation_deg, offset_x, o
 
     # Get texture dimensions from material
     tex_meters_u, tex_meters_v = get_texture_dimensions_from_material(mat, ppm)
+
+    # Negative scale is supported (mirrored UVs), but exact zero would make the
+    # UV division degenerate. Skip the update so the caller's previous UVs stay
+    # put — this matters when the shift-T modal drags a corner through its
+    # pivot and momentarily hits zero.
+    if abs(scale_u * tex_meters_u) < 1e-8 or abs(scale_v * tex_meters_v) < 1e-8:
+        return
 
     # Rotate the projection axes in face space
     # This determines which face direction maps to texture U vs V

@@ -592,9 +592,9 @@ class MESH_OT_uv_transform_modal(Operator):
                 # so the snap can only move us along the allowed direction.
                 su = self._scale_u * self._tex_meters_u
                 sv = self._scale_v * self._tex_meters_v
-                if not lock_u and su > 0.0001:
+                if not lock_u and abs(su) > 0.0001:
                     self._offset_x -= snap_delta.dot(proj_x) / su
-                if not lock_v and sv > 0.0001:
+                if not lock_v and abs(sv) > 0.0001:
                     self._offset_y -= snap_delta.dot(proj_y) / sv
 
     def _apply_edge_drag(self, current_3d, proj_x, proj_y, snapping):
@@ -677,8 +677,10 @@ class MESH_OT_uv_transform_modal(Operator):
         delta = drag_center - self._first_vert_world
         su = self._scale_u * self._tex_meters_u
         sv = self._scale_v * self._tex_meters_v
-        self._offset_x = 0.5 - delta.dot(new_proj_x) / su
-        self._offset_y = 0.5 - delta.dot(new_proj_y) / sv
+        if abs(su) > 1e-8:
+            self._offset_x = 0.5 - delta.dot(new_proj_x) / su
+        if abs(sv) > 1e-8:
+            self._offset_y = 0.5 - delta.dot(new_proj_y) / sv
 
     def _apply_transform(self, context):
         """Apply the current working transform to the primary face UVs,

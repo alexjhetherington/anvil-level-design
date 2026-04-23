@@ -225,18 +225,18 @@ def compute_scale_offset_from_corner_drag(dragged_3d, corner_index, fixed_quad_c
     dragged_x = (dragged_3d - first_vert_world).dot(proj_x)
     dragged_y = (dragged_3d - first_vert_world).dot(proj_y)
 
-    # su = scale_u * tex_meters_u (total tile size in world units along U)
-    # denom is always +1 or -1 since opposite corners differ in both u and v
+    # su = scale_u * tex_meters_u (total tile size in world units along U).
+    # denom is always +1 or -1 since opposite corners differ in both u and v.
+    # Sign of su/sv is meaningful: a negative value means the user dragged the
+    # corner past its opposite and the texture is now mirrored along that axis.
     su = (dragged_x - fixed_x) / (du - fu)
     sv = (dragged_y - fixed_y) / (dv - fv)
 
-    # Prevent zero/negative (user dragged past the opposite corner)
-    su = max(su, 0.001 * tex_meters_u)
-    sv = max(sv, 0.001 * tex_meters_v)
-
-    # Derive offset so the fixed corner stays in place
-    offset_x = fu - fixed_x / su
-    offset_y = fv - fixed_y / sv
+    # Derive offset so the fixed corner stays in place. apply_uv_to_face
+    # skips writes when |scale * tex_meters| is near zero, so division here
+    # is safe as long as the caller doesn't divide by the returned scale.
+    offset_x = fu - fixed_x / su if abs(su) > 1e-8 else 0.0
+    offset_y = fv - fixed_y / sv if abs(sv) > 1e-8 else 0.0
 
     scale_u = su / tex_meters_u
     scale_v = sv / tex_meters_v
@@ -268,8 +268,8 @@ def recompute_offset_for_fixed_corner(corner_index, fixed_quad_corners,
     su = scale_u * tex_meters_u
     sv = scale_v * tex_meters_v
 
-    offset_x = fu - fixed_x / su
-    offset_y = fv - fixed_y / sv
+    offset_x = fu - fixed_x / su if abs(su) > 1e-8 else 0.0
+    offset_y = fv - fixed_y / sv if abs(sv) > 1e-8 else 0.0
 
     return offset_x, offset_y
 
@@ -321,18 +321,18 @@ def compute_scale_offset_from_edge_drag(dragged_3d, edge_index, fixed_quad_corne
     offset_x = drag_start_offset_x
     offset_y = drag_start_offset_y
 
+    # Sign of su/sv is meaningful: a negative value means the dragged edge
+    # crossed the pinned edge and the texture is now mirrored along that axis.
     if axis == 'u':
         delta_u = drag_edge_coord - fu  # ±1
         su = (dragged_x - fixed_x) / delta_u
-        su = max(su, 0.001 * tex_meters_u)
         scale_u = su / tex_meters_u
-        offset_x = fu - fixed_x / su
+        offset_x = fu - fixed_x / su if abs(su) > 1e-8 else offset_x
     else:
         delta_v = drag_edge_coord - fv  # ±1
         sv = (dragged_y - fixed_y) / delta_v
-        sv = max(sv, 0.001 * tex_meters_v)
         scale_v = sv / tex_meters_v
-        offset_y = fv - fixed_y / sv
+        offset_y = fv - fixed_y / sv if abs(sv) > 1e-8 else offset_y
 
     return scale_u, scale_v, offset_x, offset_y
 
@@ -361,11 +361,13 @@ def recompute_offset_for_fixed_edge(edge_index, fixed_quad_corners,
     offset_y = drag_start_offset_y
 
     if axis == 'u':
-        fixed_x = (fixed_pos - first_vert_world).dot(proj_x)
-        offset_x = fu - fixed_x / su
+        if abs(su) > 1e-8:
+            fixed_x = (fixed_pos - first_vert_world).dot(proj_x)
+            offset_x = fu - fixed_x / su
     else:
-        fixed_y = (fixed_pos - first_vert_world).dot(proj_y)
-        offset_y = fv - fixed_y / sv
+        if abs(sv) > 1e-8:
+            fixed_y = (fixed_pos - first_vert_world).dot(proj_y)
+            offset_y = fv - fixed_y / sv
 
     return offset_x, offset_y
 
@@ -383,6 +385,8 @@ def _snap_scale_along_axis(adj_pos, fixed_pos, axis, perp_axis, delta_uv,
     the current mouse position.
 
     Returns the snapped scale (world-space, i.e. scale * tex_meters), or None.
+    A negative return value indicates the edge lies on the mirrored side of
+    the fixed corner — valid when the user has dragged the quad through itself.
     """
     current_dist = (adj_pos - fixed_pos).dot(axis)
     best_snap = None
@@ -404,7 +408,9 @@ def _snap_scale_along_axis(adj_pos, fixed_pos, axis, perp_axis, delta_uv,
         crossing = a + edge * t
         crossing_dist = (crossing - fixed_pos).dot(axis)
         candidate = crossing_dist / delta_uv
-        if candidate < min_scale:
+        # Reject near-zero magnitudes (degenerate), but allow either sign so a
+        # mirrored quad can snap to face edges on the far side of the pivot.
+        if abs(candidate) < min_scale:
             continue
         delta = abs(current_dist - crossing_dist)
         if delta < best_delta:
@@ -579,9 +585,14 @@ def snap_point_to_grid(point_3d, grid_size):
 def snap_aspect_ratio(scale_u, scale_v):
     """If scale_u and scale_v are close to each other, snap to 1:1 ratio.
 
+    Only snaps when both scales have the same sign — opposite-sign scales
+    represent a single-axis mirror, which is not an aspect-ratio issue.
+
     Returns (scale_u, scale_v) — possibly modified to match.
     """
-    if scale_u < 0.001 or scale_v < 0.001:
+    if abs(scale_u) < 0.001 or abs(scale_v) < 0.001:
+        return scale_u, scale_v
+    if (scale_u > 0) != (scale_v > 0):
         return scale_u, scale_v
     ratio = scale_u / scale_v
     if abs(ratio - 1.0) < ASPECT_SNAP_THRESHOLD:
@@ -602,7 +613,11 @@ def snap_edge_and_aspect(edge_a, edge_b, corner_index, fixed_quad_corners,
 
     Returns (scale_u, scale_v) if the combined snap applies, or None.
     """
-    if scale_u < 0.001 or scale_v < 0.001:
+    if abs(scale_u) < 0.001 or abs(scale_v) < 0.001:
+        return None
+    # Opposite-sign scales represent a single-axis mirror — aspect-ratio
+    # snapping doesn't apply.
+    if (scale_u > 0) != (scale_v > 0):
         return None
     ratio = scale_u / scale_v
     if abs(ratio - 1.0) >= ASPECT_SNAP_THRESHOLD:
@@ -651,7 +666,7 @@ def snap_edge_and_aspect(edge_a, edge_b, corner_index, fixed_quad_corners,
     point_rel = point - fixed_pos
     su = point_rel.dot(proj_x) / delta_u
     sv = point_rel.dot(proj_y) / delta_v
-    if su < 0.001 * tex_meters_u or sv < 0.001 * tex_meters_v:
+    if abs(su) < 0.001 * tex_meters_u or abs(sv) < 0.001 * tex_meters_v:
         return None
 
     return su / tex_meters_u, sv / tex_meters_v
@@ -798,7 +813,9 @@ def _snap_scale_to_parallel_face_edge(fixed_pos, axis, perp_axis, delta_uv,
             continue
         face_axis_coord = (a - fixed_pos).dot(axis)
         candidate = face_axis_coord / delta_uv
-        if candidate < min_scale_world:
+        # Reject near-zero magnitudes (degenerate), but allow either sign so a
+        # mirrored quad can snap to face edges on the far side of the pivot.
+        if abs(candidate) < min_scale_world:
             continue
         delta = abs(current_dist - face_axis_coord)
         if delta < best_delta:

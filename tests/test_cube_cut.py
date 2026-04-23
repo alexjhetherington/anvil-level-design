@@ -85,11 +85,13 @@ class CubeCutTest(AnvilTestCase):
             (0, -1, 0, 0.5, 0.0, 0.88):   (0.0, 0.25, 0.75, 0.5, 0.5),
             (0, -1, 0, 0.5, 0.0, 0.12):   (180.0, 0.75, 0.25, 0.5, 0.5),
             (0, -1, 0, 0.12, 0.0, 0.5):   (90.0, 0.25, 0.25, 0.5, 0.5),
-            # Back frame (+Y normal at y=1)
-            (0, 1, 0, 0.5, 1.0, 0.88):    (180.0, 0.75, 0.75, 0.5, 0.5),
-            (0, 1, 0, 0.12, 1.0, 0.5):    (-90.0, 0.25, 0.75, 0.5, 0.5),
-            (0, 1, 0, 0.5, 1.0, 0.12):    (0.0, 0.25, 0.25, 0.5, 0.5),
-            (0, 1, 0, 0.88, 1.0, 0.5):    (90.0, 0.75, 0.25, 0.5, 0.5),
+            # Back frame (+Y normal at y=1) — face_aligned_project flips U
+            # on +Y faces, so offsets on U and some rotations flip relative
+            # to the mirrored counterparts on the front frame.
+            (0, 1, 0, 0.5, 1.0, 0.88):    (0.0, 0.25, 0.75, 0.5, 0.5),
+            (0, 1, 0, 0.12, 1.0, 0.5):    (-90.0, 0.75, 0.75, 0.5, 0.5),
+            (0, 1, 0, 0.5, 1.0, 0.12):    (180.0, 0.75, 0.25, 0.5, 0.5),
+            (0, 1, 0, 0.88, 1.0, 0.5):    (90.0, 0.25, 0.25, 0.5, 0.5),
         }
 
         for face in bm.faces:
@@ -216,22 +218,41 @@ class CubeCutTest(AnvilTestCase):
         # edge ordering, so each face has two acceptable UV projections.
         # Key: (nx, ny, nz, cx, cy, cz)
         # Values: list of (scale_u, scale_v, rotation, offset_x, offset_y)
+        # Bridged faces get UVs from _project_new_faces (handlers/auto_hotspot.py),
+        # which copies the transform from a "best neighbor" adjacent face. Two
+        # sources of variation:
+        #  (a) bridge_edge_loops can pick either winding, changing loop order.
+        #  (b) _get_best_neighbor_face ranks neighbors and breaks ties by
+        #      bmesh edge/face iteration order — not deterministic across
+        #      suites, since prior tests' operations perturb internal order.
+        # Before face_aligned_project was un-mirrored, (b) collapsed into two
+        # equivalent forms so the test only needed two alternatives. Now the
+        # V-flipped and non-flipped sources produce distinct outputs, giving
+        # up to four valid forms per face.
         bridged_expected = {
             (1, 0, 0, 0.25, 0.5, 0.5):   [
                 (1.0, 1.0, 90.0, 0.25, 0.25),
                 (1.0, 1.0, -90.0, 0.25, 0.75),
+                (1.0, 1.0, 90.0, 0.75, 0.25),
+                (1.0, 1.0, -90.0, 0.75, 0.75),
             ],
             (-1, 0, 0, 0.75, 0.5, 0.5):  [
                 (1.0, 1.0, -90.0, 0.75, 0.75),
                 (1.0, 1.0, 90.0, 0.75, 0.25),
+                (1.0, 1.0, -90.0, 0.25, 0.75),
+                (1.0, 1.0, 90.0, 0.25, 0.25),
             ],
             (0, 0, 1, 0.5, 0.5, 0.25):   [
                 (1.0, 1.0, 180.0, 0.75, 0.25),
                 (1.0, 1.0, 0.0, 0.25, 0.25),
+                (1.0, 1.0, 180.0, 0.75, 0.75),
+                (1.0, 1.0, 0.0, 0.25, 0.75),
             ],
             (0, 0, -1, 0.5, 0.5, 0.75):  [
                 (1.0, 1.0, 0.0, 0.25, 0.75),
                 (1.0, 1.0, 180.0, 0.75, 0.75),
+                (1.0, 1.0, 0.0, 0.25, 0.25),
+                (1.0, 1.0, 180.0, 0.75, 0.25),
             ],
         }
 
