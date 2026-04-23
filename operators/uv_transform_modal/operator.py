@@ -291,9 +291,19 @@ class MESH_OT_uv_transform_modal(Operator):
 
         # Transform face-local axes to world space (direction only)
         rot_scale = self._world_matrix.to_3x3()
-        self._face_local_x_world = (rot_scale @ self._face_local_x).normalized()
-        self._face_local_y_world = (rot_scale @ self._face_local_y).normalized()
+        face_local_x_world_vec = rot_scale @ self._face_local_x
+        face_local_y_world_vec = rot_scale @ self._face_local_y
+        self._face_local_x_world = face_local_x_world_vec.normalized()
+        self._face_local_y_world = face_local_y_world_vec.normalized()
         self._face_normal_world = (rot_scale @ self._face_normal).normalized()
+
+        # Convert tex_meters from local to world units. The ghost preview and
+        # drag math run in world space against the normalized face-axis vectors
+        # above, but tex_meters was computed from pixels/ppm in object-local
+        # units. Without this scale correction, the ghost would be off by the
+        # object's scale factor when it isn't 1.
+        self._tex_meters_u *= face_local_x_world_vec.length
+        self._tex_meters_v *= face_local_y_world_vec.length
 
         # Pre-compute edge angles across all selected faces for rotation snapping
         self._face_edge_angles = compute_face_edge_angles(

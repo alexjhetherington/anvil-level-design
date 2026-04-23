@@ -5,6 +5,7 @@
 - Fix switching to the Level Design workspace incorrectly applying textures in some cases
 - Default show edge length on
 - Add show edge length, subdivisions, and Unit system to addon preferences
+- Correct texture transform preview on scaled objects
 
 # 1.6.2
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
