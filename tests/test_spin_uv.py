@@ -13,7 +13,7 @@ import math
 import bmesh
 import bpy
 
-from ..core.uv_projection import apply_uv_to_face
+from ..core.uv_projection import apply_uv_to_face, derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override
 from .test_uv_extend import (
@@ -137,3 +137,87 @@ class SpinPreservesUVScaleTest(AnvilTestCase):
         self.assertEqual(
             len(scale_3), 1,
             "Expected exactly one face at scale 3.0 (the spin end cap)")
+
+
+class SpinThenExtrudeCapTest(AnvilTestCase):
+    """Repro: pressing E to extrude the spin's end cap immediately after the
+    spin finishes. active_operator is still MESH_OT_spin, so the depsgraph
+    handler's cleanup path fires during the extrude's geometry burst and
+    welds the extrude's duplicate verts back into the cap's originals.
+
+    Same cube + UV setup as SpinPreservesUVScaleTest. After the spin, we
+    re-select only the end cap (identified by its scale-3 UV) and extrude
+    along the face normal. A correct extrude of a quad should add 4 verts.
+    """
+
+    def test_extrude_cap_after_spin_preserves_new_verts(self):
+        obj = _setup_cube_and_select_top_face("spin_then_extrude_cap", 2.0, 2.0)
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select_set(False)
+        target = None
+        for f in bm.faces:
+            if f.normal.y > 0.9:
+                f.select_set(True)
+                target = f
+                break
+        bm.select_flush_mode()
+
+        uv_layer_0 = bm.loops.layers.uv[0]
+        mat = obj.data.materials[0]
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        apply_uv_to_face(target, uv_layer_0, 3.0, 3.0, 0.0, 0.0, 0.0,
+                         mat, ppm, obj.data)
+        bmesh.update_edit_mesh(obj.data)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.spin(
+                'EXEC_DEFAULT',
+                True,
+                steps=4,
+                dupli=False,
+                angle=math.radians(90),
+                use_auto_merge=True,
+                use_normal_flip=False,
+                center=(1.0, 1.0, 0.0),
+                axis=(0.0, 0.0, 1.0),
+            )
+        yield 0.5
+
+        # Select only the end cap (scale-3 UV face).
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select_set(False)
+        uv_layer_0 = bm.loops.layers.uv[0]
+        cap_face = None
+        for f in bm.faces:
+            t = derive_transform_from_uvs(f, uv_layer_0, ppm, obj.data)
+            if (abs(t['scale_u'] - 3.0) < 0.01
+                    and abs(t['scale_v'] - 3.0) < 0.01):
+                f.select_set(True)
+                cap_face = f
+                break
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data)
+        self.assertIsNotNone(cap_face, "Could not find end cap face")
+
+        verts_before = len(obj.data.vertices)
+
+        yield from self.simulate_extrude(value=1)
+
+        verts_after = len(obj.data.vertices)
+
+        self.assertEqual(
+            verts_after - verts_before, 4,
+            msg=(
+                f"Extruding a quad cap should add 4 new verts. Got "
+                f"{verts_after - verts_before}. Likely cause: "
+                f"active_operator is still MESH_OT_spin during the "
+                f"extrude's depsgraph update, so the spin cleanup path "
+                f"welds the new duplicate verts back into the cap."
+            ),
+        )
