@@ -32,10 +32,7 @@ from .active_image import (  # noqa: F401
     get_selected_faces_share_image,
     redraw_ui_panels,
 )
-from .auto_hotspot import (  # noqa: F401
-    apply_auto_hotspots,
-    set_undo_in_progress,
-)
+from .auto_hotspot import apply_auto_hotspots  # noqa: F401
 from .uv_world_scale import (  # noqa: F401
     apply_world_scale_uvs,
     apply_uv_lock,

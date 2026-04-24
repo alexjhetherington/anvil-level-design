@@ -17,10 +17,7 @@ from .active_image import (
     update_active_image_from_face, redraw_ui_panels,
     get_active_image, save_previous_image_state, restore_previous_image_state,
 )
-from .auto_hotspot import (
-    get_undo_in_progress, set_undo_in_progress,
-    set_auto_hotspot_pending,
-)
+from .auto_hotspot import set_auto_hotspot_pending
 from .mode_tracking import (
     set_all_grid_scales_to_default, disable_correct_uv_slide,
     subscribe_unit_settings, subscribe_object_mode, reset_mode_tracking,
@@ -34,6 +31,9 @@ from .file_browser import (
 # Set True on file load to allow first depsgraph to sync active image from selected face
 _file_loaded_into_edit_depsgraph = False
 
+# Track undo/redo operations so the depsgraph handler can skip reprojection
+_undo_in_progress = False
+
 
 def get_file_loaded_into_edit_depsgraph():
     return _file_loaded_into_edit_depsgraph
@@ -42,6 +42,15 @@ def get_file_loaded_into_edit_depsgraph():
 def set_file_loaded_into_edit_depsgraph(value):
     global _file_loaded_into_edit_depsgraph
     _file_loaded_into_edit_depsgraph = value
+
+
+def get_undo_in_progress():
+    return _undo_in_progress
+
+
+def set_undo_in_progress(value):
+    global _undo_in_progress
+    _undo_in_progress = value
 
 
 def _clear_file_loaded_flag():

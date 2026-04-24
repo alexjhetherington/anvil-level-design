@@ -17,7 +17,7 @@ from .face_cache import (
     face_data_cache, cache_single_face, cache_face_data,
     get_cached_layer_data,
 )
-from .auto_hotspot import _get_best_neighbor_face
+from .new_face_projection import get_best_neighbor_face
 
 
 # Modal operators that restore-from-snapshot and re-apply on each mouse move.
@@ -204,7 +204,7 @@ def apply_world_scale_uvs(obj, scene):
                                 and f[id_layer] in face_data_cache
                                 and abs(face_data_cache[f[id_layer]].get('scale_u', 1.0)) < 1e-8
                                 and abs(face_data_cache[f[id_layer]].get('scale_v', 1.0)) < 1e-8}
-                    source_face = _get_best_neighbor_face(face, excluded, id_layer)
+                    source_face = get_best_neighbor_face(face, excluded, id_layer)
                     if source_face:
                         set_uv_from_other_face(source_face, face, uv_layer, ppm, me, obj.matrix_world)
                     else:

@@ -218,11 +218,11 @@ class CubeCutTest(AnvilTestCase):
         # edge ordering, so each face has two acceptable UV projections.
         # Key: (nx, ny, nz, cx, cy, cz)
         # Values: list of (scale_u, scale_v, rotation, offset_x, offset_y)
-        # Bridged faces get UVs from _project_new_faces (handlers/auto_hotspot.py),
-        # which copies the transform from a "best neighbor" adjacent face. Two
-        # sources of variation:
+        # Bridged faces get UVs from project_new_faces
+        # (handlers/new_face_projection.py), which copies the transform from a
+        # "best neighbor" adjacent face. Two sources of variation:
         #  (a) bridge_edge_loops can pick either winding, changing loop order.
-        #  (b) _get_best_neighbor_face ranks neighbors and breaks ties by
+        #  (b) get_best_neighbor_face ranks neighbors and breaks ties by
         #      bmesh edge/face iteration order — not deterministic across
         #      suites, since prior tests' operations perturb internal order.
         # Before face_aligned_project was un-mirrored, (b) collapsed into two

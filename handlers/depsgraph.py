@@ -15,14 +15,13 @@ from .face_cache import (
     get_last_edit_object_name, set_last_edit_object_name,
 )
 from .active_image import update_active_image_from_face
-from .auto_hotspot import (
-    get_undo_in_progress, apply_auto_hotspots,
-    set_force_auto_hotspot, _project_new_faces,
-)
+from .auto_hotspot import apply_auto_hotspots, set_force_auto_hotspot
+from .new_face_projection import project_new_faces
 from .uv_world_scale import apply_world_scale_uvs, apply_uv_lock, get_topology_modal_ops
 from .file_browser import consolidate_duplicate_materials
 from .lifecycle import (
     get_file_loaded_into_edit_depsgraph, set_file_loaded_into_edit_depsgraph,
+    get_undo_in_progress,
 )
 
 
@@ -182,7 +181,7 @@ def on_depsgraph_update(scene, depsgraph):
                         _invalidate_fixed_overlay()
 
                         if not is_fresh_start:
-                            _project_new_faces(context, bm)
+                            project_new_faces(context, bm)
 
                         topo_window = bpy.context.window
                         topo_modals = set(op.bl_idname for op in topo_window.modal_operators) if topo_window else set()
