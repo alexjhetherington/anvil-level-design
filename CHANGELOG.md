@@ -2,11 +2,12 @@
 
 # 1.6.3 
 - Supports flipped textures (excluding hotspots)
-- UV Transform texture preview respect closest filtering
+- UV Transform texture preview respects closest filtering
 - Correct UV Transform preview on scaled objects
 - Fix switching to the Level Design workspace incorrectly applying textures in some cases
 - Default show edge length on
 - Add show edge length, subdivisions, and Unit system to addon preferences
+- Fix automerge vertices on spin continuing to trigger after the spin
 
 # 1.6.2
 - Improve back face selection culling edge / vert selection (fix bugs and more heuristics in ambiguous situations)
