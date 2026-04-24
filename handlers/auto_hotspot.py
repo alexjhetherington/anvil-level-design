@@ -2,6 +2,7 @@
 
 import bmesh
 import bpy
+from mathutils import Matrix, Vector
 
 from ..core.logging import debug_log
 from ..core.face_id import (
@@ -195,6 +196,72 @@ def apply_auto_hotspots():
     bpy.app.timers.register(_apply_auto_hotspots_deferred, first_interval=0.1)
 
 
+def _find_spin_rotated_faces(bm, id_layer):
+    """Identify faces that are precise rotations of a cached face around the
+    active spin operator's axis.
+
+    Rationale: bmesh.ops.spin copies custom-data face layers (including
+    anvil_face_id) from source faces onto the new rotated copies AND onto
+    unrelated wall/wedge faces. We can't tell caps from walls by fid alone,
+    but we can verify geometrically: a face that is a source's vertices
+    rotated by k·step_angle around the spin axis IS a cap (Blender already
+    transported UVs onto it); anything else with the same fid is not.
+
+    Returns the set of faces to treat as "already has correct UVs". Only
+    fires when the active operator is MESH_OT_spin.
+    """
+    active_op = bpy.context.active_operator
+    if active_op is None or active_op.bl_idname != "MESH_OT_spin":
+        return set()
+
+    try:
+        center = Vector(active_op.properties.center)
+        axis = Vector(active_op.properties.axis)
+        steps = int(active_op.properties.steps)
+        angle = float(active_op.properties.angle)
+    except (AttributeError, TypeError):
+        return set()
+
+    if steps <= 0 or axis.length < 1e-8:
+        return set()
+    axis = axis.normalized()
+    step_angle = angle / steps
+
+    result = set()
+    pos_eps = 1e-3
+    for face in bm.faces:
+        if not face.is_valid:
+            continue
+        fid = face[id_layer]
+        if fid == 0:
+            continue
+        cached = face_data_cache.get(fid)
+        if not cached:
+            continue
+        cached_verts = cached.get('verts')
+        if not cached_verts:
+            continue
+        current_verts = [v.co for v in face.verts]
+        if len(current_verts) != len(cached_verts):
+            continue
+
+        # Try both rotation directions. Blender's spin angle sign vs CW/CCW
+        # interpretation can vary with the gizmo's viewport-drag direction, so
+        # we don't assume a sign.
+        for k in list(range(1, steps + 1)) + list(range(-steps, 0)):
+            rot = Matrix.Rotation(k * step_angle, 4, axis)
+            matched = True
+            for cv, cached_v in zip(current_verts, cached_verts):
+                expected = rot @ (cached_v - center) + center
+                if (expected - cv).length > pos_eps:
+                    matched = False
+                    break
+            if matched:
+                result.add(face)
+                break
+    return result
+
+
 def _get_best_neighbor_face(face, excluded_faces, id_layer, allow_fallback=True):
     """Find the best neighboring face to use as UV source.
 
@@ -277,6 +344,11 @@ def _project_new_faces(context, bm):
 
     id_layer = get_face_id_layer(bm)
 
+    # Faces that are exact rotations (around the active spin axis) of their
+    # cached source. Treated as "preserved" throughout — Blender's spin has
+    # already placed correct UVs on them. Populated only for MESH_OT_spin.
+    spin_rotated = _find_spin_rotated_faces(bm, id_layer)
+
     # --- Handle duplicate face IDs ---
     seen_ids = set()
     duplicated_ids = set()
@@ -299,6 +371,8 @@ def _project_new_faces(context, bm):
             fid = face[id_layer]
             if fid not in duplicated_ids or not face.is_valid:
                 continue
+            if face in spin_rotated:
+                continue  # handled via spin_rotated
             if face_has_hotspot_material(face, me):
                 continue
 
@@ -332,7 +406,7 @@ def _project_new_faces(context, bm):
                 else:
                     dupe_coplanar.add(face)
 
-        all_categorized = dupe_exact | dupe_coplanar | dupe_extrusions
+        all_categorized = dupe_exact | dupe_coplanar | dupe_extrusions | spin_rotated
         for face in bm.faces:
             fid = face[id_layer]
             if fid not in duplicated_ids:
@@ -345,6 +419,8 @@ def _project_new_faces(context, bm):
     for f in bm.faces:
         if not f.is_valid or face_has_hotspot_material(f, me):
             continue
+        if f in spin_rotated:
+            continue
         if f[id_layer] == 0 or f in dupe_other:
             new_faces.add(f)
 
@@ -353,7 +429,7 @@ def _project_new_faces(context, bm):
 
     affected = set(new_faces)
     queue = list(affected)
-    visited = set(affected) | dupe_extrusions | dupe_exact
+    visited = set(affected) | dupe_extrusions | dupe_exact | spin_rotated
     while queue:
         current = queue.pop(0)
         for edge in current.edges:
@@ -465,7 +541,7 @@ def _project_new_faces(context, bm):
     affected -= translated
 
     # Step 2: Wavefront projection of remaining affected faces.
-    excluded = (new_faces | dupe_extrusions) - coplanar_reproject
+    excluded = (new_faces | dupe_extrusions | spin_rotated) - coplanar_reproject
     projected_count = len(coplanar_reproject)
     remaining = sorted(affected,
                        key=lambda f: f.calc_center_median().length_squared)
