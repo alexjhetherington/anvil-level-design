@@ -205,11 +205,14 @@ class SpinThenExtrudeCapTest(AnvilTestCase):
         bmesh.update_edit_mesh(obj.data)
         self.assertIsNotNone(cap_face, "Could not find end cap face")
 
-        verts_before = len(obj.data.vertices)
+        # Read counts off BMesh, not obj.data.vertices: in edit mode, the
+        # mesh's stored vertex list only re-syncs on mode exit or a
+        # destructive bmesh.update_edit_mesh. BMesh is the source of truth.
+        verts_before = len(bmesh.from_edit_mesh(obj.data).verts)
 
         yield from self.simulate_extrude(value=1)
 
-        verts_after = len(obj.data.vertices)
+        verts_after = len(bmesh.from_edit_mesh(obj.data).verts)
 
         self.assertEqual(
             verts_after - verts_before, 4,

@@ -121,20 +121,6 @@ def _purge_all():
     # breaks edge extrude in uv_extend).
     bpy.context.tool_settings.mesh_select_mode = (True, False, False)
 
-    # Displace any stale active_operator from the previous test. The
-    # depsgraph handler checks bpy.context.active_operator == MESH_OT_spin
-    # to trigger axis-wall cleanup; when test_spin_uv leaves that as the
-    # last operator, the simulated-event timing in later tests lets the
-    # cleanup fire during a modal extrude's initial geometry burst,
-    # merging the new duplicate verts. Adding + removing a primitive
-    # (with undo=True so it actually claims the active_operator slot)
-    # supersedes the reference so subsequent tests start clean.
-    with bpy.context.temp_override(window=window):
-        bpy.ops.mesh.primitive_plane_add('EXEC_DEFAULT', True)
-        for obj in list(bpy.data.objects):
-            bpy.data.objects.remove(obj, do_unlink=True)
-        for m in list(bpy.data.meshes):
-            bpy.data.meshes.remove(m, do_unlink=True)
     for area in window.screen.areas:
         if area.type == 'VIEW_3D':
             rv3d = area.spaces.active.region_3d

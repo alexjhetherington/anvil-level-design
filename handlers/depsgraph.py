@@ -48,6 +48,28 @@ def _verts_near_selected(bm, epsilon):
     return result
 
 
+# Fingerprint (center, axis, steps, angle) of the last MESH_OT_spin execution
+# we've cleaned up. Cleared whenever the active operator is no longer spin.
+# Drag-spin advances the angle on every step → fingerprint changes → cleanup
+# fires again. E/G/R after a spin don't touch spin's properties → fingerprint
+# stays equal → cleanup skipped, even though active_operator is still spin
+# during the extrude macro's initial geometry burst (before transform.translate
+# registers in window.modal_operators).
+_last_cleaned_spin_fingerprint = None
+
+
+def _spin_op_fingerprint(op):
+    try:
+        return (
+            tuple(op.properties.center),
+            tuple(op.properties.axis),
+            int(op.properties.steps),
+            float(op.properties.angle),
+        )
+    except (AttributeError, TypeError):
+        return None
+
+
 def _cleanup_spin_degenerate_faces(bm, me):
     """Weld axis duplicates and delete zero-area faces left behind by mesh.spin.
 
@@ -140,8 +162,14 @@ def on_depsgraph_update(scene, depsgraph):
                         continue
 
                     active_op = bpy.context.active_operator
-                    if is_geometry_update and active_op is not None and active_op.bl_idname == "MESH_OT_spin":
-                        _cleanup_spin_degenerate_faces(bm, me)
+                    global _last_cleaned_spin_fingerprint
+                    if active_op is None or active_op.bl_idname != "MESH_OT_spin":
+                        _last_cleaned_spin_fingerprint = None
+                    elif is_geometry_update:
+                        fp = _spin_op_fingerprint(active_op)
+                        if fp is not None and fp != _last_cleaned_spin_fingerprint:
+                            _cleanup_spin_degenerate_faces(bm, me)
+                            _last_cleaned_spin_fingerprint = fp
 
                     from .face_cache import last_face_count, last_vertex_count
                     current_face_count = len(bm.faces)
