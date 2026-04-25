@@ -22,9 +22,6 @@ from mathutils import Vector
 from ..core.logging import debug_log
 from ..core.workspace_check import is_level_design_workspace
 from ..core.geometry import are_verts_coplanar, compute_normal_from_verts
-from ..core.uv_layers import get_render_active_uv_layer
-
-from .texture_apply import set_uv_from_other_face
 
 
 # BMesh layer names (all stored on vert 0)
@@ -736,9 +733,20 @@ class MESH_OT_context_weld(bpy.types.Operator):
             self.report({'ERROR'}, f"Bridge failed: {e}")
             return {'CANCELLED'}
 
-        # Clear BMesh weld layers (participates in edit-mode undo).
         me = context.active_object.data
         bm = bmesh.from_edit_mesh(me)
+
+        # Project UVs onto the new faces inside the operator so the corrected
+        # UVs are part of the operator's pushed undo step, not a transitional
+        # state that depsgraph fixes up afterwards.  Then refresh the cache so
+        # the new faces get face IDs and the post-operator depsgraph cycle
+        # sees no topology change and skips the redundant projection.
+        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.face_cache import cache_face_data
+        project_new_faces(context, bm)
+        cache_face_data(context)
+
+        # Clear BMesh weld layers (participates in edit-mode undo).
         clear_weld_on_bmesh(bm)
 
         # Deselect everything and switch to face select mode
@@ -868,19 +876,7 @@ class MESH_OT_context_weld(bpy.types.Operator):
             f.select = True
         bm.select_flush_mode()
 
-        # Find an adjacent frame face to use as UV source for the cap later.
         bm.normal_update()
-        uv_source_face = None
-        for filled_face in new_faces:
-            for edge in filled_face.edges:
-                for neighbor in edge.link_faces:
-                    if neighbor != filled_face and neighbor.is_valid:
-                        uv_source_face = neighbor
-                        break
-                if uv_source_face:
-                    break
-            if uv_source_face:
-                break
 
         # Step 2: Extrude the new face along the cube cut direction
         selected_faces = new_faces
@@ -933,16 +929,15 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         bm.normal_update()
 
-        # Apply UVs to the extruded cap face from the adjacent frame face.
-        if uv_source_face and uv_source_face.is_valid:
-            uv_layer = get_render_active_uv_layer(bm, me)
-            if uv_layer:
-                ppm = context.scene.level_design_props.pixels_per_meter
-                for cap_face in extruded_faces:
-                    set_uv_from_other_face(
-                        uv_source_face, cap_face, uv_layer, ppm, me,
-                        obj.matrix_world,
-                    )
+        # Project UVs onto the new faces inside the operator so the corrected
+        # UVs are part of the operator's pushed undo step, not a transitional
+        # state that depsgraph fixes up afterwards.  Then refresh the cache so
+        # the new faces get face IDs and the post-operator depsgraph cycle
+        # sees no topology change and skips the redundant projection.
+        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.face_cache import cache_face_data
+        project_new_faces(context, bm)
+        cache_face_data(context)
 
         # Clear BMesh weld layers (participates in edit-mode undo).
         clear_weld_on_bmesh(bm)
@@ -1133,6 +1128,16 @@ class MESH_OT_context_weld(bpy.types.Operator):
                 )
 
         bm.normal_update()
+
+        # Project UVs onto the new faces inside the operator so the corrected
+        # UVs are part of the operator's pushed undo step, not a transitional
+        # state that depsgraph fixes up afterwards.  Then refresh the cache so
+        # the new faces get face IDs and the post-operator depsgraph cycle
+        # sees no topology change and skips the redundant projection.
+        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.face_cache import cache_face_data
+        project_new_faces(context, bm)
+        cache_face_data(context)
 
         # Clear BMesh weld layers
         clear_weld_on_bmesh(bm)
