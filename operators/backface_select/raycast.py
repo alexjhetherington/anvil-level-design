@@ -26,11 +26,12 @@ def has_backface_culling_enabled(material_index, materials):
 
 def raycast_bvh_skip_backfaces(bvh, ray_origin_local, ray_direction_local,
                                 bm, materials, max_iterations):
-    """Raycast through a BVHTree, skipping back-facing faces with culling enabled.
+    """Raycast through a BVHTree, skipping invisible faces.
 
-    Iteratively casts rays, advancing past any hit face that is both back-facing
-    and has backface culling enabled on its material. Caller must call
-    bm.faces.ensure_lookup_table() before calling this function.
+    Iteratively casts rays, advancing past any hit face that the user can't
+    see — either edit-mode-hidden, or back-facing on a material with backface
+    culling enabled. Caller must call bm.faces.ensure_lookup_table() before
+    calling this function.
 
     Returns (location, normal, face_index, distance) or
             (None, None, None, None) if no visible face is hit.
@@ -48,8 +49,11 @@ def raycast_bvh_skip_backfaces(bvh, ray_origin_local, ray_direction_local,
 
         face = bm.faces[face_index]
 
-        if (is_face_backfacing(face.normal, ray_direction_local)
-                and has_backface_culling_enabled(face.material_index, materials)):
+        skip = face.hide or (
+            is_face_backfacing(face.normal, ray_direction_local)
+            and has_backface_culling_enabled(face.material_index, materials)
+        )
+        if skip:
             # Advance origin past this hit
             total_distance += distance + epsilon
             origin = origin + ray_direction_local * (distance + epsilon)
