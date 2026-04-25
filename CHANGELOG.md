@@ -1,5 +1,10 @@
 # Anvil Level Design Changelog
 
+# 1.6.4
+- Fix Alt Left Mouse on another object crash
+- Alt Left Mouse on another object handles differently scaled objects correctly
+- Alt Left Mouse correctly ignores hidden faces
+
 # 1.6.3 
 - Supports flipped textures (excluding hotspots)
 - UV Transform texture preview respects closest filtering
