@@ -628,6 +628,59 @@ def _invoke_apply_setup(op, context, event):
     return None
 
 
+def _closest_target_world(paint_obj, paint_bvh, source_bm, source_materials,
+                           other_objects_info, ray_origin, view_vector):
+    """Pick the closest paint target across the source obj and cross-object meshes.
+
+    Compares hits in world space. Comparing local-space distances would bias
+    selection toward objects with larger world scale, since their local
+    distances shrink relative to world units — a click that lands on a closer
+    cross-object face would falsely register as a source-obj hit and apply
+    UVs to source faces.
+
+    Returns (obj, face_index) where obj is paint_obj for a source-obj hit or
+    one of the other_objects_info objs for a cross-object hit, or
+    (None, None) if no face is hit.
+    """
+    matrix_inv = paint_obj.matrix_world.inverted()
+    origin_local = matrix_inv @ ray_origin
+    dir_local = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+    src_loc, _, src_fidx, _ = raycast_bvh_skip_backfaces(
+        paint_bvh, origin_local, dir_local,
+        source_bm, source_materials, max_iterations=64,
+    )
+
+    if src_fidx is not None:
+        best_distance = (paint_obj.matrix_world @ src_loc - ray_origin).length
+        best_obj = paint_obj
+        best_face_index = src_fidx
+    else:
+        best_distance = float('inf')
+        best_obj = None
+        best_face_index = None
+
+    for info in other_objects_info:
+        other_obj = info['obj']
+        oi_matrix_inv = other_obj.matrix_world.inverted()
+        origin_other = oi_matrix_inv @ ray_origin
+        dir_other = (oi_matrix_inv.to_3x3() @ view_vector).normalized()
+
+        loc, _, fidx, _ = raycast_bvh_skip_backfaces_polys(
+            info['bvh'], origin_other, dir_other,
+            info['polygons'], info['materials'], max_iterations=64,
+        )
+
+        if fidx is not None:
+            world_dist = (other_obj.matrix_world @ loc - ray_origin).length
+            if world_dist < best_distance:
+                best_distance = world_dist
+                best_obj = other_obj
+                best_face_index = fidx
+
+    return best_obj, best_face_index
+
+
 def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_func):
     """Apply UV from source's selected face to a target face on a different mesh.
 
@@ -695,55 +748,31 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
     bm = bmesh.from_edit_mesh(me)
     bm.faces.ensure_lookup_table()
 
-    origin_local, dir_local = op._paint_ray_local(region, rv3d, mouse_2d)
+    coord = (mouse_2d.x, mouse_2d.y)
+    view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
 
-    location, normal, face_index, distance = raycast_bvh_skip_backfaces(
-        op._paint_bvh, origin_local, dir_local,
-        bm, me.materials, max_iterations=64
+    hit_obj, hit_face_index = _closest_target_world(
+        op._paint_obj, op._paint_bvh, bm, me.materials,
+        op._other_objects_info, ray_origin, view_vector,
     )
 
-    # ---- Cross-object raycast: find closest hit among other visible meshes ----
-    hit_other_obj = None
-    hit_other_face_index = None
-    if op._other_objects_info:
-        best_distance = distance if face_index is not None else float('inf')
-
-        coord = (mouse_2d.x, mouse_2d.y)
-        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
-        for info in op._other_objects_info:
-            other_obj = info['obj']
-            matrix_inv = other_obj.matrix_world.inverted()
-            origin_other = matrix_inv @ ray_origin
-            dir_other = (matrix_inv.to_3x3() @ view_vector).normalized()
-
-            loc, norm, fidx, dist = raycast_bvh_skip_backfaces_polys(
-                info['bvh'], origin_other, dir_other,
-                info['polygons'], info['materials'], max_iterations=64
-            )
-
-            if fidx is not None and dist < best_distance:
-                best_distance = dist
-                hit_other_obj = other_obj
-                hit_other_face_index = fidx
-
     # ---- Apply to other object if it was the closest hit ----
-    if hit_other_obj is not None:
-        if _apply_to_other_obj(op, bm, me, hit_other_obj, hit_other_face_index, uv_func):
-            debug_log(f"[ApplyImage] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
+    if hit_obj is not None and hit_obj is not obj:
+        if _apply_to_other_obj(op, bm, me, hit_obj, hit_face_index, uv_func):
+            debug_log(f"[ApplyImage] cross-object hit: {hit_obj.name} face {hit_face_index}")
         return
 
-    if face_index is None:
+    if hit_obj is None:
         debug_log(f"[ApplyImage] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
         return
 
-    debug_log(f"[ApplyImage] raycast hit face {face_index} at distance {distance:.4f}, mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f})")
-    if face_index in op._paint_visited:
+    debug_log(f"[ApplyImage] raycast hit face {hit_face_index}, mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f})")
+    if hit_face_index in op._paint_visited:
         return
-    op._paint_visited.add(face_index)
+    op._paint_visited.add(hit_face_index)
 
-    target_face = bm.faces[face_index]
+    target_face = bm.faces[hit_face_index]
     source_face = bm.faces[op._source_face_index]
 
     from ..core.uv_layers import get_render_active_uv_layer
@@ -752,13 +781,13 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
         uv_layer = bm.loops.layers.uv.verify()
 
     if face_has_hotspot_material(target_face, me):
-        op._faces_previously_hotspottable.add(face_index)
+        op._faces_previously_hotspottable.add(hit_face_index)
 
     target_face.material_index = op._mat_index
 
     uv_func(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix, bm=bm)
 
-    op._painted_face_indices.add(face_index)
+    op._painted_face_indices.add(hit_face_index)
 
 
 def _flush_other_bmeshes(op):
@@ -847,55 +876,31 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
     bm = bmesh.from_edit_mesh(me)
     bm.faces.ensure_lookup_table()
 
-    origin_local, dir_local = op._paint_ray_local(region, rv3d, mouse_2d)
+    coord = (mouse_2d.x, mouse_2d.y)
+    view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
 
-    location, normal, face_index, distance = raycast_bvh_skip_backfaces(
-        op._paint_bvh, origin_local, dir_local,
-        bm, me.materials, max_iterations=64
+    hit_obj, hit_face_index = _closest_target_world(
+        op._paint_obj, op._paint_bvh, bm, me.materials,
+        op._other_objects_info, ray_origin, view_vector,
     )
 
-    # ---- Cross-object raycast: find closest hit among other visible meshes ----
-    hit_other_obj = None
-    hit_other_face_index = None
-    if op._other_objects_info:
-        best_distance = distance if face_index is not None else float('inf')
-
-        coord = (mouse_2d.x, mouse_2d.y)
-        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
-        for info in op._other_objects_info:
-            other_obj = info['obj']
-            matrix_inv = other_obj.matrix_world.inverted()
-            origin_other = matrix_inv @ ray_origin
-            dir_other = (matrix_inv.to_3x3() @ view_vector).normalized()
-
-            loc, norm, fidx, dist = raycast_bvh_skip_backfaces_polys(
-                info['bvh'], origin_other, dir_other,
-                info['polygons'], info['materials'], max_iterations=64
-            )
-
-            if fidx is not None and dist < best_distance:
-                best_distance = dist
-                hit_other_obj = other_obj
-                hit_other_face_index = fidx
-
     # ---- Apply to other object if it was the closest hit ----
-    if hit_other_obj is not None:
-        if _apply_to_other_obj(op, bm, me, hit_other_obj, hit_other_face_index, _dispatch_set_uv_from_other_face):
-            debug_log(f"[UVTransform] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
+    if hit_obj is not None and hit_obj is not obj:
+        if _apply_to_other_obj(op, bm, me, hit_obj, hit_face_index, _dispatch_set_uv_from_other_face):
+            debug_log(f"[UVTransform] cross-object hit: {hit_obj.name} face {hit_face_index}")
         return
 
-    if face_index is None:
+    if hit_obj is None:
         debug_log(f"[UVTransform] raycast miss at mouse ({mouse_2d.x:.0f}, {mouse_2d.y:.0f}) - no face hit")
         return
 
-    debug_log(f"[UVTransform] raycast hit face {face_index} at distance {distance:.4f}")
-    if face_index in op._paint_visited:
+    debug_log(f"[UVTransform] raycast hit face {hit_face_index}")
+    if hit_face_index in op._paint_visited:
         return
-    op._paint_visited.add(face_index)
+    op._paint_visited.add(hit_face_index)
 
-    target_face = bm.faces[face_index]
+    target_face = bm.faces[hit_face_index]
     source_face = bm.faces[op._source_face_index]
 
     from ..core.uv_layers import get_render_active_uv_layer
@@ -907,7 +912,7 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
     _dispatch_set_uv_from_other_face(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix, bm=bm)
 
-    op._painted_face_indices.add(face_index)
+    op._painted_face_indices.add(hit_face_index)
 
 
 def _pick_source_from_cursor(op, context, event):

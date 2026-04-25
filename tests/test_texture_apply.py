@@ -11,9 +11,10 @@ from .helpers import _get_context_override, TEXTURE_PATH
 from ..core.materials import find_material_with_image, create_material_with_image
 from ..operators.texture_apply import (
     set_uv_from_other_face, stretch_uv_from_other_face,
-    _apply_to_other_obj, _dispatch_set_uv_from_other_face,
+    _closest_target_world, _apply_to_other_obj, _dispatch_set_uv_from_other_face,
 )
 from ..core.face_id import get_face_id_layer
+from mathutils.bvhtree import BVHTree
 
 
 def _make_vertical_face(bm, x_offset):
@@ -918,6 +919,86 @@ class UVTransformApplyTest(AnvilTestCase):
 
         other_bm.free()
         op._other_bmeshes.clear()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_closest_target_world_picks_closer_other_obj_despite_source_scale(self):
+        """Cross-object selection compares world distances.
+
+        If the source obj has large world scale, its local raycast distances
+        shrink relative to world units. A naive comparison against the
+        other-obj local distance would pick the source even when a different
+        object's face is actually closer in world space — causing alt-click
+        on another obj to wrongly modify a source face.
+        """
+        # Source: scale 10. Face at local Z=0.2 → world Z=2.
+        mesh_a = bpy.data.meshes.new("src_world_dist_mesh")
+        bm_setup = bmesh.new()
+        v0 = bm_setup.verts.new((-0.1, -0.1, 0.2))
+        v1 = bm_setup.verts.new((0.1, -0.1, 0.2))
+        v2 = bm_setup.verts.new((0.1, 0.1, 0.2))
+        v3 = bm_setup.verts.new((-0.1, 0.1, 0.2))
+        bm_setup.faces.new((v0, v1, v2, v3))
+        bm_setup.normal_update()
+        bm_setup.to_mesh(mesh_a)
+        bm_setup.free()
+
+        obj_a = bpy.data.objects.new("src_world_dist_obj", mesh_a)
+        bpy.context.collection.objects.link(obj_a)
+        obj_a.scale = (10.0, 10.0, 10.0)
+
+        # Other: scale 1. Face at world Z=1 — closer than source's world Z=2.
+        mesh_b = bpy.data.meshes.new("other_world_dist_mesh")
+        bm_setup = bmesh.new()
+        v0 = bm_setup.verts.new((-1, -1, 1))
+        v1 = bm_setup.verts.new((1, -1, 1))
+        v2 = bm_setup.verts.new((1, 1, 1))
+        v3 = bm_setup.verts.new((-1, 1, 1))
+        bm_setup.faces.new((v0, v1, v2, v3))
+        bm_setup.normal_update()
+        bm_setup.to_mesh(mesh_b)
+        bm_setup.free()
+
+        obj_b = bpy.data.objects.new("other_world_dist_obj", mesh_b)
+        bpy.context.collection.objects.link(obj_b)
+
+        bpy.context.view_layer.objects.active = obj_a
+        obj_a.select_set(True)
+        bpy.context.view_layer.update()
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm = bmesh.from_edit_mesh(mesh_a)
+        bm.faces.ensure_lookup_table()
+        paint_bvh = BVHTree.FromBMesh(bm)
+
+        other_bvh = BVHTree.FromPolygons(
+            [v.co for v in mesh_b.vertices],
+            [p.vertices for p in mesh_b.polygons],
+        )
+        other_objects_info = [{
+            'obj': obj_b,
+            'bvh': other_bvh,
+            'polygons': mesh_b.polygons,
+            'materials': mesh_b.materials,
+        }]
+
+        ray_origin = Vector((0.0, 0.0, -1.0))
+        view_vector = Vector((0.0, 0.0, 1.0))
+
+        hit_obj, hit_face_index = _closest_target_world(
+            obj_a, paint_bvh, bm, mesh_a.materials,
+            other_objects_info, ray_origin, view_vector,
+        )
+
+        self.assertIs(
+            hit_obj, obj_b,
+            "Closer cross-object face should win in world space; if source "
+            "obj wins, alt-click on another obj will modify source faces."
+        )
+        self.assertEqual(hit_face_index, 0)
+
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
 
