@@ -9,7 +9,11 @@ from ..core.uv_projection import apply_uv_to_face
 from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
 from ..core.materials import find_material_with_image, create_material_with_image
-from ..operators.texture_apply import set_uv_from_other_face, stretch_uv_from_other_face
+from ..operators.texture_apply import (
+    set_uv_from_other_face, stretch_uv_from_other_face,
+    _apply_to_other_obj, _dispatch_set_uv_from_other_face,
+)
+from ..core.face_id import get_face_id_layer
 
 
 def _make_vertical_face(bm, x_offset):
@@ -783,3 +787,137 @@ class UVTransformApplyTest(AnvilTestCase):
         bm_b.free()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_apply_to_other_obj_does_not_modify_source_faces(self):
+        """Cross-object dispatch must not mutate any source-obj face.
+
+        The source obj is in edit mode and unrelated to the click target. If
+        the dispatch passes the source bm where the target bm is expected
+        (e.g. as the cache_single_face target), the source obj's face_id layer
+        and UVs get touched — the user-visible symptom is faces on the
+        selected object (none of which are under the cursor) changing during
+        an alt-click on a different object.
+
+        Verified by capturing UVs and material indices on multiple source
+        faces before and after a synthetic cross-object hit.
+        """
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat = _get_material()
+        ctx = _get_context_override()
+
+        # Source obj with TWO faces:
+        #   F0 — the selected source face (op._source_face_index = 0).
+        #   F1 — NOT under the cursor; we'll verify it's untouched.
+        mesh_a = bpy.data.meshes.new("src_two_face_mesh")
+        mesh_a.materials.append(mat)
+        obj_a = bpy.data.objects.new("src_two_face_obj", mesh_a)
+        bpy.context.collection.objects.link(obj_a)
+        bpy.context.view_layer.objects.active = obj_a
+        obj_a.select_set(True)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_a = bmesh.from_edit_mesh(mesh_a)
+        _make_vertical_face(bm_a, 0)
+        _make_vertical_face(bm_a, 2)
+        bm_a.normal_update()
+        uv_a = bm_a.loops.layers.uv.verify()
+        # Pre-create the face_id layer on source bm. Without this, an
+        # incorrectly-routed cache_single_face(target_face=other, bm=source)
+        # would silently create the layer on source and assign an ID to a
+        # source face. With it, the same wrong call raises ValueError because
+        # the target face and id_layer come from different meshes — which is
+        # how the user originally encountered this bug in production.
+        id_layer_a = get_face_id_layer(bm_a)
+        bm_a.faces.ensure_lookup_table()
+        bm_a.faces[0].material_index = 0
+        bm_a.faces[1].material_index = 0
+        apply_uv_to_face(bm_a.faces[0], uv_a, 2.5, 1.5, 45.0, 0.3, 0.7,
+                         mat, ppm, mesh_a)
+        apply_uv_to_face(bm_a.faces[1], uv_a, 3.0, 2.0, 30.0, 0.1, 0.2,
+                         mat, ppm, mesh_a)
+
+        # Other obj: target face with default UVs.
+        mesh_b = bpy.data.meshes.new("tgt_other_mesh")
+        mesh_b.materials.append(mat)
+        bm_b = bmesh.new()
+        _make_vertical_face(bm_b, 0)
+        bm_b.normal_update()
+        uv_b = bm_b.loops.layers.uv.verify()
+        bm_b.faces.ensure_lookup_table()
+        bm_b.faces[0].material_index = 0
+        apply_uv_to_face(bm_b.faces[0], uv_b, 1.0, 1.0, 0.0, 0.0, 0.0,
+                         mat, ppm, mesh_b)
+        bm_b.to_mesh(mesh_b)
+        bm_b.free()
+
+        obj_b = bpy.data.objects.new("tgt_other_obj", mesh_b)
+        bpy.context.collection.objects.link(obj_b)
+        obj_b.location.x = 5
+        bpy.context.view_layer.update()
+
+        # Capture source state BEFORE the cross-object dispatch.
+        def snapshot_source():
+            return [
+                {
+                    'uvs': [loop[uv_a].uv.copy() for loop in face.loops],
+                    'material_index': face.material_index,
+                    'face_id': face[id_layer_a],
+                }
+                for face in bm_a.faces
+            ]
+        before = snapshot_source()
+
+        # Build a minimal fake op with the state _apply_to_other_obj reads.
+        class _FakeOp:
+            pass
+        op = _FakeOp()
+        op._paint_obj = obj_a
+        op._source_face_index = 0
+        op._mat = mat
+        op._ppm = ppm
+        op._other_bmeshes = {}
+        op._paint_visited_other = set()
+
+        processed = _apply_to_other_obj(
+            op, bm_a, mesh_a, obj_b, 0, _dispatch_set_uv_from_other_face
+        )
+        self.assertTrue(processed)
+
+        # Source must be untouched on every face.
+        after = snapshot_source()
+        for i, (b, a) in enumerate(zip(before, after)):
+            self.assertEqual(
+                b['material_index'], a['material_index'],
+                f"Source face {i} material_index changed",
+            )
+            self.assertEqual(
+                b['face_id'], a['face_id'],
+                f"Source face {i} face_id changed",
+            )
+            for j, (b_uv, a_uv) in enumerate(zip(b['uvs'], a['uvs'])):
+                self.assertAlmostEqual(
+                    b_uv.x, a_uv.x, places=6,
+                    msg=f"Source face {i} loop {j} UV.x changed",
+                )
+                self.assertAlmostEqual(
+                    b_uv.y, a_uv.y, places=6,
+                    msg=f"Source face {i} loop {j} UV.y changed",
+                )
+
+        # Sanity: target on other obj should have received the source UVs.
+        other_bm = op._other_bmeshes[id(obj_b)]['bm']
+        other_bm.faces.ensure_lookup_table()
+        target_uv_layer = other_bm.loops.layers.uv.verify()
+        target_t = derive_transform_from_uvs(
+            other_bm.faces[0], target_uv_layer, ppm, mesh_b
+        )
+        self.assertIsNotNone(target_t)
+        self.assertAlmostEqual(target_t['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(target_t['scale_v'], 1.5, places=3)
+
+        other_bm.free()
+        op._other_bmeshes.clear()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+

@@ -628,6 +628,66 @@ def _invoke_apply_setup(op, context, event):
     return None
 
 
+def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_func):
+    """Apply UV from source's selected face to a target face on a different mesh.
+
+    Modifies the cross-object's bmesh in op._other_bmeshes (flushed to its
+    mesh data only at paint_finish). Must not mutate source_bm or source_me —
+    the source obj is in edit mode and unrelated to the click target, so any
+    write-back to it would cause source faces (none of which are under the
+    cursor) to change unexpectedly.
+
+    For apply paint ops (op._mat is set) assigns op._mat to the target face.
+    For uv-transform paint ops (no op._mat) preserves the target's material.
+
+    Returns True if the hit was processed, False if it was a duplicate of an
+    earlier hit in this paint session.
+    """
+    visit_key = (id(hit_obj), hit_face_index)
+    if visit_key in op._paint_visited_other:
+        return False
+    op._paint_visited_other.add(visit_key)
+
+    other_me = hit_obj.data
+    obj_id = id(hit_obj)
+
+    if obj_id not in op._other_bmeshes:
+        other_bm = bmesh.new()
+        other_bm.from_mesh(other_me)
+        op._other_bmeshes[obj_id] = {
+            'bm': other_bm,
+            'obj': hit_obj,
+        }
+    other_data = op._other_bmeshes[obj_id]
+    other_bm = other_data['bm']
+    other_bm.faces.ensure_lookup_table()
+
+    target_face = other_bm.faces[hit_face_index]
+    source_face = source_bm.faces[op._source_face_index]
+
+    op_mat = getattr(op, '_mat', None)
+    if op_mat is not None:
+        if op_mat.name not in other_me.materials:
+            other_me.materials.append(op_mat)
+        target_face.material_index = other_me.materials.find(op_mat.name)
+
+    from ..core.uv_layers import get_render_active_uv_layer
+    source_uv = get_render_active_uv_layer(source_bm, source_me)
+    if source_uv is None:
+        source_uv = source_bm.loops.layers.uv.verify()
+    target_uv = other_bm.loops.layers.uv.verify()
+
+    source_to_target = hit_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
+
+    uv_func(
+        source_face, target_face, target_uv,
+        op._ppm, other_me, hit_obj.matrix_world,
+        bm=other_bm, source_uv_layer=source_uv, source_me=source_me,
+        source_to_target=source_to_target,
+    )
+    return True
+
+
 def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
     """Shared paint_sample implementation for apply paint operators."""
     obj = op._paint_obj
@@ -670,48 +730,7 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
 
     # ---- Apply to other object if it was the closest hit ----
     if hit_other_obj is not None:
-        visit_key = (id(hit_other_obj), hit_other_face_index)
-        if visit_key not in op._paint_visited_other:
-            op._paint_visited_other.add(visit_key)
-
-            other_me = hit_other_obj.data
-            obj_id = id(hit_other_obj)
-
-            if obj_id not in op._other_bmeshes:
-                other_bm = bmesh.new()
-                other_bm.from_mesh(other_me)
-                op._other_bmeshes[obj_id] = {
-                    'bm': other_bm,
-                    'obj': hit_other_obj,
-                }
-            other_data = op._other_bmeshes[obj_id]
-            other_bm = other_data['bm']
-            other_bm.faces.ensure_lookup_table()
-
-            if op._mat.name not in other_me.materials:
-                other_me.materials.append(op._mat)
-            other_mat_index = other_me.materials.find(op._mat.name)
-
-            target_face = other_bm.faces[hit_other_face_index]
-            source_face = bm.faces[op._source_face_index]
-
-            target_face.material_index = other_mat_index
-
-            from ..core.uv_layers import get_render_active_uv_layer
-            source_uv = get_render_active_uv_layer(bm, me)
-            if source_uv is None:
-                source_uv = bm.loops.layers.uv.verify()
-            target_uv = other_bm.loops.layers.uv.verify()
-
-            source_to_target = hit_other_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
-
-            uv_func(
-                source_face, target_face, target_uv,
-                op._ppm, other_me, hit_other_obj.matrix_world,
-                bm=bm, source_uv_layer=source_uv, source_me=me,
-                source_to_target=source_to_target,
-            )
-
+        if _apply_to_other_obj(op, bm, me, hit_other_obj, hit_other_face_index, uv_func):
             debug_log(f"[ApplyImage] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
         return
 
@@ -863,44 +882,7 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
     # ---- Apply to other object if it was the closest hit ----
     if hit_other_obj is not None:
-        visit_key = (id(hit_other_obj), hit_other_face_index)
-        if visit_key not in op._paint_visited_other:
-            op._paint_visited_other.add(visit_key)
-
-            other_me = hit_other_obj.data
-            obj_id = id(hit_other_obj)
-
-            if obj_id not in op._other_bmeshes:
-                other_bm = bmesh.new()
-                other_bm.from_mesh(other_me)
-                op._other_bmeshes[obj_id] = {
-                    'bm': other_bm,
-                    'obj': hit_other_obj,
-                }
-            other_data = op._other_bmeshes[obj_id]
-            other_bm = other_data['bm']
-            other_bm.faces.ensure_lookup_table()
-
-            target_face = other_bm.faces[hit_other_face_index]
-            source_face = bm.faces[op._source_face_index]
-
-            # No material change — only UV transform
-
-            from ..core.uv_layers import get_render_active_uv_layer
-            source_uv = get_render_active_uv_layer(bm, me)
-            if source_uv is None:
-                source_uv = bm.loops.layers.uv.verify()
-            target_uv = other_bm.loops.layers.uv.verify()
-
-            source_to_target = hit_other_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
-
-            _dispatch_set_uv_from_other_face(
-                source_face, target_face, target_uv,
-                op._ppm, other_me, hit_other_obj.matrix_world,
-                bm=bm, source_uv_layer=source_uv, source_me=me,
-                source_to_target=source_to_target,
-            )
-
+        if _apply_to_other_obj(op, bm, me, hit_other_obj, hit_other_face_index, _dispatch_set_uv_from_other_face):
             debug_log(f"[UVTransform] cross-object hit: {hit_other_obj.name} face {hit_other_face_index}")
         return
 
