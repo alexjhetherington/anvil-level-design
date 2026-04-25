@@ -732,10 +732,17 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
 
     source_to_target = hit_obj.matrix_world.inverted() @ op._paint_obj.matrix_world
 
+    # bm=None suppresses cache_single_face on the target. face_data_cache is
+    # keyed by face_id (per-bmesh int), but face_ids are reindexed per object,
+    # so a target face_id can collide with a source face_id and overwrite the
+    # source's cached UVs. The depsgraph's modal_just_ended path then
+    # "restores" source UVs from that poisoned entry, silently shifting them
+    # by the inter-object distance — invisible at grid-aligned offsets, since
+    # the offset wraps to a multiple of the texture period.
     uv_func(
         source_face, target_face, target_uv,
         op._ppm, other_me, hit_obj.matrix_world,
-        bm=other_bm, source_uv_layer=source_uv, source_me=source_me,
+        bm=None, source_uv_layer=source_uv, source_me=source_me,
         source_to_target=source_to_target,
     )
     return True

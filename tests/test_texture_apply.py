@@ -799,9 +799,21 @@ class UVTransformApplyTest(AnvilTestCase):
         selected object (none of which are under the cursor) changing during
         an alt-click on a different object.
 
-        Verified by capturing UVs and material indices on multiple source
-        faces before and after a synthetic cross-object hit.
+        Worst-case scenario: face_data_cache (a global keyed by face_id)
+        is pre-populated with source's data, AND the target obj has a stored
+        anvil_face_id that collides with a source face_id. If the dispatch
+        calls cache_single_face on the target, it overwrites the source's
+        cache entry with target data. The depsgraph handler then "restores"
+        source UVs from the poisoned cache — silently shifting them by the
+        inter-object distance offset. (Invisible at grid-aligned offsets,
+        since the offset wraps to a multiple of the texture period.)
+
+        Verified by capturing UVs, material indices, face_ids, and
+        face_data_cache state on multiple source faces before and after
+        a synthetic cross-object hit, with a deliberate face_id collision.
         """
+        from ..handlers.face_cache import face_data_cache, cache_single_face
+
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
         mat = _get_material()
         ctx = _get_context_override()
@@ -838,17 +850,23 @@ class UVTransformApplyTest(AnvilTestCase):
         apply_uv_to_face(bm_a.faces[1], uv_a, 3.0, 2.0, 30.0, 0.1, 0.2,
                          mat, ppm, mesh_a)
 
-        # Other obj: target face with default UVs.
+        # Other obj: target face with default UVs and a face_id that COLLIDES
+        # with a source face_id (the realistic prod case where both objs were
+        # previously edited and reindexed starting from 1).
+        SRC_F0_ID = 42
+        SRC_F1_ID = 43
         mesh_b = bpy.data.meshes.new("tgt_other_mesh")
         mesh_b.materials.append(mat)
         bm_b = bmesh.new()
         _make_vertical_face(bm_b, 0)
         bm_b.normal_update()
         uv_b = bm_b.loops.layers.uv.verify()
+        id_layer_b = get_face_id_layer(bm_b)
         bm_b.faces.ensure_lookup_table()
         bm_b.faces[0].material_index = 0
         apply_uv_to_face(bm_b.faces[0], uv_b, 1.0, 1.0, 0.0, 0.0, 0.0,
                          mat, ppm, mesh_b)
+        bm_b.faces[0][id_layer_b] = SRC_F0_ID  # collide with source F0
         bm_b.to_mesh(mesh_b)
         bm_b.free()
 
@@ -856,6 +874,19 @@ class UVTransformApplyTest(AnvilTestCase):
         bpy.context.collection.objects.link(obj_b)
         obj_b.location.x = 5
         bpy.context.view_layer.update()
+
+        # Assign deterministic face_ids on source and pre-populate
+        # face_data_cache (mirrors cache_face_data after edit-mode entry).
+        # Done AFTER view_layer.update() so the depsgraph handler's
+        # fresh-start path doesn't clear the cache out from under us.
+        bm_a.faces.ensure_lookup_table()
+        bm_a.faces[0][id_layer_a] = SRC_F0_ID
+        bm_a.faces[1][id_layer_a] = SRC_F1_ID
+        face_data_cache.clear()
+        cache_single_face(bm_a.faces[0], bm_a, ppm, mesh_a)
+        cache_single_face(bm_a.faces[1], bm_a, ppm, mesh_a)
+        self.assertIn(SRC_F0_ID, face_data_cache)
+        self.assertIn(SRC_F1_ID, face_data_cache)
 
         # Capture source state BEFORE the cross-object dispatch.
         def snapshot_source():
@@ -867,7 +898,21 @@ class UVTransformApplyTest(AnvilTestCase):
                 }
                 for face in bm_a.faces
             ]
+
+        def snapshot_cache_uvs(face_id):
+            entry = face_data_cache.get(face_id)
+            if not entry:
+                return None
+            layer = entry.get('uv_layers', {}).get(uv_a.name)
+            if not layer:
+                return None
+            return [uv.copy() for uv in layer['uvs']]
+
         before = snapshot_source()
+        cache_before = {
+            SRC_F0_ID: snapshot_cache_uvs(SRC_F0_ID),
+            SRC_F1_ID: snapshot_cache_uvs(SRC_F1_ID),
+        }
 
         # Build a minimal fake op with the state _apply_to_other_obj reads.
         class _FakeOp:
@@ -906,6 +951,25 @@ class UVTransformApplyTest(AnvilTestCase):
                     msg=f"Source face {i} loop {j} UV.y changed",
                 )
 
+        # face_data_cache for source face_ids must NOT have been overwritten
+        # by target data. (depsgraph's modal_just_ended path restores source
+        # UVs from this cache — a poisoned entry silently shifts source UVs.)
+        for fid in (SRC_F0_ID, SRC_F1_ID):
+            cached_after = snapshot_cache_uvs(fid)
+            self.assertIsNotNone(
+                cached_after,
+                f"face_data_cache[{fid}] disappeared (expected source data)",
+            )
+            for j, (b_uv, a_uv) in enumerate(zip(cache_before[fid], cached_after)):
+                self.assertAlmostEqual(
+                    b_uv.x, a_uv.x, places=6,
+                    msg=f"face_data_cache[{fid}] loop {j} UV.x poisoned by target",
+                )
+                self.assertAlmostEqual(
+                    b_uv.y, a_uv.y, places=6,
+                    msg=f"face_data_cache[{fid}] loop {j} UV.y poisoned by target",
+                )
+
         # Sanity: target on other obj should have received the source UVs.
         other_bm = op._other_bmeshes[id(obj_b)]['bm']
         other_bm.faces.ensure_lookup_table()
@@ -919,6 +983,7 @@ class UVTransformApplyTest(AnvilTestCase):
 
         other_bm.free()
         op._other_bmeshes.clear()
+        face_data_cache.clear()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
 
