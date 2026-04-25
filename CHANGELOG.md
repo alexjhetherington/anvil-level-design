@@ -4,6 +4,7 @@
 - Fix Alt Left Mouse on another object crash
 - Alt Left Mouse on another object handles differently scaled objects correctly
 - Alt Left Mouse correctly ignores hidden faces
+- Remove WELD undo transient states
 
 # 1.6.3 
 - Supports flipped textures (excluding hotspots)
