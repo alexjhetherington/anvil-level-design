@@ -93,6 +93,8 @@ If you introduce a feature, you are the primary owner of this feature.
 
 This policy exists to prevent contributors from creating ongoing maintenance burden for the project.
 
+Please include screenshots and videos as appropriate in the pull request.
+
 ## Testing Guidelines
 
 Tests are required when appropriate, especially for:
