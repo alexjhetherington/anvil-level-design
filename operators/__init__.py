@@ -12,6 +12,7 @@ from . import pixels_per_meter
 from . import modal_draw
 from . import cube_cut
 from . import box_builder
+from . import knife_cut
 from . import backface_select
 from . import select_linked
 from . import uv_select_invalid
@@ -38,6 +39,7 @@ def register():
     modal_draw.register()
     cube_cut.register()
     box_builder.register()
+    knife_cut.register()
     backface_select.register()
     select_linked.register()
     uv_select_invalid.register()
@@ -59,6 +61,7 @@ def unregister():
     uv_select_invalid.unregister()
     select_linked.unregister()
     backface_select.unregister()
+    knife_cut.unregister()
     box_builder.unregister()
     cube_cut.unregister()
     modal_draw.unregister()

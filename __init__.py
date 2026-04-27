@@ -359,6 +359,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.line_mode_activate": "Tools",
             "leveldesign.box_builder": "Tools",
             "leveldesign.cube_cut": "Tools",
+            "leveldesign.knife_cut": "Tools",
             "leveldesign.context_weld": "Tools",
             "leveldesign.toggle_grid_overlay": "Tools",
             "leveldesign.uv_transform_modal": "UV",
