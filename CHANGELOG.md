@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.5
+- Applying textures of different size from the file browser no longer resets scale
+
 # 1.6.4
 - Fix Alt Left Mouse on another object crash
 - Alt Left Mouse on another object handles differently scaled objects correctly

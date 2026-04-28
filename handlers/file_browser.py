@@ -11,7 +11,6 @@ from ..core.face_id import get_face_id_layer, save_face_selection, restore_face_
 from ..core.materials import (
     get_image_from_material, get_selected_image_path,
     find_material_with_image, create_material_with_image,
-    get_texture_dimensions_from_material,
 )
 from ..core.uv_projection import face_aligned_project, apply_uv_to_face, derive_transform_from_uvs
 from ..core.uv_layers import get_render_active_uv_layer
@@ -199,7 +198,7 @@ def apply_texture_from_file_browser():
             face_old_info[f[fb_id_layer]] = {
                 'mat': f_mat,
                 'has_image': f_img is not None,
-                'tex_dims': get_texture_dimensions_from_material(f_mat, ppm),
+                'transform': derive_transform_from_uvs(f, uv_layer, ppm, obj.data),
             }
 
         if mat.name not in obj.data.materials:
@@ -283,25 +282,15 @@ def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_ol
     """Apply regular UV projection to selected faces, preserving transform where possible."""
     id_layer = get_face_id_layer(bm) if bm is not None else None
     for target_face in selected_faces:
-        current_transform = derive_transform_from_uvs(target_face, uv_layer, ppm, me)
-
         face_key = target_face[id_layer] if id_layer is not None else target_face.index
         old_info = face_old_info[face_key]
         old_has_image = old_info['has_image']
-        old_tex_dims = old_info['tex_dims']
-
-        new_tex_dims = get_texture_dimensions_from_material(mat, ppm)
+        current_transform = old_info['transform']
 
         if current_transform and old_has_image:
-            if old_tex_dims != new_tex_dims:
-                scale_u, scale_v = 1.0, 1.0
-            else:
-                scale_u = current_transform['scale_u']
-                scale_v = current_transform['scale_v']
-
             apply_uv_to_face(
                 target_face, uv_layer,
-                scale_u, scale_v,
+                current_transform['scale_u'], current_transform['scale_v'],
                 current_transform['rotation'],
                 current_transform['offset_x'], current_transform['offset_y'],
                 mat, ppm, me
