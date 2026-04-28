@@ -601,6 +601,26 @@ def snap_aspect_ratio(scale_u, scale_v):
     return scale_u, scale_v
 
 
+def snap_aspect_ratio_on_axis(scale_u, scale_v, active_axis):
+    """Snap only the active scale axis to 1:1 when it is close.
+
+    Edge drags resize one axis while the perpendicular axis remains locked.
+    This keeps that locked axis untouched and moves only the dragged edge.
+    """
+    if abs(scale_u) < 0.001 or abs(scale_v) < 0.001:
+        return scale_u, scale_v
+    if (scale_u > 0) != (scale_v > 0):
+        return scale_u, scale_v
+    ratio = scale_u / scale_v
+    if abs(ratio - 1.0) >= ASPECT_SNAP_THRESHOLD:
+        return scale_u, scale_v
+    if active_axis == 'u':
+        return scale_v, scale_v
+    if active_axis == 'v':
+        return scale_u, scale_u
+    return scale_u, scale_v
+
+
 def snap_edge_and_aspect(edge_a, edge_b, corner_index, fixed_quad_corners,
                          first_vert_world, proj_x, proj_y,
                          tex_meters_u, tex_meters_v,

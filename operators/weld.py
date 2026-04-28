@@ -55,8 +55,27 @@ _weld_op_running = False
 _weld_just_stored = False
 
 # Mode ↔ int mapping for the BMesh int layer
-_MODE_TO_STR = {0: 'NONE', 1: 'BRIDGE', 2: 'CORRIDOR', 3: 'INVERT', 4: 'FOLDED_PLANE'}
-_STR_TO_MODE = {'NONE': 0, 'BRIDGE': 1, 'CORRIDOR': 2, 'INVERT': 3, 'FOLDED_PLANE': 4}
+_MODE_TO_STR = {
+    0: 'NONE',
+    1: 'BRIDGE',
+    2: 'CORRIDOR',
+    3: 'INVERT',
+    4: 'FOLDED_PLANE',
+    5: 'PREFAB',
+}
+_STR_TO_MODE = {
+    'NONE': 0,
+    'BRIDGE': 1,
+    'CORRIDOR': 2,
+    'INVERT': 3,
+    'FOLDED_PLANE': 4,
+    'PREFAB': 5,
+}
+_PREFAB_LIBRARY_INDEX_PROP = _AW + "prefab_library_index"
+_PREFAB_OBJECT_NAME_PROP = _AW + "prefab_object_name"
+_PREFAB_ASSET_TYPE_PROP = _AW + "prefab_asset_type"
+_PREFAB_ROTATION_PROP = _AW + "prefab_rotation"
+_repeat_prefab_override = None
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +240,30 @@ def _get_weld_mode_from_mesh(me):
     return me.get(_AW + "mode", "NONE")
 
 
+def _set_repeat_prefab_on_object_id(obj, library_index, object_name, asset_type, rotation):
+    """Store repeat-prefab weld state as Object custom properties."""
+    obj[_AW + "mode"] = 'PREFAB'
+    obj[_PREFAB_LIBRARY_INDEX_PROP] = int(library_index)
+    obj[_PREFAB_OBJECT_NAME_PROP] = object_name
+    obj[_PREFAB_ASSET_TYPE_PROP] = asset_type
+    obj[_PREFAB_ROTATION_PROP] = float(rotation)
+
+
+def _get_weld_mode_from_object_id(obj):
+    """Read weld mode from Object custom properties."""
+    return obj.get(_AW + "mode", "NONE")
+
+
+def _get_repeat_prefab_from_object_id(obj):
+    """Read repeat-prefab metadata from Object custom properties."""
+    return (
+        int(obj.get(_PREFAB_LIBRARY_INDEX_PROP, -1)),
+        obj.get(_PREFAB_OBJECT_NAME_PROP, ""),
+        obj.get(_PREFAB_ASSET_TYPE_PROP, "OBJECT"),
+        float(obj.get(_PREFAB_ROTATION_PROP, 0.0)),
+    )
+
+
 def _clear_weld_on_mesh(me):
     """Remove all weld custom properties from a Mesh datablock."""
     for key in [k for k in me.keys() if k.startswith(_AW)]:
@@ -322,6 +365,8 @@ def snapshot_coplanar_sides(bm, cuboid_params):
         cuboid_u_max = cu_extent
 
         for f in bm.faces:
+            if not f.is_valid or f.hide:
+                continue
             if abs(abs(f.normal.dot(inward_normal)) - 1.0) >= _FOLDED_EPSILON:
                 continue
             if not all(abs((v.co - origin).dot(filter_axis) - offset_val)
@@ -480,23 +525,19 @@ def set_weld_from_box_builder(context, new_face_vert_positions):
     bm.faces.ensure_lookup_table()
     bm.normal_update()
 
-    # Find the box faces by matching vertex positions within the selection
-    position_set = set(new_face_vert_positions)
+    # Face index disambiguates intentionally-overlapping faces.
+    box_face_signatures = set(new_face_vert_positions)
     box_faces = []
     for f in bm.faces:
         if not f.select:
             continue
         face_verts = frozenset(tuple(v.co) for v in f.verts)
-        if face_verts in position_set:
+        if (f.index, face_verts) in box_face_signatures:
             box_faces.append(f)
     if not box_faces:
         return
 
-    if _check_box_needs_invert(bm, box_faces):
-        mode = 'INVERT'
-    else:
-        mode = 'NONE'
-
+    mode = 'INVERT'
     _set_weld_on_bmesh(bm, mode, 0.0, (0.0, 0.0, 0.0), 0.0, box_faces, None, None)
     _weld_just_stored = True
     bmesh.update_edit_mesh(me)
@@ -512,6 +553,39 @@ def set_weld_from_box_builder_object_mode(obj):
     Uses Mesh custom properties (which participate in object-mode undo).
     """
     _set_weld_mode_on_mesh(obj.data, 'INVERT')
+
+
+def set_repeat_prefab_override(scene, library_index, object_name, asset_type, rotation):
+    """Set transient Repeat Prefab state without writing undoable mesh data."""
+    global _repeat_prefab_override
+
+    _repeat_prefab_override = (int(library_index), object_name, asset_type, float(rotation))
+    props = scene.level_design_props
+    props.weld_mode = 'PREFAB'
+    props.weld_prefab_library_index = int(library_index)
+    props.weld_prefab_object_name = object_name
+    props.weld_prefab_asset_type = asset_type
+    props.weld_prefab_rotation = float(rotation)
+
+
+def clear_repeat_prefab_override():
+    """Clear transient Repeat Prefab state."""
+    global _repeat_prefab_override
+    _repeat_prefab_override = None
+
+
+def set_repeat_prefab_on_object(obj, scene, library_index, object_name, asset_type, rotation):
+    """Store durable Repeat Prefab state on a placed prefab object."""
+    if obj is not None:
+        _set_repeat_prefab_on_object_id(obj, library_index, object_name, asset_type, rotation)
+
+    clear_repeat_prefab_override()
+    props = scene.level_design_props
+    props.weld_mode = 'PREFAB'
+    props.weld_prefab_library_index = int(library_index)
+    props.weld_prefab_object_name = object_name
+    props.weld_prefab_asset_type = asset_type
+    props.weld_prefab_rotation = float(rotation)
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +609,28 @@ def sync_weld_props(context, bm):
         return
 
     props = context.scene.level_design_props
+    if _repeat_prefab_override is not None:
+        library_index, object_name, asset_type, rotation = _repeat_prefab_override
+        props.weld_mode = 'PREFAB'
+        props.weld_prefab_library_index = library_index
+        props.weld_prefab_object_name = object_name
+        props.weld_prefab_asset_type = asset_type
+        props.weld_prefab_rotation = rotation
+        return
+
     obj = context.active_object
+    if obj is not None and _get_weld_mode_from_object_id(obj) == 'PREFAB':
+        library_index, object_name, asset_type, rotation = _get_repeat_prefab_from_object_id(obj)
+        props.weld_mode = 'PREFAB'
+        props.weld_depth = 0.0
+        props.weld_direction = (0.0, 0.0, 0.0)
+        props.weld_back_plane_offset = 0.0
+        props.weld_prefab_library_index = library_index
+        props.weld_prefab_object_name = object_name
+        props.weld_prefab_asset_type = asset_type
+        props.weld_prefab_rotation = rotation
+        return
+
     if not obj or obj.type != 'MESH':
         if props.weld_mode != 'NONE':
             props.weld_mode = 'NONE'
@@ -585,81 +680,9 @@ def get_weld_display_name(weld_mode):
         return "Invert"
     elif weld_mode == 'FOLDED_PLANE':
         return "Folded Plane"
+    elif weld_mode == 'PREFAB':
+        return "Repeat Prefab"
     return "None"
-
-
-# ---------------------------------------------------------------------------
-# Geometry helpers (invert mode — used at setup time, not for undo)
-# ---------------------------------------------------------------------------
-
-def _faces_coplanar_antiparallel(face_a, face_b, tolerance=0.001):
-    """Check if two faces are on the same plane with opposite normals."""
-    dot = face_a.normal.dot(face_b.normal)
-    if dot > -0.99:
-        return False
-    dist = abs((face_b.verts[0].co - face_a.verts[0].co).dot(face_a.normal))
-    return dist < tolerance
-
-
-def _project_face_2d(face, axis_u, axis_v):
-    """Project face vertices onto 2D coordinates using two plane axes."""
-    return [(v.co.dot(axis_u), v.co.dot(axis_v)) for v in face.verts]
-
-
-def _polygons_overlap_2d(poly_a, poly_b):
-    """Check if two convex 2D polygons overlap using the separating axis theorem."""
-    for poly in [poly_a, poly_b]:
-        n = len(poly)
-        for i in range(n):
-            j = (i + 1) % n
-            edge_x = poly[j][0] - poly[i][0]
-            edge_y = poly[j][1] - poly[i][1]
-            axis = (-edge_y, edge_x)
-
-            min_a = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
-            max_a = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
-            min_b = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
-            max_b = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
-
-            if max_a <= min_b + 1e-6 or max_b <= min_a + 1e-6:
-                return False
-    return True
-
-
-def _faces_overlap(face_a, face_b):
-    """Check if two coplanar faces overlap when projected onto their shared plane."""
-    normal = face_a.normal
-    if abs(normal.z) < 0.9:
-        up = Vector((0, 0, 1))
-    else:
-        up = Vector((1, 0, 0))
-    axis_u = normal.cross(up).normalized()
-    axis_v = normal.cross(axis_u).normalized()
-
-    poly_a = _project_face_2d(face_a, axis_u, axis_v)
-    poly_b = _project_face_2d(face_b, axis_u, axis_v)
-    return _polygons_overlap_2d(poly_a, poly_b)
-
-
-def _check_box_needs_invert(bm, box_faces):
-    """Check if a box builder result should use INVERT weld mode.
-
-    Returns True if no non-box face is coplanar with a box face, has an
-    anti-parallel normal (pointing into the box), and overlaps it in 2D.
-    """
-    box_face_set = set(f.index for f in box_faces)
-    other_faces = [f for f in bm.faces if f.index not in box_face_set]
-
-    if not other_faces:
-        return True
-
-    for box_face in box_faces:
-        for other_face in other_faces:
-            if _faces_coplanar_antiparallel(box_face, other_face):
-                if _faces_overlap(box_face, other_face):
-                    return False
-    return True
-
 
 # ---------------------------------------------------------------------------
 # Operator
@@ -686,6 +709,17 @@ class MESH_OT_context_weld(bpy.types.Operator):
 
         if weld_mode == 'NONE':
             return {'CANCELLED'}
+
+        if weld_mode == 'PREFAB':
+            if props.weld_prefab_library_index < 0 or not props.weld_prefab_object_name:
+                return {'CANCELLED'}
+            return bpy.ops.leveldesign.prefab_instantiate(
+                'INVOKE_DEFAULT',
+                library_index=props.weld_prefab_library_index,
+                object_name=props.weld_prefab_object_name,
+                asset_type=props.weld_prefab_asset_type,
+                placement_rotation=props.weld_prefab_rotation,
+            )
 
         if not (context.active_object and
                 context.active_object.type == 'MESH'):

@@ -7,13 +7,14 @@ property.
 
 import bpy
 import bmesh
-import gpu
 from bpy.types import Operator
-from gpu_extras.batch import batch_for_shader
 
-from ..core.logging import debug_log
 from ..core.workspace_check import is_level_design_workspace
-from ..core.face_id import get_fixed_hotspot_layer
+from ..core.viewport_overlay import (
+    TriangleOverlayCache,
+    draw_tris,
+    triangulate_face_world,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -21,9 +22,6 @@ from ..core.face_id import get_fixed_hotspot_layer
 # ---------------------------------------------------------------------------
 
 _draw_handler = None
-_overlay_tris = []
-_last_object_name = None
-_needs_rebuild = True
 
 
 # ---------------------------------------------------------------------------
@@ -31,17 +29,6 @@ _needs_rebuild = True
 # ---------------------------------------------------------------------------
 
 _COLOR = (0.0, 1.0, 0.0, 0.25)
-
-
-def _triangulate_face_world(face, matrix_world):
-    """Fan-triangulate a face and return a list of world-space vertex tuples."""
-    verts = [matrix_world @ v.co for v in face.verts]
-    tris = []
-    for i in range(1, len(verts) - 1):
-        tris.append(verts[0][:])
-        tris.append(verts[i][:])
-        tris.append(verts[i + 1][:])
-    return tris
 
 
 def _collect_fixed_tris_edit(obj):
@@ -66,7 +53,7 @@ def _collect_fixed_tris_edit(obj):
     matrix_world = obj.matrix_world
     for face in bm.faces:
         if face[fixed_layer] != 0:
-            tris.extend(_triangulate_face_world(face, matrix_world))
+            tris.extend(triangulate_face_world(face, matrix_world))
     return tris
 
 
@@ -88,7 +75,7 @@ def _collect_fixed_tris_object(obj):
         matrix_world = obj.matrix_world
         for face in bm.faces:
             if face[fixed_layer] != 0:
-                tris.extend(_triangulate_face_world(face, matrix_world))
+                tris.extend(triangulate_face_world(face, matrix_world))
         return tris
     except (ReferenceError, RuntimeError):
         return []
@@ -98,10 +85,7 @@ def _collect_fixed_tris_object(obj):
 
 def _rebuild_overlay():
     """Rebuild the cached triangle list from all mesh objects in the scene."""
-    global _overlay_tris, _last_object_name, _needs_rebuild
-    _needs_rebuild = False
-    _overlay_tris = []
-
+    tris = []
     context = bpy.context
     scene = context.scene
 
@@ -109,17 +93,19 @@ def _rebuild_overlay():
         if obj.type != 'MESH':
             continue
         if obj.data is not None and obj.data.is_editmode:
-            _overlay_tris.extend(_collect_fixed_tris_edit(obj))
+            tris.extend(_collect_fixed_tris_edit(obj))
         else:
-            _overlay_tris.extend(_collect_fixed_tris_object(obj))
+            tris.extend(_collect_fixed_tris_object(obj))
 
-    _last_object_name = None
+    return tris
+
+
+_overlay_cache = TriangleOverlayCache(_rebuild_overlay)
 
 
 def invalidate_overlay():
     """Mark the overlay as needing a rebuild on the next draw."""
-    global _needs_rebuild
-    _needs_rebuild = True
+    _overlay_cache.invalidate()
 
 
 # ---------------------------------------------------------------------------
@@ -138,27 +124,7 @@ def _draw_fixed_hotspot_overlay():
     if not props.show_fixed_hotspot_overlay:
         return
 
-    if _needs_rebuild:
-        _rebuild_overlay()
-
-    if not _overlay_tris:
-        return
-
-    gpu.state.blend_set('ALPHA')
-    gpu.state.depth_test_set('LESS_EQUAL')
-    gpu.state.depth_mask_set(False)
-
-    try:
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        shader.uniform_float("color", _COLOR)
-        batch = batch_for_shader(shader, 'TRIS', {"pos": _overlay_tris})
-        batch.draw(shader)
-    except Exception:
-        pass
-    finally:
-        gpu.state.blend_set('NONE')
-        gpu.state.depth_test_set('NONE')
-        gpu.state.depth_mask_set(True)
+    draw_tris(_overlay_cache.get_tris(), _COLOR)
 
 
 # ---------------------------------------------------------------------------

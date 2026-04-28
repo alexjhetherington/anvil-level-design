@@ -5,6 +5,7 @@ import bpy
 from bpy.app.handlers import persistent
 
 from ..core.logging import debug_log
+from ..core.materials import consolidate_duplicate_materials
 from ..core.face_id import get_face_id_layer
 from ..core.uv_layers import sync_uv_map_settings
 from ..core.workspace_check import is_level_design_workspace
@@ -18,7 +19,6 @@ from .active_image import update_active_image_from_face
 from .auto_hotspot import apply_auto_hotspots, set_force_auto_hotspot
 from .new_face_projection import project_new_faces
 from .uv_world_scale import apply_world_scale_uvs, apply_uv_lock, get_topology_modal_ops
-from .file_browser import consolidate_duplicate_materials
 from .lifecycle import (
     get_file_loaded_into_edit_depsgraph, set_file_loaded_into_edit_depsgraph,
     get_undo_in_progress,
@@ -91,6 +91,13 @@ def _cleanup_spin_degenerate_faces(bm, me):
         bmesh.update_edit_mesh(me)
 
 
+def _invalidate_view_overlays():
+    from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
+    from ..operators.library_object_overlay import invalidate_overlay as _invalidate_library_overlay
+    _invalidate_fixed_overlay()
+    _invalidate_library_overlay()
+
+
 @persistent
 def on_depsgraph_update(scene, depsgraph):
     """Consolidated depsgraph update handler"""
@@ -132,9 +139,9 @@ def on_depsgraph_update(scene, depsgraph):
                 obj = update.id
                 if obj.type == 'MESH' and obj.mode != 'EDIT':
                     is_transform = getattr(update, 'is_updated_transform', False)
-                    if is_transform:
-                        from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
-                        _invalidate_fixed_overlay()
+                    is_geometry = getattr(update, 'is_updated_geometry', False)
+                    if is_transform or is_geometry:
+                        _invalidate_view_overlays()
                         break
 
         for update in depsgraph.updates:
@@ -205,8 +212,7 @@ def on_depsgraph_update(scene, depsgraph):
                     if topology_changed:
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")
 
-                        from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
-                        _invalidate_fixed_overlay()
+                        _invalidate_view_overlays()
 
                         if not is_fresh_start:
                             project_new_faces(context, bm)
@@ -252,8 +258,7 @@ def on_depsgraph_update(scene, depsgraph):
                         cache_face_data(context)
 
                     if is_geometry_update or is_transform_update:
-                        from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
-                        _invalidate_fixed_overlay()
+                        _invalidate_view_overlays()
 
                     debug_log(f"[Depsgraph] Applying world-scale UVs (cache size={len(face_data_cache)})")
                     apply_world_scale_uvs(obj, scene)

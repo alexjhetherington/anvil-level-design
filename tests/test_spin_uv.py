@@ -114,6 +114,7 @@ class SpinPreservesUVScaleTest(AnvilTestCase):
         apply_uv_to_face(target, uv_layer_0, 3.0, 3.0, 0.0, 0.0, 0.0,
                          mat, ppm, obj.data)
         bmesh.update_edit_mesh(obj.data)
+        self.refresh_face_cache()
 
         ctx = _get_context_override()
         with bpy.context.temp_override(**ctx):
@@ -171,6 +172,7 @@ class SpinThenExtrudeCapTest(AnvilTestCase):
         apply_uv_to_face(target, uv_layer_0, 3.0, 3.0, 0.0, 0.0, 0.0,
                          mat, ppm, obj.data)
         bmesh.update_edit_mesh(obj.data)
+        self.refresh_face_cache()
 
         ctx = _get_context_override()
         with bpy.context.temp_override(**ctx):
@@ -210,7 +212,19 @@ class SpinThenExtrudeCapTest(AnvilTestCase):
         # destructive bmesh.update_edit_mesh. BMesh is the source of truth.
         verts_before = len(bmesh.from_edit_mesh(obj.data).verts)
 
-        yield from self.simulate_extrude(value=1)
+        window = bpy.context.window or bpy.context.window_manager.windows[0]
+        mx, my = self._get_3d_viewport_center()
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            bpy.ops.mesh.extrude_region_move('INVOKE_DEFAULT')
+        yield
+        yield
+        window.event_simulate(type='MOUSEMOVE', value='NOTHING',
+                              x=mx + 1, y=my + 1)
+        yield
+        yield
+        yield from self._simulate_number(1)
+        yield from self._simulate_key_tap('RET')
+        yield 0.5
 
         verts_after = len(bmesh.from_edit_mesh(obj.data).verts)
 

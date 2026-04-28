@@ -26,7 +26,7 @@ class LEVELDESIGN_OT_export_gltf_quick(bpy.types.Operator):
         else:
             kwargs = {}
 
-        # Always override filepath and disable the file browser
+        # Always override filepath and skip Blender's export picker.
         kwargs['filepath'] = filepath
 
         bpy.ops.export_scene.gltf(**kwargs)

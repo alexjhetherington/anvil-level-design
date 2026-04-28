@@ -11,13 +11,105 @@ from mathutils import Vector
 from ..texture_apply import set_uv_from_other_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
 from ...core.logging import debug_log
-from ...core.materials import find_material_with_image, create_material_with_image
+from ...core.materials import (
+    find_material_with_image,
+    create_material_with_image,
+    ensure_material_slot,
+)
+from ...core.face_id import get_face_id_layer
 from ...core.uv_projection import face_aligned_project
 from ...core.uv_layers import get_render_active_uv_layer
 
 
+def _faces_coplanar_antiparallel(face_a, face_b):
+    dot = face_a.normal.dot(face_b.normal)
+    if dot > -0.99:
+        return False
+    dist = abs((face_b.verts[0].co - face_a.verts[0].co).dot(face_a.normal))
+    return dist < 0.001
+
+
+def _project_face_2d(face, axis_u, axis_v):
+    return [(v.co.dot(axis_u), v.co.dot(axis_v)) for v in face.verts]
+
+
+def _polygons_overlap_2d(poly_a, poly_b):
+    for poly in [poly_a, poly_b]:
+        n = len(poly)
+        for i in range(n):
+            j = (i + 1) % n
+            edge_x = poly[j][0] - poly[i][0]
+            edge_y = poly[j][1] - poly[i][1]
+            axis = (-edge_y, edge_x)
+
+            min_a = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
+            max_a = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_a)
+            min_b = min(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
+            max_b = max(p[0] * axis[0] + p[1] * axis[1] for p in poly_b)
+
+            if max_a <= min_b + 1e-6 or max_b <= min_a + 1e-6:
+                return False
+    return True
+
+
+def _faces_overlap(face_a, face_b):
+    normal = face_a.normal
+    if abs(normal.z) < 0.9:
+        up = Vector((0, 0, 1))
+    else:
+        up = Vector((1, 0, 0))
+    axis_u = normal.cross(up).normalized()
+    axis_v = normal.cross(axis_u).normalized()
+
+    poly_a = _project_face_2d(face_a, axis_u, axis_v)
+    poly_b = _project_face_2d(face_b, axis_u, axis_v)
+    return _polygons_overlap_2d(poly_a, poly_b)
+
+
+def _face_overlaps_antiparallel_coplanar_existing(face, existing_faces):
+    for existing_face in existing_faces:
+        if _faces_coplanar_antiparallel(face, existing_face):
+            if _faces_overlap(face, existing_face):
+                return True
+    return False
+
+
+def _remove_antiparallel_coplanar_faces(bm, new_faces, existing_faces):
+    bm.faces.index_update()
+    bm.faces.ensure_lookup_table()
+    faces_to_remove = [
+        face for face in new_faces
+        if face.is_valid and _face_overlaps_antiparallel_coplanar_existing(face, existing_faces)
+    ]
+    if not faces_to_remove:
+        return new_faces
+
+    edges_to_remove = []
+    for edge in bm.edges:
+        linked_removed_faces = [
+            face for face in edge.link_faces
+            if face in faces_to_remove
+        ]
+        if len(linked_removed_faces) >= 2 and len(linked_removed_faces) == len(edge.link_faces):
+            edges_to_remove.append(edge)
+
+    kept_faces = [face for face in new_faces if face not in faces_to_remove]
+    for face in faces_to_remove:
+        debug_log(f"[BoxBuilder] Removing anti-parallel coplanar face {face.index}")
+    bmesh.ops.delete(bm, geom=faces_to_remove, context='FACES_ONLY')
+    edges_to_remove = [edge for edge in edges_to_remove if edge.is_valid]
+    if edges_to_remove:
+        debug_log(f"[BoxBuilder] Removing {len(edges_to_remove)} edges between removed faces")
+        bmesh.ops.delete(bm, geom=edges_to_remove, context='EDGES')
+    bm.faces.index_update()
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
+
+    return [face for face in kept_faces if face.is_valid]
+
+
 def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, local_z,
-                        obj, ppm, view_forward):
+                        obj, ppm, view_forward, keep_anti_parallel_coplanar_faces):
     """
     Create a box mesh from the modal draw parameters.
 
@@ -31,6 +123,8 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         obj: The active mesh object
         ppm: Pixels per meter setting
         view_forward: Camera forward direction (world space), used for plane normal orientation
+        keep_anti_parallel_coplanar_faces: Keep new faces that overlap
+            existing coplanar faces with opposite normals
 
     Returns:
         tuple: (success: bool, message: str)
@@ -77,15 +171,22 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     local_view_forward = (rot @ view_forward).normalized()
 
     # Find active selected face for material/UV source (before creating new geometry)
-    # Ensure UV layer exists before creating geometry (creating layers invalidates BMesh refs)
+    # Ensure custom layers exist before creating geometry (creating layers invalidates BMesh refs)
     source_face = None
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.active
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.new("UVMap")
-    if bm.faces.active is not None and bm.faces.active.is_valid and bm.faces.active.select:
+    get_face_id_layer(bm)
+    if (bm.faces.active is not None and bm.faces.active.is_valid
+            and not bm.faces.active.hide and bm.faces.active.select):
         source_face = bm.faces.active
+
+    existing_faces = [
+        face for face in bm.faces
+        if face.is_valid and not face.hide
+    ]
 
     is_zero_depth = abs(local_depth) < 1e-5
     is_zero_dx = dx < 1e-5
@@ -111,6 +212,9 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     # Normals must be computed before UV application (UV functions use face.normal)
     bm.normal_update()
 
+    if not is_plane and not keep_anti_parallel_coplanar_faces:
+        new_faces = _remove_antiparallel_coplanar_faces(bm, new_faces, existing_faces)
+
     # Apply material and UVs
     _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj)
 
@@ -130,14 +234,16 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
                           f"(source_face={'index ' + str(source_face.index) if source_face else 'None'}, "
                           f"mat_idx={face.material_index})")
 
-    # Add newly created box geometry to the existing selection
-    # Collect vertex positions per face for weld tracking (order-independent)
+    # Add newly created box geometry to the existing selection and collect
+    # indexed vertex signatures for weld tracking.
     new_face_vert_positions = []
+    bm.faces.index_update()
+    bm.faces.ensure_lookup_table()
     for f in new_faces:
         if f.is_valid:
             f.select = True
             new_face_vert_positions.append(
-                frozenset(tuple(v.co) for v in f.verts)
+                (f.index, frozenset(tuple(v.co) for v in f.verts))
             )
     bm.select_flush(True)
 
@@ -249,7 +355,8 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
 
     Otherwise: use the active image to find/create a material and apply default UVs.
     """
-    if source_face is not None and source_face.is_valid and uv_layer is not None:
+    if (source_face is not None and source_face.is_valid
+            and not source_face.hide and uv_layer is not None):
         # Alt-click style: copy material and UV from source face
         mat_idx = source_face.material_index
         obj_matrix = obj.matrix_world
@@ -268,6 +375,16 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
         if image is None:
             image = get_previous_image()
         if image is None:
+            for face in new_faces:
+                if not face.is_valid:
+                    continue
+                mat = (
+                    me.materials[face.material_index]
+                    if face.material_index < len(me.materials)
+                    else None
+                )
+                face_aligned_project(face, uv_layer, mat, ppm)
+                cache_single_face(face, bm, ppm, me)
             return
 
         # Find or create material for this image
@@ -275,15 +392,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
         if mat is None:
             mat = create_material_with_image(image)
 
-        # Ensure material is on the object
-        mat_idx = None
-        for i, slot_mat in enumerate(me.materials):
-            if slot_mat == mat:
-                mat_idx = i
-                break
-        if mat_idx is None:
-            me.materials.append(mat)
-            mat_idx = len(me.materials) - 1
+        mat_idx = ensure_material_slot(me, mat)
 
         for face in new_faces:
             if not face.is_valid:
@@ -394,8 +503,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         if mat is None:
             mat = create_material_with_image(image)
 
-        me.materials.append(mat)
-        mat_idx = 0
+        mat_idx = ensure_material_slot(me, mat)
 
         bpy.ops.object.mode_set(mode='EDIT')
 

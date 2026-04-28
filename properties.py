@@ -8,6 +8,9 @@ from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty, IntPrope
 _updating_from_selection = False
 # Flag to prevent linked scale from causing infinite recursion
 _updating_linked_scale = False
+# Flags to prevent linked prefab random scale rows from recursing
+_updating_prefab_random_scale_min = False
+_updating_prefab_random_scale_max = False
 # Flag to prevent offset normalization from causing infinite recursion
 _normalizing_offset = False
 # Flag to prevent rotation normalization from causing infinite recursion
@@ -54,6 +57,22 @@ class AnvilUVMapSettings(bpy.types.PropertyGroup):
         default=False,
         update=update_uv_map_lock,
     )
+
+
+class AnvilPrefabObjectName(bpy.types.PropertyGroup):
+    """A single prefab asset discovered inside a prefab library .blend file"""
+    name: StringProperty(name="Name")
+    asset_type: StringProperty(name="Asset Type")
+
+
+class AnvilPrefabLibrary(bpy.types.PropertyGroup):
+    """A .blend file referenced as a prefab library"""
+    filepath: StringProperty(
+        name="Filepath",
+        description="Absolute path to the .blend file",
+        subtype='FILE_PATH',
+    )
+    objects: CollectionProperty(type=AnvilPrefabObjectName)
 
 
 def apply_scale_to_selected_faces(context):
@@ -313,6 +332,64 @@ def update_projection_scale(self, context):
     bpy.ops.leveldesign.face_aligned_project()
 
 
+def _sync_prefab_random_scale_vector_to_x(props, attr_name):
+    value = getattr(props, attr_name)
+    x = value[0]
+    if value[1] == x and value[2] == x:
+        return
+    setattr(props, attr_name, (x, x, x))
+
+
+def _sync_prefab_random_scale_min_from_x(props):
+    """Keep random minimum scale axes linked when enabled."""
+    global _updating_prefab_random_scale_min
+
+    if _updating_prefab_random_scale_min or not props.prefab_random_scale_min_linked:
+        return
+
+    _updating_prefab_random_scale_min = True
+    try:
+        _sync_prefab_random_scale_vector_to_x(props, "prefab_random_scale_min")
+    finally:
+        _updating_prefab_random_scale_min = False
+
+
+def _sync_prefab_random_scale_max_from_x(props):
+    """Keep random maximum scale axes linked when enabled."""
+    global _updating_prefab_random_scale_max
+
+    if _updating_prefab_random_scale_max or not props.prefab_random_scale_max_linked:
+        return
+
+    _updating_prefab_random_scale_max = True
+    try:
+        _sync_prefab_random_scale_vector_to_x(props, "prefab_random_scale_max")
+    finally:
+        _updating_prefab_random_scale_max = False
+
+
+def update_prefab_random_scale_min(self, context):
+    """Keep random minimum scale axes linked when enabled."""
+    _sync_prefab_random_scale_min_from_x(self)
+
+
+def update_prefab_random_scale_max(self, context):
+    """Keep random maximum scale axes linked when enabled."""
+    _sync_prefab_random_scale_max_from_x(self)
+
+
+def update_prefab_random_scale_min_linked(self, context):
+    """Sync random minimum scale axes when the link is enabled."""
+    if self.prefab_random_scale_min_linked:
+        _sync_prefab_random_scale_min_from_x(self)
+
+
+def update_prefab_random_scale_max_linked(self, context):
+    """Sync random maximum scale axes when the link is enabled."""
+    if self.prefab_random_scale_max_linked:
+        _sync_prefab_random_scale_max_from_x(self)
+
+
 class LevelDesignProperties(bpy.types.PropertyGroup):
     """Combined properties for Level Design Tools"""
 
@@ -525,6 +602,12 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=True,
     )
 
+    gltf_anvil_always_combine_materials: BoolProperty(
+        name="Always Combine Materials",
+        description="Combine same-named materials during export, preferring local scene material settings when available",
+        default=True,
+    )
+
     gltf_anvil_debug: BoolProperty(
         name="Debug (Keep Export Scene)",
         description="Keep the temporary export scene for inspection instead of deleting it",
@@ -552,6 +635,75 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
+    # === Prefab Placement Properties ===
+    prefab_inherit_normal: BoolProperty(
+        name="Inherit Normal",
+        description="Align prefab placement to the face normal by default",
+        default=True,
+    )
+
+    prefab_random_scale_enabled: BoolProperty(
+        name="Random Size",
+        description="Randomize prefab placement scale per axis",
+        default=False,
+    )
+
+    prefab_random_scale_min: FloatVectorProperty(
+        name="Min Scale",
+        description="Minimum prefab placement scale on X, Y, and Z",
+        size=3,
+        default=(1.0, 1.0, 1.0),
+        min=0.001,
+        max=1000.0,
+        update=update_prefab_random_scale_min,
+    )
+
+    prefab_random_scale_min_linked: BoolProperty(
+        name="Link Min Scale",
+        description="Keep random minimum scale Y and Z matched to X",
+        default=True,
+        update=update_prefab_random_scale_min_linked,
+    )
+
+    prefab_random_scale_max: FloatVectorProperty(
+        name="Max Scale",
+        description="Maximum prefab placement scale on X, Y, and Z",
+        size=3,
+        default=(1.0, 1.0, 1.0),
+        min=0.001,
+        max=1000.0,
+        update=update_prefab_random_scale_max,
+    )
+
+    prefab_random_scale_max_linked: BoolProperty(
+        name="Link Max Scale",
+        description="Keep random maximum scale Y and Z matched to X",
+        default=True,
+        update=update_prefab_random_scale_max_linked,
+    )
+
+    prefab_random_rotation_enabled: BoolProperty(
+        name="Random Rotation",
+        description="Randomize prefab placement Euler rotation per axis",
+        default=False,
+    )
+
+    prefab_random_rotation_min: FloatVectorProperty(
+        name="Min Rotation",
+        description="Minimum prefab placement Euler rotation on X, Y, and Z",
+        size=3,
+        subtype='EULER',
+        default=(0.0, 0.0, 0.0),
+    )
+
+    prefab_random_rotation_max: FloatVectorProperty(
+        name="Max Rotation",
+        description="Maximum prefab placement Euler rotation on X, Y, and Z",
+        size=3,
+        subtype='EULER',
+        default=(0.0, 0.0, 0.0),
+    )
+
     # === Context Weld State ===
     weld_mode: EnumProperty(
         name="Weld Mode",
@@ -562,6 +714,7 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
             ('CORRIDOR', "Corridor", "Create face and extrude corridor"),
             ('INVERT', "Invert", "Flip normals on the mesh"),
             ('FOLDED_PLANE', "Folded Plane", "Fill faces on cuboid side planes"),
+            ('PREFAB', "Repeat Prefab", "Place the last selected prefab again"),
         ],
         default='NONE',
     )
@@ -585,11 +738,56 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=0.0,
     )
 
+    weld_prefab_library_index: IntProperty(
+        name="Weld Prefab Library Index",
+        description="Prefab library index for Repeat Prefab",
+        default=-1,
+    )
+
+    weld_prefab_object_name: StringProperty(
+        name="Weld Prefab Object Name",
+        description="Prefab object name for Repeat Prefab",
+        default="",
+    )
+
+    weld_prefab_asset_type: StringProperty(
+        name="Weld Prefab Asset Type",
+        description="Prefab asset type for Repeat Prefab",
+        default="OBJECT",
+    )
+
+    weld_prefab_rotation: FloatProperty(
+        name="Weld Prefab Rotation",
+        description="Placement rotation for Repeat Prefab",
+        default=0.0,
+    )
+
 
 def register():
     bpy.utils.register_class(AnvilUVMapSettings)
+    bpy.utils.register_class(AnvilPrefabObjectName)
+    bpy.utils.register_class(AnvilPrefabLibrary)
     bpy.utils.register_class(LevelDesignProperties)
     bpy.types.Scene.level_design_props = PointerProperty(type=LevelDesignProperties)
+
+    # Prefab libraries (Anvil (Prefabs) panel)
+    bpy.types.Scene.anvil_prefab_libraries = CollectionProperty(type=AnvilPrefabLibrary)
+    bpy.types.Scene.anvil_prefab_active_library_index = IntProperty(
+        name="Active Library Index",
+        default=0,
+    )
+
+    # Per-scene mode toggle: in Library mode the scene-side prefab panels are
+    # hidden and on save existing object assets get viewport previews captured.
+    bpy.types.Scene.anvil_prefab_mode = EnumProperty(
+        name="Prefab Mode",
+        description="Whether this scene is used as a level (Scene) or as a prefab library (Library)",
+        items=[
+            ('SCENE', "Scene", "Normal scene; link prefabs from libraries"),
+            ('LIBRARY', "Library", "Object assets in this scene are prefabs; on save, capture viewport-shaded previews"),
+        ],
+        default='SCENE',
+    )
 
     # Per-object, per-UV-map settings collection
     bpy.types.Object.anvil_uv_map_settings = CollectionProperty(type=AnvilUVMapSettings)
@@ -636,6 +834,11 @@ def unregister():
     del bpy.types.Object.anvil_hotspot_size_weight
     del bpy.types.Object.anvil_allow_combined_faces
     del bpy.types.Object.anvil_uv_map_settings
+    del bpy.types.Scene.anvil_prefab_mode
+    del bpy.types.Scene.anvil_prefab_active_library_index
+    del bpy.types.Scene.anvil_prefab_libraries
     del bpy.types.Scene.level_design_props
     bpy.utils.unregister_class(LevelDesignProperties)
+    bpy.utils.unregister_class(AnvilPrefabLibrary)
+    bpy.utils.unregister_class(AnvilPrefabObjectName)
     bpy.utils.unregister_class(AnvilUVMapSettings)

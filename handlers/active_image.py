@@ -6,7 +6,7 @@ from ..core.materials import get_image_from_material
 
 
 # The currently active image for texture operations.
-# Updated by: file browser selection, user clicking a face
+# Updated by: texture browser selection and face picking.
 # Used by: Alt+Click apply, UI panel preview
 _active_image = None
 # The previously active image name and filepath, shown as a disabled preview when
@@ -16,8 +16,7 @@ _previous_image_name = None
 _previous_image_filepath = None
 # Specifically for the case where faces start as selected e.g. initial cube on file creation.
 # Guard flag: when True, depsgraph should not overwrite _active_image
-# (set by apply_texture_from_file_browser which runs in a timer context
-# where context.tool_settings may not reflect the 3D viewport state)
+# immediately after an explicit texture selection.
 _active_image_just_set = False
 
 

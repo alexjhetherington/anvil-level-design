@@ -2,10 +2,12 @@
 
 import bmesh
 import bpy
+import warnings
 from bpy.app.handlers import persistent
 
 from ..core.logging import debug_log
 from ..core.face_id import get_face_id_layer
+from ..core.materials import reset_duplicate_material_consolidation
 from ..core.uv_layers import sync_uv_map_settings
 from ..workspace import setup_addon_workspaces, subscribe_splash_watcher, reset_specialized_template_flag
 
@@ -22,10 +24,6 @@ from .mode_tracking import (
     set_all_grid_scales_to_default, disable_correct_uv_slide,
     subscribe_unit_settings, subscribe_object_mode, reset_mode_tracking,
 )
-from .file_browser import (
-    start_file_browser_watcher, set_was_first_save, get_was_first_save,
-    reset as reset_file_browser,
-)
 from . import cross_object_undo
 
 
@@ -34,6 +32,10 @@ _file_loaded_into_edit_depsgraph = False
 
 # Track undo/redo operations so the depsgraph handler can skip reprojection
 _undo_in_progress = False
+
+# Track if this is the first save so path-relative conversion can run again
+# after Blender assigns the .blend filepath.
+_was_first_save = False
 
 
 def get_file_loaded_into_edit_depsgraph():
@@ -54,6 +56,15 @@ def set_undo_in_progress(value):
     _undo_in_progress = value
 
 
+def get_was_first_save():
+    return _was_first_save
+
+
+def set_was_first_save(value):
+    global _was_first_save
+    _was_first_save = value
+
+
 def _clear_file_loaded_flag():
     """Clear the file loaded flag after timeout."""
     global _file_loaded_into_edit_depsgraph
@@ -63,6 +74,14 @@ def _clear_file_loaded_flag():
 def _clear_undo_flag():
     """Clear the undo flag after depsgraph has processed."""
     set_undo_in_progress(False)
+
+
+def _restore_texture_browser_settings():
+    try:
+        from ..texture_browser import browser as texture_browser
+        texture_browser.restore_texture_browser_settings_after_load()
+    except Exception as exc:
+        debug_log(f"[Lifecycle] Could not restore texture browser settings after load: {exc}")
 
 
 # Operators that abuse the undo stack as their redo-panel rollback mechanism.
@@ -137,6 +156,8 @@ def on_undo_pre(scene):
     """Handler called before an undo operation."""
     if _active_operator_abuses_undo():
         return
+    from ..operators.weld import clear_repeat_prefab_override
+    clear_repeat_prefab_override()
     cross_object_undo.handle_undo_pre()
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
@@ -180,6 +201,8 @@ def on_redo_pre(scene):
     """Handler called before a redo operation."""
     if _active_operator_abuses_undo():
         return
+    from ..operators.weld import clear_repeat_prefab_override
+    clear_repeat_prefab_override()
     cross_object_undo.handle_redo_pre()
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
@@ -218,6 +241,39 @@ def on_redo_post(scene):
         pass
 
 
+def _make_prefab_library_paths_relative():
+    """Convert anvil_prefab_libraries entries to // relative paths.
+    bpy.ops.file.make_paths_relative skips these because they live on a
+    custom PropertyGroup, not on bpy.data. Cross-drive paths (Windows)
+    can't be made relative and are left as-is."""
+    if not bpy.data.filepath:
+        return
+    for scene in bpy.data.scenes:
+        libs = getattr(scene, "anvil_prefab_libraries", None)
+        if libs is None:
+            continue
+        for entry in libs:
+            if not entry.filepath or entry.filepath.startswith("//"):
+                continue
+            try:
+                rel = bpy.path.relpath(entry.filepath)
+            except ValueError:
+                continue
+            if rel != entry.filepath:
+                original = entry.filepath
+                try:
+                    with warnings.catch_warnings(record=True) as caught_warnings:
+                        warnings.simplefilter("always", RuntimeWarning)
+                        entry.filepath = rel
+                    if caught_warnings:
+                        entry.filepath = original
+                except (RuntimeWarning, TypeError):
+                    # Some custom file path properties reject Blender-relative
+                    # // paths. Keep the original absolute path rather than
+                    # failing the save.
+                    entry.filepath = original
+
+
 @persistent
 def on_save_pre(dummy):
     """Handler called before saving a .blend file."""
@@ -226,6 +282,12 @@ def on_save_pre(dummy):
     if bpy.data.filepath:
         print("Anvil Level Design: Making all paths relative (pre save)", flush=True)
         bpy.ops.file.make_paths_relative()
+        _make_prefab_library_paths_relative()
+
+    scene = bpy.context.scene
+    if scene is not None and getattr(scene, "anvil_prefab_mode", 'SCENE') == 'LIBRARY':
+        from ..prefabs.previews import capture_library_previews
+        capture_library_previews(scene)
 
 
 @persistent
@@ -235,6 +297,7 @@ def on_save_post(dummy):
         set_was_first_save(False)
         print("Anvil Level Design: Making all paths relative (post save, for first save)", flush=True)
         bpy.ops.file.make_paths_relative()
+        _make_prefab_library_paths_relative()
         print("Anvil Level Design: Triggering second save to apply relative paths", flush=True)
         bpy.ops.wm.save_mainfile()
 
@@ -269,7 +332,9 @@ def on_load_post(dummy):
         subscribe_splash_watcher()
 
     reset_face_cache()
-    reset_file_browser()
+    set_was_first_save(False)
+    reset_duplicate_material_consolidation()
+    _restore_texture_browser_settings()
     cross_object_undo.reset()
     _file_loaded_into_edit_depsgraph = True
     reset_mode_tracking()
@@ -279,7 +344,6 @@ def on_load_post(dummy):
         _apply_addon_defaults_to_scene()
 
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
-    bpy.app.timers.register(start_file_browser_watcher, first_interval=0.2)
     bpy.app.timers.register(disable_correct_uv_slide, first_interval=0.1)
     bpy.app.timers.register(subscribe_unit_settings, first_interval=0.1)
     bpy.app.timers.register(subscribe_object_mode, first_interval=0.1)

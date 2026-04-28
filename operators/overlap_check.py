@@ -14,6 +14,7 @@ from mathutils import Vector
 
 from ..core.logging import debug_log
 from ..core.workspace_check import is_level_design_workspace
+from .modal_draw.utils import tag_redraw_all_3d_views
 
 
 # ---------------------------------------------------------------------------
@@ -103,10 +104,20 @@ _AREA_EPSILON = 1e-3
 
 def _polygons_overlap_2d(poly_a, poly_b):
     """Return True if two 2-D polygons share non-trivial area."""
+    # Opposite-normal faces project with opposite winding; the clipper expects CCW.
+    poly_a = _ensure_counter_clockwise(poly_a)
+    poly_b = _ensure_counter_clockwise(poly_b)
     clipped = _sutherland_hodgman(poly_a, poly_b)
     if len(clipped) < 3:
         return False
     return abs(_polygon_area(clipped)) > _AREA_EPSILON
+
+
+def _ensure_counter_clockwise(poly):
+    """Return a copy of *poly* wound counter-clockwise for clipping."""
+    if _polygon_area(poly) < 0.0:
+        return list(reversed(poly))
+    return list(poly)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +243,7 @@ def _draw_overlap_overlay():
     gpu.state.blend_set('ALPHA')
     gpu.state.depth_test_set('LESS_EQUAL')
     gpu.state.depth_mask_set(False)
+    gpu.state.face_culling_set('NONE')
 
     try:
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -249,6 +261,7 @@ def _draw_overlap_overlay():
         gpu.state.blend_set('NONE')
         gpu.state.depth_test_set('NONE')
         gpu.state.depth_mask_set(True)
+        gpu.state.face_culling_set('NONE')
 
 
 def _register_draw_handler():
@@ -329,7 +342,7 @@ class LEVELDESIGN_OT_toggle_overlap_check(Operator):
             _overlap_count = 0
             _overlay_tris_same.clear()
             _overlay_tris_opposite.clear()
-            context.area.tag_redraw()
+            tag_redraw_all_3d_views()
             return {'FINISHED'}
 
         # Turn on – run detection
@@ -351,7 +364,7 @@ class LEVELDESIGN_OT_toggle_overlap_check(Operator):
         else:
             self.report({'INFO'}, "No overlapping faces found")
 
-        context.area.tag_redraw()
+        tag_redraw_all_3d_views()
         return {'FINISHED'}
 
 

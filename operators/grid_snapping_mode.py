@@ -87,26 +87,19 @@ def validate_quad_grid(faces, require_rectangular):
     }
 
 
-def build_grid_uvs(faces, uv_layer, edge_faces, tex_meters_u, tex_meters_v):
+def build_grid_uvs(faces, uv_layer, edge_faces, world_matrix):
     """Build regular grid UVs for a rectangular quad grid.
 
     Uses BFS propagation from the first face. Rows share height,
-    columns share width. UVs are normalized to texture space.
+    columns share width. UVs are left in displayed meters.
 
     Args:
         faces: list of BMFaces forming a rectangular grid
         uv_layer: BMesh UV layer
         edge_faces: dict of edge -> list of faces (from validate_quad_grid)
-        tex_meters_u: texture width in meters (image_pixels / ppm)
-        tex_meters_v: texture height in meters (image_pixels / ppm)
+        world_matrix: Object matrix used to measure displayed edge lengths
     """
-    _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces)
-
-    # Normalize UVs from meters to texture space
-    for face in faces:
-        for loop in face.loops:
-            loop[uv_layer].uv.x /= tex_meters_u
-            loop[uv_layer].uv.y /= tex_meters_v
+    _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces, world_matrix)
 
 
 class LEVELDESIGN_OT_grid_snapping_mode(Operator):
@@ -114,6 +107,30 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
     bl_idname = "leveldesign.grid_snapping_mode"
     bl_label = "Grid Snapping Mode"
     bl_options = {'REGISTER', 'UNDO'}
+
+    action_face_indices: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_boundary_edge_index: bpy.props.IntProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_texture_edge: bpy.props.EnumProperty(
+        items=[
+            ('BOTTOM', "Bottom", ""),
+            ('RIGHT', "Right", ""),
+            ('TOP', "Top", ""),
+            ('LEFT', "Left", ""),
+        ],
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_fit_mode: bpy.props.EnumProperty(
+        items=[
+            ('NONE', "None", ""),
+            ('VERTICAL', "Vertical", ""),
+            ('HORIZONTAL', "Horizontal", ""),
+        ],
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
 
     @classmethod
     def poll(cls, context):
@@ -165,6 +182,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
         # Default state
         self.texture_edge = 'BOTTOM'
         self.fit_mode = None
+        self.last_snap_edge_index = -1
 
         self.mouse_x = event.mouse_region_x
         self.mouse_y = event.mouse_region_y
@@ -355,12 +373,14 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             for edge in face.edges:
                 edge_faces.setdefault(edge, []).append(face)
 
-        # Build grid UVs (in texture space)
-        build_grid_uvs(faces, uv_layer, edge_faces, tex_meters_u, tex_meters_v)
+        # Build grid UVs in displayed meters. Texture normalization happens
+        # after rotation so non-square textures do not swap the scale axes.
+        build_grid_uvs(faces, uv_layer, edge_faces, obj.matrix_world)
 
         # Find the closest boundary edge and its outward direction
         closest_direction, snap_edge_idx = self._get_closest_boundary_edge(
             context, faces, uv_layer)
+        self.last_snap_edge_index = snap_edge_idx
 
         # Get grid bounding box
         min_u = float('inf')
@@ -375,28 +395,11 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
                 if v < min_v: min_v = v
                 if v > max_v: max_v = v
 
-        grid_width = max_u - min_u
-        grid_height = max_v - min_v
-
-        # Apply fit mode scaling if active
-        if self.fit_mode == 'vertical' and grid_height > 0.0001:
-            fit_scale = 1.0 / grid_height
-            for face in faces:
-                for loop in face.loops:
-                    loop[uv_layer].uv.x = (loop[uv_layer].uv.x - min_u) * fit_scale
-                    loop[uv_layer].uv.y = (loop[uv_layer].uv.y - min_v) * fit_scale
-        elif self.fit_mode == 'horizontal' and grid_width > 0.0001:
-            fit_scale = 1.0 / grid_width
-            for face in faces:
-                for loop in face.loops:
-                    loop[uv_layer].uv.x = (loop[uv_layer].uv.x - min_u) * fit_scale
-                    loop[uv_layer].uv.y = (loop[uv_layer].uv.y - min_v) * fit_scale
-        else:
-            # Shift grid so min is at origin (simplifies snap math)
-            for face in faces:
-                for loop in face.loops:
-                    loop[uv_layer].uv.x -= min_u
-                    loop[uv_layer].uv.y -= min_v
+        # Shift grid so min is at origin (simplifies snap math)
+        for face in faces:
+            for loop in face.loops:
+                loop[uv_layer].uv.x -= min_u
+                loop[uv_layer].uv.y -= min_v
 
         # Rotate the grid so the selected edge's outward direction aligns with
         # the chosen texture edge direction.
@@ -431,8 +434,51 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
                 loop[uv_layer].uv.x = du * cos_r - dv * sin_r + center_u
                 loop[uv_layer].uv.y = du * sin_r + dv * cos_r + center_v
 
-        # Find the snapped edge's UV position after rotation, then translate
-        # so that specific edge sits on the unit square boundary.
+        # Convert rotated meter-space coordinates to texture UV space. Doing
+        # this after rotation keeps texture U size paired with final U motion,
+        # and texture V size paired with final V motion.
+        for face in faces:
+            for loop in face.loops:
+                loop[uv_layer].uv.x /= tex_meters_u
+                loop[uv_layer].uv.y /= tex_meters_v
+
+        # Get grid bounding box in texture UV space
+        min_u = float('inf')
+        max_u = float('-inf')
+        min_v = float('inf')
+        max_v = float('-inf')
+        for face in faces:
+            for loop in face.loops:
+                u, v = loop[uv_layer].uv
+                if u < min_u: min_u = u
+                if u > max_u: max_u = u
+                if v < min_v: min_v = v
+                if v > max_v: max_v = v
+
+        grid_width = max_u - min_u
+        grid_height = max_v - min_v
+
+        # Apply fit mode scaling if active
+        if self.fit_mode == 'vertical' and grid_height > 0.0001:
+            fit_scale = 1.0 / grid_height
+            for face in faces:
+                for loop in face.loops:
+                    loop[uv_layer].uv.x = (loop[uv_layer].uv.x - min_u) * fit_scale
+                    loop[uv_layer].uv.y = (loop[uv_layer].uv.y - min_v) * fit_scale
+        elif self.fit_mode == 'horizontal' and grid_width > 0.0001:
+            fit_scale = 1.0 / grid_width
+            for face in faces:
+                for loop in face.loops:
+                    loop[uv_layer].uv.x = (loop[uv_layer].uv.x - min_u) * fit_scale
+                    loop[uv_layer].uv.y = (loop[uv_layer].uv.y - min_v) * fit_scale
+        else:
+            for face in faces:
+                for loop in face.loops:
+                    loop[uv_layer].uv.x -= min_u
+                    loop[uv_layer].uv.y -= min_v
+
+        # Find the snapped edge's final UV position, then translate so that
+        # specific edge sits on the unit square boundary.
         bm.edges.ensure_lookup_table()
 
         # Build vert -> UV lookup after rotation
@@ -452,7 +498,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             suv0 = None
             suv1 = None
 
-        # Recalculate bounds after rotation (needed for centering on the other axis)
+        # Recalculate bounds after fit (needed for centering on the other axis)
         min_u = float('inf')
         max_u = float('-inf')
         min_v = float('inf')
@@ -589,6 +635,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
 
         # Confirm
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            self._capture_action_properties()
             self._remove_draw_handler()
             context.workspace.status_text_set(None)
             context.area.tag_redraw()
@@ -603,6 +650,17 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
+
+    def _capture_action_properties(self):
+        self.action_face_indices = ",".join(str(idx) for idx in self.face_indices)
+        self.action_boundary_edge_index = self.last_snap_edge_index
+        self.action_texture_edge = self.texture_edge
+        if self.fit_mode == 'vertical':
+            self.action_fit_mode = 'VERTICAL'
+        elif self.fit_mode == 'horizontal':
+            self.action_fit_mode = 'HORIZONTAL'
+        else:
+            self.action_fit_mode = 'NONE'
 
 
 classes = (

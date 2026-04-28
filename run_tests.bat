@@ -24,4 +24,6 @@ if "%~1"=="" (
     "%BLENDER_EXE%" --enable-event-simulate --python tests/run_tests.py -- %*
 )
 
+set "TEST_EXIT_CODE=%ERRORLEVEL%"
 popd
+exit /b %TEST_EXIT_CODE%

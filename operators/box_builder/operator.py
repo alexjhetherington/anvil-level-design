@@ -6,12 +6,15 @@ Thin subclass of ModalDrawBase that creates box geometry.
 
 import bpy
 import bmesh
+from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty, StringProperty
 from mathutils import Vector
 
 from . import geometry
 from ..modal_draw.base_operator import ModalDrawBase
-from ..modal_draw import snapping
-from ..modal_draw import utils
+from ..modal_draw.default_grid_pivot import (
+    DefaultGridPivotMixin,
+    selected_vertex_world_coords,
+)
 from ...core.workspace_check import is_level_design_workspace
 from ..weld import set_weld_from_box_builder, set_weld_from_box_builder_object_mode
 
@@ -22,29 +25,39 @@ def _get_selected_vertex_world_coords(context):
     Respects the current selection mode (vertex/edge/face). Returns an empty
     set when nothing is selected or not in edit mode.
     """
-    obj = context.active_object
-    if obj is None or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-        return set()
-
-    me = obj.data
-    bm = bmesh.from_edit_mesh(me)
-    bm.verts.ensure_lookup_table()
-    world = obj.matrix_world
-
-    coords = set()
-    for v in bm.verts:
-        if v.select:
-            co = world @ v.co
-            coords.add((co.x, co.y, co.z))
-
-    return coords
+    return selected_vertex_world_coords(context.active_object, context.mode)
 
 
-class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
+class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operator):
     """Create a box mesh using the 3-state draw workflow"""
     bl_idname = "leveldesign.box_builder"
     bl_label = "Box Builder"
     bl_options = {'REGISTER', 'UNDO'}
+
+    action_first_vertex: FloatVectorProperty(
+        size=3,
+    )
+    action_second_vertex: FloatVectorProperty(
+        size=3,
+    )
+    action_depth: FloatProperty()
+    action_local_x: FloatVectorProperty(
+        size=3,
+    )
+    action_local_y: FloatVectorProperty(
+        size=3,
+    )
+    action_local_z: FloatVectorProperty(
+        size=3,
+    )
+    action_had_selection: BoolProperty()
+    action_was_edit_mode: BoolProperty()
+    action_object_name: StringProperty()
+    keep_anti_parallel_coplanar_faces: BoolProperty(
+        name="Keep Overlap Faces",
+        description="Keep box faces that overlap existing faces",
+        default=True,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -65,94 +78,36 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
     def _is_valid_mode(self, context):
         return context.mode in ('EDIT_MESH', 'OBJECT')
 
-    def _calculate_first_vertex_snap_3d(self, context, event):
-        """Perspective snap with fallback to horizontal plane when no face is hit."""
-        result = super()._calculate_first_vertex_snap_3d(context, event)
-        snapped, face_normal, obj, was_clamped = result
+    def draw(self, context):
+        self.layout.prop(self, "keep_anti_parallel_coplanar_faces")
 
-        if snapped is not None:
-            return result
+    def _restore_edit_action_context(self, context, object_name):
+        obj = bpy.data.objects.get(object_name)
+        if obj is None or obj.type != 'MESH':
+            return None
 
-        # No face hit - fall back to a horizontal plane at the lowest selected vertex Z
-        coords = _get_selected_vertex_world_coords(context)
-        if coords:
-            z_height = min(co[2] for co in coords)
-        else:
-            z_height = 0.0
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
 
-        plane_point = Vector((0, 0, z_height))
-        plane_normal = Vector((0, 0, 1))
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
 
-        point = utils.mouse_to_3d_on_plane(context, event, plane_point, plane_normal)
-        if point is None:
-            return (None, None, None, False)
+        if context.mode != 'EDIT_MESH':
+            bpy.ops.object.mode_set(mode='EDIT')
 
-        grid_size = utils.get_grid_size(context)
-        if utils.is_snapping_enabled(context):
-            snapped = snapping.snap_to_grid(point, grid_size)
-            # Preserve the exact z_height (snap_to_grid snaps all 3 axes)
-            snapped.z = z_height
-        else:
-            snapped = point
-
-        return (snapped, Vector((0, 0, 1)), None, False)
-
-    def _calculate_first_vertex_snap_2d(self, context, event):
-        """Ortho snap that uses selected vertices to set the ambiguous axis value."""
-        plane_data = utils.get_2d_view_plane(context)
-        if plane_data is None:
-            return (None, None)
-
-        plane_point, plane_normal, axis1, axis2 = plane_data
-
-        # Determine the best value for the ambiguous (depth) axis from selection
-        coords = _get_selected_vertex_world_coords(context)
-        view_type = utils.get_view_type(context)
-
-        if coords:
-            if view_type == 'TOP':
-                plane_point = Vector((0, 0, max(co[2] for co in coords)))
-            elif view_type == 'BOTTOM':
-                plane_point = Vector((0, 0, min(co[2] for co in coords)))
-            elif view_type == 'FRONT':
-                plane_point = Vector((0, max(co[1] for co in coords), 0))
-            elif view_type == 'BACK':
-                plane_point = Vector((0, min(co[1] for co in coords), 0))
-            elif view_type == 'RIGHT':
-                plane_point = Vector((max(co[0] for co in coords), 0, 0))
-            elif view_type == 'LEFT':
-                plane_point = Vector((min(co[0] for co in coords), 0, 0))
-
-        point = utils.mouse_to_3d_on_plane(context, event, plane_point, plane_normal)
-        if point is None:
-            return (None, None)
-
-        grid_size = utils.get_grid_size(context)
-
-        if utils.is_snapping_enabled(context):
-            snapped = snapping.snap_to_grid(point, grid_size)
-        else:
-            snapped = point.copy()
-
-        # Preserve the ambiguous axis value (don't snap it)
-        if view_type in ('TOP', 'BOTTOM'):
-            snapped.z = plane_point.z
-        elif view_type in ('FRONT', 'BACK'):
-            snapped.y = plane_point.y
-        elif view_type in ('RIGHT', 'LEFT'):
-            snapped.x = plane_point.x
-
-        return (snapped, plane_normal)
+        return obj
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
-                        local_x, local_y, local_z):
+                        local_x, local_y, local_z, action_was_edit_mode,
+                        action_object_name):
+        # The first clicked point becomes the box pivot.
         rv3d = context.region_data
         view_forward = rv3d.view_rotation @ Vector((0, 0, -1))
 
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
-        if context.mode == 'OBJECT':
+        if not action_was_edit_mode:
             result = geometry.execute_box_builder_object_mode(
                 first_vertex, second_vertex, depth,
                 local_x, local_y, local_z,
@@ -164,11 +119,15 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
                 props.weld_mode = 'INVERT'
             return result
 
-        obj = context.active_object
+        obj = self._restore_edit_action_context(context, action_object_name)
+        if obj is None:
+            return (False, "No active mesh object")
+
         result = geometry.execute_box_builder(
             first_vertex, second_vertex, depth,
             local_x, local_y, local_z,
-            obj, ppm, view_forward
+            obj, ppm, view_forward,
+            self.keep_anti_parallel_coplanar_faces
         )
 
         is_box = result[0] and result[1] == "Box created"
@@ -190,6 +149,44 @@ class MESH_OT_box_builder(ModalDrawBase, bpy.types.Operator):
             bmesh.update_edit_mesh(me)
 
         return result
+
+    def _capture_action_properties(self, context, first_vertex, second_vertex,
+                                   depth, local_x, local_y, local_z):
+        self.action_first_vertex = first_vertex
+        self.action_second_vertex = second_vertex
+        self.action_depth = depth
+        self.action_local_x = local_x
+        self.action_local_y = local_y
+        self.action_local_z = local_z
+        self.action_had_selection = self._had_selection
+        self.action_was_edit_mode = context.mode == 'EDIT_MESH'
+        active_object = context.active_object
+        self.action_object_name = active_object.name if active_object is not None else ""
+
+    def execute(self, context):
+        self._had_selection = self.action_had_selection
+        first_vertex = Vector(self.action_first_vertex)
+        second_vertex = Vector(self.action_second_vertex)
+        local_x = Vector(self.action_local_x)
+        local_y = Vector(self.action_local_y)
+        local_z = Vector(self.action_local_z)
+
+        result = self._execute_action(
+            context, first_vertex, second_vertex, self.action_depth,
+            local_x, local_y, local_z,
+            self.action_was_edit_mode, self.action_object_name
+        )
+        self._last_action_result = result
+
+        success, message = result[0], result[1]
+        if success:
+            self.report({'INFO'}, message)
+            self._action_reported = True
+            return {'FINISHED'}
+
+        self.report({'ERROR'}, message)
+        self._action_reported = True
+        return {'CANCELLED'}
 
     def _get_tool_name(self):
         return "Box Builder"

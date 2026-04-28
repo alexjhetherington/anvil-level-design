@@ -28,16 +28,26 @@ def _redraw():
 def _purge_all():
     """Remove all user data from the blend file."""
     from ..handlers import (
-        set_active_image, set_previous_image, face_data_cache,
-        on_depsgraph_update,
+        active_image, auto_hotspot, face_cache, mode_tracking,
+        uv_world_scale,
+        face_data_cache, on_depsgraph_update,
     )
+    from ..core.materials import reset_duplicate_material_consolidation
     from ..handlers.cross_object_undo import reset as reset_cross_object_undo
+    from ..handlers.lifecycle import set_undo_in_progress
 
     # Clear handler state that holds references to Blender data blocks
     # before removing the data, preventing dangling pointer access.
-    set_active_image(None)
-    set_previous_image(None)
+    active_image.reset()
     face_data_cache.clear()
+    face_cache.reset()
+    auto_hotspot.reset()
+    mode_tracking.reset_mode_tracking()
+    reset_duplicate_material_consolidation()
+    uv_world_scale._tracked_modal_operators = set()
+    from ..handlers import depsgraph as _depsgraph_mod
+    _depsgraph_mod._last_cleaned_spin_fingerprint = None
+    set_undo_in_progress(False)
     reset_cross_object_undo()
 
     # Reset weld module state (clears transient flags like _weld_op_running).
@@ -45,9 +55,32 @@ def _purge_all():
     from ..operators import weld as _weld_mod
     _weld_mod._weld_op_running = False
     _weld_mod._weld_just_stored = False
+    _weld_mod.clear_repeat_prefab_override()
     props = bpy.context.scene.level_design_props
     props.weld_mode = 'NONE'
     props.weld_depth = 0.0
+    props.weld_prefab_library_index = -1
+    props.weld_prefab_object_name = ""
+    props.weld_prefab_asset_type = "OBJECT"
+    props.weld_prefab_rotation = 0.0
+    props.prefab_inherit_normal = True
+    props.prefab_random_scale_enabled = False
+    props.prefab_random_scale_min = (1.0, 1.0, 1.0)
+    props.prefab_random_scale_min_linked = True
+    props.prefab_random_scale_max = (1.0, 1.0, 1.0)
+    props.prefab_random_scale_max_linked = True
+    props.prefab_random_rotation_enabled = False
+    props.prefab_random_rotation_min = (0.0, 0.0, 0.0)
+    props.prefab_random_rotation_max = (0.0, 0.0, 0.0)
+    props.gltf_anvil_enabled = True
+    props.gltf_anvil_scale = 1.0
+    props.gltf_anvil_apply_modifiers = True
+    props.gltf_anvil_separate_loose = True
+    props.gltf_anvil_always_combine_materials = True
+    props.gltf_anvil_debug = False
+    prefab_libraries = getattr(bpy.context.scene, "anvil_prefab_libraries", None)
+    if prefab_libraries is not None:
+        prefab_libraries.clear()
 
     # Temporarily remove the depsgraph handler during cleanup to prevent it
     # from firing while objects/meshes are being deleted (which can cause
@@ -122,6 +155,7 @@ def _purge_all():
     # state into subsequent tests (e.g. face select mode from texture_apply
     # breaks edge extrude in uv_extend).
     bpy.context.tool_settings.mesh_select_mode = (True, False, False)
+    bpy.context.tool_settings.use_mesh_automerge = False
 
     for area in window.screen.areas:
         if area.type == 'VIEW_3D':
@@ -224,11 +258,41 @@ class AnvilTestCase(unittest.TestCase):
                 return x, y
         raise RuntimeError("No 3D viewport found in current workspace")
 
+    def _get_3d_view_context(self):
+        """Return a complete override context for 3D View modal operators."""
+        window = _get_window()
+        for area in window.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            region = None
+            for area_region in area.regions:
+                if area_region.type == 'WINDOW':
+                    region = area_region
+                    break
+            if region is None:
+                continue
+            space = area.spaces.active
+            return {
+                "window": window,
+                "screen": window.screen,
+                "area": area,
+                "region": region,
+                "space_data": space,
+                "region_data": space.region_3d,
+            }
+        raise RuntimeError("No 3D viewport found in current workspace")
+
+    def refresh_face_cache(self):
+        """Refresh cached face UVs after tests edit BMesh data directly."""
+        from ..handlers.face_cache import cache_face_data
+        cache_face_data(bpy.context)
+
     # Map event types to unicode characters for event_simulate
     _UNICODE_MAP = {
         'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3', 'FOUR': '4',
         'FIVE': '5', 'SIX': '6', 'SEVEN': '7', 'EIGHT': '8', 'NINE': '9',
         'MINUS': '-', 'PERIOD': '.', 'RET': '\r',
+        'B': 'b', 'E': 'e', 'X': 'x', 'Y': 'y', 'Z': 'z',
     }
 
     def _simulate_key_tap(self, event_type):
@@ -276,17 +340,27 @@ class AnvilTestCase(unittest.TestCase):
         mx, my = self._get_3d_viewport_center()
         window = _get_window()
 
-        # E to start extrude
-        yield from self._simulate_key_tap('E')
+        # Face-normal extrudes still use the E key path. Axis-constrained
+        # edge extrudes invoke the same modal operator directly because raw E
+        # key dispatch can be swallowed by Blender's timer-driven test focus.
+        if axis is None:
+            yield from self._simulate_key_tap('E')
+        else:
+            with bpy.context.temp_override(**self._get_3d_view_context()):
+                bpy.ops.mesh.extrude_region_move('INVOKE_DEFAULT')
+            yield
+        yield
         yield
 
         # MOUSEMOVE to initialize the modal's tracking state
-        window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx, y=my)
+        window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx + 1, y=my + 1)
+        yield
         yield
 
         # Axis constraint (skip if None — extrude along normal)
         if axis is not None:
             yield from self._simulate_key_tap(axis.upper())
+            yield
 
         # Type the numeric value
         yield from self._simulate_number(value)

@@ -13,6 +13,240 @@ from ..core.hotspot_queries import face_has_hotspot_material
 from .face_cache import face_data_cache, get_cached_layer_data
 
 
+def _is_translated_from_cache(face, cached):
+    cached_normal = cached.get('normal')
+    cached_verts = cached.get('verts')
+    if not cached_normal or not cached_verts:
+        return False
+
+    if (face.normal - cached_normal).length >= 0.01:
+        return False
+
+    current_verts = [v.co for v in face.verts]
+    if len(current_verts) != len(cached_verts):
+        return False
+
+    offset = current_verts[0] - cached_verts[0]
+    if offset.length <= 0.0001:
+        return False
+
+    return all((current_vert - cached_vert - offset).length < 0.0001
+               for current_vert, cached_vert in zip(current_verts[1:],
+                                                    cached_verts[1:]))
+
+
+def _empty_face_cache_buckets():
+    return {
+        'id_zero': set(),
+        'id_duplicate': set(),
+        'hotspot': set(),
+        'spin_rotated': set(),
+        'cached_missing': set(),
+        'cached_normal_changed': set(),
+        'cached_vertex_count_changed': set(),
+        'cached_exact': set(),
+        'cached_translated': set(),
+        'cached_same_plane_exact': set(),
+        'cached_same_plane_changed': set(),
+        'cached_off_plane': set(),
+        'cached_same_normal_shape_changed': set(),
+    }
+
+
+def _classify_faces_by_cache_state(bm, me, id_layer, spin_rotated):
+    """Bucket faces by literal ID/cache/geometry facts.
+
+    These buckets intentionally do not decide projection policy. Callers derive
+    operation roles such as "projection seed" or "preserved" from the facts.
+    """
+    buckets = _empty_face_cache_buckets()
+    buckets['spin_rotated'] = set(spin_rotated)
+
+    seen_ids = set()
+    duplicated_ids = set()
+    for face in bm.faces:
+        if not face.is_valid:
+            continue
+        face_id = face[id_layer]
+        if face_id == 0:
+            continue
+        if face_id in seen_ids:
+            duplicated_ids.add(face_id)
+        seen_ids.add(face_id)
+
+    for face in bm.faces:
+        if not face.is_valid:
+            continue
+        face_id = face[id_layer]
+        if face_id == 0:
+            buckets['id_zero'].add(face)
+            continue
+
+        if face_id in duplicated_ids:
+            buckets['id_duplicate'].add(face)
+        if face_has_hotspot_material(face, me):
+            buckets['hotspot'].add(face)
+
+        cached = face_data_cache.get(face_id)
+        if not cached:
+            buckets['cached_missing'].add(face)
+            continue
+
+        cached_normal = cached.get('normal')
+        cached_verts = cached.get('verts')
+        if not cached_normal or not cached_verts:
+            buckets['cached_missing'].add(face)
+            continue
+
+        if (face.normal - cached_normal).length >= 0.01:
+            buckets['cached_normal_changed'].add(face)
+            continue
+
+        current_verts = [v.co for v in face.verts]
+        same_vertex_count = len(current_verts) == len(cached_verts)
+        if not same_vertex_count:
+            buckets['cached_vertex_count_changed'].add(face)
+
+        is_exact = False
+        if same_vertex_count:
+            is_exact = all((current_vert - cached_vert).length < 0.0001
+                           for current_vert, cached_vert in zip(current_verts,
+                                                                cached_verts))
+            if is_exact:
+                buckets['cached_exact'].add(face)
+
+            if _is_translated_from_cache(face, cached):
+                buckets['cached_translated'].add(face)
+            elif not is_exact:
+                buckets['cached_same_normal_shape_changed'].add(face)
+
+        cached_center = cached.get('center')
+        if cached_center is None:
+            continue
+
+        dist_to_plane = abs(cached_normal.dot(
+            face.calc_center_median() - cached_center))
+        if dist_to_plane < 0.01:
+            if is_exact:
+                buckets['cached_same_plane_exact'].add(face)
+            else:
+                buckets['cached_same_plane_changed'].add(face)
+        else:
+            buckets['cached_off_plane'].add(face)
+
+    return buckets
+
+
+def _linked_faces(face):
+    linked_faces = set()
+    for edge in face.edges:
+        for linked_face in edge.link_faces:
+            if linked_face != face and linked_face.is_valid:
+                linked_faces.add(linked_face)
+    return linked_faces
+
+
+def _has_cached_non_cap_neighbor(face, cap_candidates, topology_new_faces,
+                                 id_layer):
+    for linked_face in _linked_faces(face):
+        if linked_face in cap_candidates:
+            continue
+        if linked_face in topology_new_faces:
+            continue
+        linked_id = linked_face[id_layer]
+        if linked_id != 0 and linked_id in face_data_cache:
+            return True
+    return False
+
+
+def _find_collapsed_extrude_material_index(face, topology_new_faces,
+                                           cap_candidates, id_layer):
+    if face.material_index != 0:
+        return None
+    if face.calc_area() >= 1e-8:
+        return None
+
+    cluster_candidates = topology_new_faces | cap_candidates
+    cluster = set()
+    queue = [face]
+    while queue:
+        current = queue.pop(0)
+        if current in cluster:
+            continue
+        if current not in cluster_candidates:
+            continue
+        cluster.add(current)
+        for linked_face in _linked_faces(current):
+            if linked_face in cluster_candidates and linked_face not in cluster:
+                queue.append(linked_face)
+
+    source_material_indices = set()
+    for cluster_face in cluster:
+        if cluster_face in cap_candidates or cluster_face.material_index != 0:
+            source_material_indices.add(cluster_face.material_index)
+
+        for linked_face in _linked_faces(cluster_face):
+            if linked_face in cluster_candidates:
+                continue
+            linked_id = linked_face[id_layer]
+            if linked_id != 0 and linked_id in face_data_cache:
+                source_material_indices.add(linked_face.material_index)
+
+    if len(source_material_indices) != 1:
+        return None
+
+    source_material_index = next(iter(source_material_indices))
+    if source_material_index == face.material_index:
+        return None
+    return source_material_index
+
+
+def _repair_donorless_extrude_side_face_materials(topology_new_faces,
+                                                  cap_candidates,
+                                                  id_layer):
+    """Copy cap material onto extrusion side faces with no cached donor.
+
+    Blender's connected-region extrude can delete the originating face before
+    assigning side-wall materials. If no existing radial donor face is found,
+    those side walls keep BMesh's default material index 0. Repair either from
+    a single cap candidate, or from an unambiguous collapsed zero-area extrude
+    cluster before Blender has moved the cap away from its source face.
+    """
+    repaired_count = 0
+    for face in topology_new_faces:
+        if not face.is_valid:
+            continue
+
+        adjacent_caps = [
+            linked_face for linked_face in _linked_faces(face)
+            if linked_face in cap_candidates
+        ]
+        source_material_index = None
+        if (len(adjacent_caps) == 1 and
+                not _has_cached_non_cap_neighbor(
+                    face, cap_candidates, topology_new_faces, id_layer)):
+            source_material_index = adjacent_caps[0].material_index
+
+        if source_material_index is None:
+            source_material_index = _find_collapsed_extrude_material_index(
+                face, topology_new_faces, cap_candidates, id_layer)
+
+        if source_material_index is None:
+            continue
+
+        if face.material_index == source_material_index:
+            continue
+
+        debug_log(
+            f"[ProjectNewFaces] Repaired donorless extrude side material: "
+            f"face {face.index} mat={source_material_index}"
+        )
+        face.material_index = source_material_index
+        repaired_count += 1
+
+    return repaired_count
+
+
 def _find_spin_rotated_faces(bm, id_layer):
     """Identify faces that are precise rotations of a cached face around the
     active spin operator's axis.
@@ -162,86 +396,50 @@ def project_new_faces(context, bm):
     id_layer = get_face_id_layer(bm)
 
     # Faces that are exact rotations (around the active spin axis) of their
-    # cached source. Treated as "preserved" throughout — Blender's spin has
+    # cached source. Treated as "preserved" throughout because Blender has
     # already placed correct UVs on them. Populated only for MESH_OT_spin.
     spin_rotated = _find_spin_rotated_faces(bm, id_layer)
+    face_buckets = _classify_faces_by_cache_state(
+        bm, me, id_layer, spin_rotated)
 
-    # --- Handle duplicate face IDs ---
-    seen_ids = set()
-    duplicated_ids = set()
-    for face in bm.faces:
-        fid = face[id_layer]
-        if fid == 0:
-            continue
-        if fid in seen_ids:
-            duplicated_ids.add(fid)
-        seen_ids.add(fid)
-
-    dupe_exact = set()
-    dupe_coplanar = set()
-    dupe_extrusions = set()
-    dupe_other = set()
-
-    if duplicated_ids:
-        id_to_coplanar = {}
-        for face in bm.faces:
-            fid = face[id_layer]
-            if fid not in duplicated_ids or not face.is_valid:
-                continue
-            if face in spin_rotated:
-                continue  # handled via spin_rotated
-            if face_has_hotspot_material(face, me):
-                continue
-
-            cached = face_data_cache.get(fid)
-            if not cached or not cached.get('normal'):
-                continue
-
-            cached_normal = cached['normal']
-            if (face.normal - cached_normal).length < 0.01:
-                cached_center = cached.get('center')
-                if cached_center is not None:
-                    dist_to_plane = abs(cached_normal.dot(
-                        face.calc_center_median() - cached_center))
-                    if dist_to_plane < 0.01:
-                        cached_verts = cached['verts']
-                        current_verts = [v.co for v in face.verts]
-                        if (len(current_verts) == len(cached_verts)
-                                and all((cv - cav).length < 0.0001
-                                        for cv, cav in zip(current_verts,
-                                                           cached_verts))):
-                            id_to_coplanar.setdefault(fid, []).append(('exact', face))
-                        else:
-                            id_to_coplanar.setdefault(fid, []).append(('coplanar', face))
-                    else:
-                        dupe_extrusions.add(face)
-
-        for fid, entries in id_to_coplanar.items():
-            for category, face in entries:
-                if category == 'exact':
-                    dupe_exact.add(face)
-                else:
-                    dupe_coplanar.add(face)
-
-        all_categorized = dupe_exact | dupe_coplanar | dupe_extrusions | spin_rotated
-        for face in bm.faces:
-            fid = face[id_layer]
-            if fid not in duplicated_ids:
-                continue
-            if face not in all_categorized:
-                dupe_other.add(face)
+    # Duplicate IDs are a symptom of Blender copying custom face data during
+    # topology operations. These role sets are derived from factual buckets.
+    duplicate_faces = face_buckets['id_duplicate']
+    classifiable_duplicates = (
+        duplicate_faces -
+        face_buckets['spin_rotated'] -
+        face_buckets['hotspot']
+    )
+    dupe_exact = classifiable_duplicates & face_buckets['cached_same_plane_exact']
+    dupe_coplanar = (
+        classifiable_duplicates &
+        face_buckets['cached_same_plane_changed']
+    )
+    dupe_extrusions = classifiable_duplicates & face_buckets['cached_off_plane']
+    dupe_other = duplicate_faces - (
+        dupe_exact | dupe_coplanar | dupe_extrusions | spin_rotated
+    )
 
     # --- Identify new faces and build the affected set ---
+    topology_new_faces = (
+        face_buckets['id_zero'] |
+        dupe_other
+    ) - spin_rotated
+
     new_faces = set()
-    for f in bm.faces:
-        if not f.is_valid or face_has_hotspot_material(f, me):
+    for f in topology_new_faces:
+        if face_has_hotspot_material(f, me):
             continue
-        if f in spin_rotated:
-            continue
-        if f[id_layer] == 0 or f in dupe_other:
-            new_faces.add(f)
+        new_faces.add(f)
+
+    translated_cached_faces = face_buckets['cached_translated']
+    cap_candidates = translated_cached_faces | dupe_exact
+    repaired_materials = _repair_donorless_extrude_side_face_materials(
+        topology_new_faces, cap_candidates, id_layer)
 
     if not new_faces and not dupe_coplanar:
+        if repaired_materials > 0:
+            bmesh.update_edit_mesh(me)
         return
 
     affected = set(new_faces)
@@ -280,35 +478,11 @@ def project_new_faces(context, bm):
                     queue.append(neighbor)
 
     # Step 1: Re-project coplanar faces whose geometry changed from cache.
-    coplanar_modified = set()
-    translated = set()
-    for face in affected:
-        face_id = face[id_layer]
-        if face_id == 0:
-            continue
-        cached = face_data_cache.get(face_id)
-        if not cached:
-            continue
-        cached_normal = cached.get('normal')
-        if not cached_normal or (face.normal - cached_normal).length >= 0.01:
-            continue
-
-        cached_verts = cached['verts']
-        current_verts = [v.co for v in face.verts]
-        if len(current_verts) != len(cached_verts):
-            continue
-
-        if all((cv - cav).length < 0.0001
-               for cv, cav in zip(current_verts, cached_verts)):
-            continue
-
-        offset = current_verts[0] - cached_verts[0]
-        if all((cv - cav - offset).length < 0.0001
-               for cv, cav in zip(current_verts[1:], cached_verts[1:])):
-            translated.add(face)
-        else:
-            coplanar_modified.add(face)
-
+    translated = affected & face_buckets['cached_translated']
+    coplanar_modified = (
+        affected &
+        face_buckets['cached_same_normal_shape_changed']
+    )
     coplanar_reproject = dupe_coplanar | coplanar_modified
 
     for face in coplanar_reproject:
@@ -378,6 +552,14 @@ def project_new_faces(context, bm):
                 still_remaining.append(face)
                 continue
 
+            if face.material_index != source_face.material_index:
+                debug_log(
+                    f"[ProjectNewFaces] Propagated material: "
+                    f"face {face.index} mat={source_face.material_index} "
+                    f"(source=face {source_face.index})"
+                )
+                face.material_index = source_face.material_index
+
             # Check if this face already has non-zero UVs (e.g. set by box builder)
             _had_uvs = False
             if unlocked_layers:
@@ -406,5 +588,5 @@ def project_new_faces(context, bm):
             allow_fallback = True
             made_progress = True
 
-    if projected_count > 0:
+    if projected_count > 0 or repaired_materials > 0:
         bmesh.update_edit_mesh(me)

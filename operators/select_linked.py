@@ -9,7 +9,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 from ..core.workspace_check import is_level_design_workspace
-from .backface_select.raycast import (
+from .visible_select.raycast import (
     raycast_bvh_skip_backfaces,
     is_face_backfacing,
     has_backface_culling_enabled,

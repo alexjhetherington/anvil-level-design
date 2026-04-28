@@ -56,7 +56,7 @@ def _apply_per_face_rotation(obj, rotation_by_center_x):
     """Apply different rotations to faces based on their center X coordinate.
 
     Args:
-        obj: Object (will be put into edit mode and back)
+        obj: Object (will be left in edit mode)
         rotation_by_center_x: dict mapping approximate center X to rotation degrees
     """
     ctx = _get_context_override()
@@ -78,8 +78,6 @@ def _apply_per_face_rotation(obj, rotation_by_center_x):
                 break
 
     bmesh.update_edit_mesh(me)
-    with bpy.context.temp_override(**ctx):
-        bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def _find_loop_cut_edges(bm):
@@ -108,14 +106,9 @@ class LoopCutTest(AnvilTestCase):
         """Loop cut two faces with different rotations preserves each face's rotation.
 
         Creates two coplanar faces: left at rotation=0, right at rotation=45.
-        Re-enters edit mode then loop cuts across both.
         Expected: 4 faces -- two with rotation~0, two with rotation~45.
         """
         obj = _create_two_face_plane("loopcut_rot")
-        yield 0.5
-
-        # Apply rotation=0 to left face (center x~0.5), rotation=45 to right (center x~1.5)
-        _apply_per_face_rotation(obj, {0.5: 0.0, 1.5: 45.0})
         yield 0.5
 
         # Deform the right face: move the 2 outside verts (x=2) inward 0.25 on Z
@@ -134,23 +127,12 @@ class LoopCutTest(AnvilTestCase):
             bpy.ops.object.mode_set(mode='OBJECT')
         yield 0.5
 
-        # Duplicate the textured plane and move it up for before/after comparison
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.select_all(action='DESELECT')
-            obj.select_set(True)
-            bpy.context.view_layer.objects.active = obj
-            bpy.ops.object.duplicate()
-            dup = bpy.context.active_object
-            dup.name = "loopcut_rot_BEFORE"
-            dup.location.z += 1.0
-            bpy.ops.object.select_all(action='DESELECT')
-            obj.select_set(True)
-            bpy.context.view_layer.objects.active = obj
-        yield 0.5
+        # Apply rotation=0 to left face (center x~0.5), rotation=45 to right
+        # (center x~1.5) after the setup deformation is already in place.
+        _apply_per_face_rotation(obj, {0.5: 0.0, 1.5: 45.0})
+        self.refresh_face_cache()
 
         # Verify initial state: 2 faces with correct rotations
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='EDIT')
         bm = bmesh.from_edit_mesh(obj.data)
         uv_layer = bm.loops.layers.uv[0]
         ppm = bpy.context.scene.level_design_props.pixels_per_meter
@@ -167,14 +149,7 @@ class LoopCutTest(AnvilTestCase):
                 self.assertAlmostEqual(t['rotation'], 45.0, places=1,
                                        msg=f"Right face rotation should be 45, got {t['rotation']}")
 
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-        # Re-enter edit mode (this is what triggers the bug -- fresh edit session)
-        yield 0.5
-        with bpy.context.temp_override(**ctx):
-            bpy.ops.object.mode_set(mode='EDIT')
-        yield 0.5  # Let depsgraph handler rebuild cache
+        self.refresh_face_cache()
 
         # Select the horizontal loop edges and subdivide them (equivalent to a loop cut)
         bm = bmesh.from_edit_mesh(obj.data)

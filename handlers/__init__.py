@@ -25,8 +25,10 @@ from .face_cache import (  # noqa: F401
 )
 from .active_image import (  # noqa: F401
     get_active_image,
+    get_active_image_just_set,
     get_previous_image,
     set_active_image,
+    set_active_image_just_set,
     set_previous_image,
     update_active_image_from_face,
     get_selected_faces_share_image,
@@ -36,11 +38,6 @@ from .auto_hotspot import apply_auto_hotspots  # noqa: F401
 from .uv_world_scale import (  # noqa: F401
     apply_world_scale_uvs,
     apply_uv_lock,
-)
-from .file_browser import (  # noqa: F401
-    apply_texture_from_file_browser,
-    start_file_browser_watcher,
-    consolidate_duplicate_materials,
 )
 from .mode_tracking import (  # noqa: F401
     set_correct_uv_slide,
@@ -57,13 +54,10 @@ from .lifecycle import (  # noqa: F401
     on_load_post,
 )
 from .depsgraph import on_depsgraph_update  # noqa: F401
-from . import file_browser as _file_browser
 from . import mode_tracking as _mode_tracking
 
 
 def register():
-    _file_browser.register()
-
     _mode_tracking.subscribe_object_mode()
 
     if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
@@ -84,7 +78,6 @@ def register():
         bpy.app.handlers.redo_post.append(on_redo_post)
 
     bpy.app.timers.register(set_all_grid_scales_to_default, first_interval=0.1)
-    bpy.app.timers.register(start_file_browser_watcher, first_interval=0.2)
     bpy.app.timers.register(disable_correct_uv_slide, first_interval=0.1)
     bpy.app.timers.register(_mode_tracking.subscribe_unit_settings, first_interval=0.1)
 
@@ -95,8 +88,8 @@ def unregister():
     from .auto_hotspot import reset as reset_auto_hotspot
     reset_auto_hotspot()
 
-    _file_browser.unregister()
-    _file_browser.reset()
+    from ..core.materials import reset_duplicate_material_consolidation
+    reset_duplicate_material_consolidation()
 
     if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)

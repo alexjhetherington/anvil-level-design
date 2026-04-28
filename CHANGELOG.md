@@ -1,5 +1,27 @@
 # Anvil Level Design Changelog
 
+# 1.7.0
+- Replaced the file browser with the TEXTURE BROWSER
+    - MANUAL FIX REQUIRED FOR FILES CREATED WITH PREVIOUS VERSIONS Change the File Browser window in the Level Design Workspace to a preferences window
+    - https://anvilleveldesign.com/docs/faqs/#i-just-updated-to-anvil-17-and-now-my-texture-browser-doesnt-work
+- Added PREFAB PLACER
+- Backface culled respecting select is moved to a dedicated tool VISIBLE SELECT
+- Visible select is able to select empty meshes (supporting addons like Iteras Tools)
+- Added PLACE CURSOR tool (shift-x)
+- Added Box Builder option to skip faces coplanar with existing faces
+- Added edge length labels to cube cut and box builder
+- Cube Cut and Box Builder follow cursor across views
+- UV Transform mode snaps aspect ratio during horizontal and vertical resize
+- Pick Material now updates last material (Texture Preview)
+- Cube cut and box builder ignore hidden faces
+- Fix a case where box builder would not use the preview image
+- Fix extrude defaulting to material slot 0 faces in some cases
+- Fix box builder creating 0 scale faces in some cases
+- Fix non-square textures getting stretched in face grid snapping mode
+- Fix ortho cut entirely deleting faces (floating point error)
+- Fix visible select ignoring faces coplanar to hidden faces
+- Unselecting down to 1 element will make that element primary
+
 # 1.6.13
 - Add a refresh images button to the Texture Preview panel
 

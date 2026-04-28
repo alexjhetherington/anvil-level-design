@@ -9,6 +9,8 @@ from .helpers import create_vertical_plane, _get_context_override
 
 def _select_edge_by_vert_filter(bm, me, vert_filter):
     """Select the edge whose both endpoints satisfy vert_filter."""
+    with bpy.context.temp_override(**_get_context_override()):
+        bpy.ops.mesh.select_mode(type='EDGE')
     bm.select_mode = {'EDGE'}
     for v in bm.verts:
         v.select_set(False)

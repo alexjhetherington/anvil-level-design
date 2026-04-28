@@ -2,3 +2,6 @@ __pycache__/
 *.py[codz]
 *$py.class
 test_outputs/
+site/public/
+site/resources/
+.hugo_build.lock

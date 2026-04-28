@@ -9,6 +9,7 @@ from ..core.materials import (
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
 )
+from ..core.library import is_library_object
 from ..core.workspace_check import is_level_design_workspace
 from ..core.hotspot_queries import object_has_hotspot_material
 from ..operators.grid_tools import get_unit_label, get_snap_mode_icon
@@ -26,6 +27,36 @@ from ..handlers import (
 )
 
 
+def _is_library_mesh_object(obj):
+    return obj is not None and obj.type == 'MESH' and is_library_object(obj)
+
+
+def _image_collection_filepath(image):
+    if image is None:
+        return ""
+    filepath = image.filepath_from_user()
+    if not filepath:
+        return ""
+    return bpy.path.abspath(filepath)
+
+
+def _draw_image_collection_header(layout, image, label_enabled):
+    image_filepath = _image_collection_filepath(image)
+    row = layout.row(align=True)
+    label_row = row.row(align=True)
+    label_row.enabled = label_enabled
+    label_row.label(text=image.name)
+    add_row = row.row(align=True)
+    add_row.enabled = bool(image_filepath)
+    add_row.operator_context = 'INVOKE_DEFAULT'
+    add_op = add_row.operator(
+        "leveldesign.texture_browser_add_file_to_collection",
+        text="",
+        icon='ADD',
+    )
+    add_op.filepath = image_filepath
+
+
 class LEVELDESIGN_PT_status_panel(Panel):
     """Status Panel"""
 
@@ -33,7 +64,7 @@ class LEVELDESIGN_PT_status_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_status_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
     @classmethod
     def poll(cls, context):
@@ -74,6 +105,13 @@ class LEVELDESIGN_PT_status_panel(Panel):
             icon=overlay_icon,
             emboss=False,
         )
+        row.operator_context = 'INVOKE_DEFAULT'
+        row.operator(
+            "leveldesign.cursor_to_grid",
+            text="",
+            icon='PIVOT_CURSOR',
+            emboss=False,
+        )
 
         from ..operators.weld import get_weld_display_name
         weld_mode = props.weld_mode
@@ -95,7 +133,7 @@ class LEVELDESIGN_OT_set_active_render_uv(Operator):
 
     def execute(self, context):
         obj = context.object
-        if not obj or obj.type != 'MESH':
+        if not obj or obj.type != 'MESH' or is_library_object(obj):
             return {'CANCELLED'}
 
         me = obj.data
@@ -119,7 +157,7 @@ class LEVELDESIGN_OT_toggle_uv_lock(Operator):
 
     def execute(self, context):
         obj = context.object
-        if not obj or obj.type != 'MESH':
+        if not obj or obj.type != 'MESH' or is_library_object(obj):
             return {'CANCELLED'}
 
         from ..core.uv_layers import sync_uv_map_settings
@@ -141,7 +179,7 @@ class LEVELDESIGN_OT_toggle_auto_hotspot(Operator):
 
     def execute(self, context):
         obj = context.object
-        if not obj or obj.type != 'MESH':
+        if not obj or obj.type != 'MESH' or is_library_object(obj):
             return {'CANCELLED'}
         obj.anvil_auto_hotspot = not obj.anvil_auto_hotspot
         return {'FINISHED'}
@@ -155,7 +193,7 @@ class LEVELDESIGN_OT_toggle_combine_faces(Operator):
 
     def execute(self, context):
         obj = context.object
-        if not obj or obj.type != 'MESH':
+        if not obj or obj.type != 'MESH' or is_library_object(obj):
             return {'CANCELLED'}
         obj.anvil_allow_combined_faces = not obj.anvil_allow_combined_faces
         return {'FINISHED'}
@@ -170,6 +208,7 @@ class LEVELDESIGN_OT_toggle_fixed_hotspot(Operator):
     @classmethod
     def poll(cls, context):
         return (context.object and context.object.type == 'MESH'
+                and not is_library_object(context.object)
                 and context.mode == 'EDIT_MESH')
 
     def execute(self, context):
@@ -210,7 +249,7 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_uv_lock_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
 
     @classmethod
@@ -219,9 +258,12 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
 
     def draw_header(self, context):
         in_edit_mode = context.mode == 'EDIT_MESH'
+        library_object = _is_library_mesh_object(context.object)
         # icon = 'LAYER_ACTIVE' if in_edit_mode else 'LAYER_USED'
         text = "UV Maps"
-        if not in_edit_mode:
+        if library_object:
+            text += "  \u2192 Select Local Object"
+        elif not in_edit_mode:
             text += "  \u2192 Edit Mode"
         self.layout.label(text=text)  # icon=icon
 
@@ -230,6 +272,7 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
         obj = context.object
         in_edit_mode = context.mode == 'EDIT_MESH'
         has_mesh = obj and obj.type == 'MESH'
+        library_object = _is_library_mesh_object(obj)
 
         if not has_mesh:
             row = layout.row()
@@ -253,7 +296,7 @@ class LEVELDESIGN_PT_uv_lock_panel(Panel):
 
         for uv_map in me.uv_layers:
             row = layout.row(align=True)
-            row.enabled = in_edit_mode
+            row.enabled = in_edit_mode and not library_object
 
             setting = settings_by_name.get(uv_map.name)
 
@@ -291,7 +334,7 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_uv_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
 
     @classmethod
@@ -300,6 +343,7 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
 
     def draw_header(self, context):
         in_edit_mode = context.mode == 'EDIT_MESH'
+        library_object = _is_library_mesh_object(context.object)
         in_face_mode = (in_edit_mode and
                         context.tool_settings.mesh_select_mode[2])
         has_selection = in_face_mode and get_selected_face_count(context) > 0
@@ -307,7 +351,9 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
         # active = has_selection and not all_hotspot
         # icon = 'LAYER_ACTIVE' if active else 'LAYER_USED'
         text = "UV Settings"
-        if not in_edit_mode:
+        if library_object:
+            text += "  \u2192 Select Local Object"
+        elif not in_edit_mode:
             text += "  \u2192 Edit Mode"
         elif not has_selection:
             text += "  \u2192 Select Faces"
@@ -323,9 +369,10 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
         has_selection = in_face_mode and get_selected_face_count(context) > 0
         multi_face = has_selection and get_multi_face_mode()
         all_hotspot = has_selection and get_all_selected_hotspot()
+        obj = context.object
+        library_object = _is_library_mesh_object(obj)
 
         # Warn if non-uniform object scale paired with non-uniform UV scale
-        obj = context.object
         if obj and obj.type == 'MESH':
             s = obj.scale
             obj_non_uniform = (abs(s.x - s.y) > 1e-4
@@ -344,7 +391,7 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
 
         col = layout.column(align=True)
 
-        col.enabled = has_selection and not all_hotspot
+        col.enabled = has_selection and not all_hotspot and not library_object
 
         # Scale row with link toggle
         scale_row = col.row(align=True)
@@ -389,7 +436,7 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_hotspotting_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
     bl_options = {'DEFAULT_CLOSED'}
 
@@ -401,12 +448,16 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
         obj = context.object
         in_edit_mode = context.mode == 'EDIT_MESH'
         has_obj = obj and obj.type == 'MESH'
+        library_object = _is_library_mesh_object(obj)
         obj_selected = has_obj and obj.select_get()
         has_hotspot_mat = has_obj and object_has_hotspot_material(obj)
         any_hotspot = get_any_selected_hotspot()
 
         text = "Hotspotting"
-        if not in_edit_mode:
+        if library_object:
+            text += "  \u2192 Select Local Object"
+            active = False
+        elif not in_edit_mode:
             # Object mode
             # #BUG: if a hotspot material exists on the object but is not
             # assigned to any face, this still shows as enabled.
@@ -435,13 +486,16 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
         obj = context.object
         in_edit_mode = context.mode == 'EDIT_MESH'
         has_obj = obj and obj.type == 'MESH'
+        library_object = _is_library_mesh_object(obj)
         obj_selected = has_obj and obj.select_get()
         has_hotspot_mat = has_obj and object_has_hotspot_material(obj)
         any_hotspot = get_any_selected_hotspot()
 
         # Determine if panel contents should be disabled
         panel_disabled = False
-        if not in_edit_mode:
+        if library_object:
+            panel_disabled = True
+        elif not in_edit_mode:
             if not obj_selected or not has_hotspot_mat:
                 panel_disabled = True
         else:
@@ -502,7 +556,9 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
         )
         props = context.scene.level_design_props
         overlay_icon = 'HIDE_OFF' if props.show_fixed_hotspot_overlay else 'HIDE_ON'
-        row.operator(
+        overlay_sub = row.row(align=True)
+        overlay_sub.enabled = not library_object
+        overlay_sub.operator(
             "leveldesign.toggle_fixed_hotspot_overlay",
             text="",
             icon=overlay_icon,
@@ -522,16 +578,22 @@ class LEVELDESIGN_PT_hotspotting_panel(Panel):
 class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
     """UV Shortcuts (Projection and Alignment)"""
 
-    bl_label = "UV Shortcuts"
+    bl_label = ""
     bl_idname = "LEVELDESIGN_PT_uv_shortcuts_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
 
     @classmethod
     def poll(cls, context):
         return is_level_design_workspace()
+
+    def draw_header(self, context):
+        text = "UV Shortcuts"
+        if _is_library_mesh_object(context.object):
+            text += "  \u2192 Select Local Object"
+        self.layout.label(text=text)
 
     def draw(self, context):
         layout = self.layout
@@ -540,8 +602,9 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
         # Projection with scale
         obj = context.object
         has_mesh = obj is not None and obj.type == 'MESH'
+        library_object = _is_library_mesh_object(obj)
         row = layout.row(align=True)
-        row.enabled = has_mesh
+        row.enabled = has_mesh and not library_object
         row.operator(
             "leveldesign.face_aligned_project",
             text="Face-Aligned Project",
@@ -551,6 +614,7 @@ class LEVELDESIGN_PT_uv_shortcuts_panel(Panel):
 
         # Alignment
         row = layout.row(align=True)
+        row.enabled = has_mesh and not library_object
         row.operator(
             "leveldesign.align_uv", text="Center", icon='ALIGN_CENTER'
         ).direction = 'CENTER'
@@ -568,7 +632,7 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_texture_preview_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil'
+    bl_category = 'Anvil Materials'
 
 
     @classmethod
@@ -612,7 +676,8 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
             box.scale_y = 8.0
             box.label(text="")
         elif image:
-            layout.label(text=image.name)
+            _draw_image_collection_header(layout, image, True)
+
             if image.preview:
                 icon_id = image.preview.icon_id
                 if icon_id:
@@ -744,20 +809,21 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
         else:
             prev_image = get_previous_image()
             if prev_image:
-                layout.enabled = False
-                layout.label(text=prev_image.name)
+                _draw_image_collection_header(layout, prev_image, False)
+                preview_layout = layout.column()
+                preview_layout.enabled = False
                 if prev_image.preview:
                     icon_id = prev_image.preview.icon_id
                     if icon_id:
-                        layout.template_icon(icon_value=icon_id, scale=8.0)
+                        preview_layout.template_icon(icon_value=icon_id, scale=8.0)
                     else:
                         prev_image.preview_ensure()
-                        box = layout.box()
+                        box = preview_layout.box()
                         box.scale_y = 8.0
                         box.label(text="")
                 else:
                     prev_image.preview_ensure()
-                    box = layout.box()
+                    box = preview_layout.box()
                     box.scale_y = 8.0
                     box.label(text="")
             else:
@@ -774,7 +840,7 @@ class LEVELDESIGN_PT_texture_settings_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_texture_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil (Settings)'
+    bl_category = 'Anvil Settings'
 
     @classmethod
     def poll(cls, context):
@@ -808,7 +874,7 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_default_material_settings_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil (Settings)'
+    bl_category = 'Anvil Settings'
 
     @classmethod
     def poll(cls, context):
@@ -884,7 +950,7 @@ class LEVELDESIGN_PT_export_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_export_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil (Export)'
+    bl_category = 'Anvil Export'
 
     @classmethod
     def poll(cls, context):
@@ -931,7 +997,7 @@ class LEVELDESIGN_PT_debug_panel(Panel):
     bl_idname = "LEVELDESIGN_PT_debug_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Anvil (Settings)'
+    bl_category = 'Anvil Settings'
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -971,7 +1037,11 @@ class LEVELDESIGN_PT_debug_panel(Panel):
         )
 
 
-classes = (
+# Split into category groups so panels/__init__.py can interleave the
+# Anvil Prefabs registration between Materials and Settings. Sidebar tab
+# order in Blender is locked in by the order each category is first
+# encountered during registration.
+materials_classes = (
     LEVELDESIGN_PT_status_panel,
     LEVELDESIGN_OT_set_active_render_uv,
     LEVELDESIGN_OT_toggle_uv_lock,
@@ -983,6 +1053,9 @@ classes = (
     LEVELDESIGN_PT_hotspotting_panel,
     LEVELDESIGN_PT_uv_shortcuts_panel,
     LEVELDESIGN_PT_texture_preview_panel,
+)
+
+settings_and_export_classes = (
     LEVELDESIGN_PT_texture_settings_panel,
     LEVELDESIGN_PT_default_material_settings_panel,
     LEVELDESIGN_PT_export_panel,
@@ -990,10 +1063,22 @@ classes = (
     LEVELDESIGN_PT_debug_panel,
 )
 
+classes = materials_classes + settings_and_export_classes
+
+
+def register_materials():
+    for cls in materials_classes:
+        bpy.utils.register_class(cls)
+
+
+def register_settings_and_export():
+    for cls in settings_and_export_classes:
+        bpy.utils.register_class(cls)
+
 
 def register():
-    for cls in classes:
-        bpy.utils.register_class(cls)
+    register_materials()
+    register_settings_and_export()
 
 
 def unregister():

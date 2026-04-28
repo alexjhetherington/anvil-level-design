@@ -17,6 +17,7 @@ from .face_cache import (
     face_data_cache, cache_single_face, cache_face_data,
     get_cached_layer_data,
 )
+from .modal_state import blocking_modal_operator_ids
 from .new_face_projection import get_best_neighbor_face
 
 
@@ -55,7 +56,7 @@ def apply_world_scale_uvs(obj, scene):
 
     # Track modal operators to detect operation boundaries
     window = bpy.context.window
-    current_modals = set(op.bl_idname for op in window.modal_operators) if window else set()
+    current_modals = blocking_modal_operator_ids(window)
 
     # Detect if modal operation just ended (before updating tracking)
     modal_just_ended = bool(_tracked_modal_operators) and not bool(current_modals)

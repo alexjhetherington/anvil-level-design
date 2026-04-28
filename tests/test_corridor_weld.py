@@ -1,12 +1,24 @@
+import os
+
 import bmesh
 import bpy
 from mathutils import Vector
 
+from ..core.materials import (
+    create_material_with_image,
+    ensure_material_slot,
+    find_material_with_image,
+)
 from ..core.uv_projection import derive_transform_from_uvs
+from ..core.uv_projection import apply_uv_to_face
 from ..operators.cube_cut.geometry import execute_cube_cut
 from ..operators.weld import set_weld_from_edge_selection
+from ..handlers.face_cache import cache_face_data
 from .base_test import AnvilTestCase
 from .helpers import create_vertical_plane, _get_context_override, _apply_material
+
+GREY_FLOOR_TEXTURE_PATH = os.path.join(os.path.dirname(__file__),
+                                       "dev_grey_floor.png")
 
 
 def _create_sloped_plane(name):
@@ -58,6 +70,61 @@ def _face_verts_sorted(face):
     return sorted([_vert_key(v) for v in face.verts])
 
 
+def _add_grey_floor_to_vertical_plane(obj):
+    """Add a connected floor quad in front of the wall using dev_grey_floor.png."""
+    image = bpy.data.images.load(GREY_FLOOR_TEXTURE_PATH, check_existing=True)
+    mat = find_material_with_image(image)
+    if not mat:
+        mat = create_material_with_image(image)
+    mat_index = ensure_material_slot(obj.data, mat)
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+
+    bottom_left = next(v for v in bm.verts
+                       if _vert_key(v) == (0.0, 0.0, 0.0))
+    bottom_right = next(v for v in bm.verts
+                        if _vert_key(v) == (1.0, 0.0, 0.0))
+    front_left = bm.verts.new((0.0, -0.5, 0.0))
+    front_right = bm.verts.new((1.0, -0.5, 0.0))
+    floor_face = bm.faces.new((bottom_left, front_left, front_right,
+                               bottom_right))
+    floor_face.material_index = mat_index
+
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+    apply_uv_to_face(floor_face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+                     mat, ppm, obj.data)
+
+    bmesh.update_edit_mesh(obj.data)
+    cache_face_data(bpy.context)
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _set_grey_floor_faces_scale(obj):
+    """Reproject horizontal grey floor faces at scale 1 for visual inspection."""
+    bm = bmesh.from_edit_mesh(obj.data)
+    uv_layer = bm.loops.layers.uv.verify()
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+    for face in bm.faces:
+        if round(face.normal.z) != 1:
+            continue
+        if face.material_index >= len(obj.data.materials):
+            continue
+        mat = obj.data.materials[face.material_index]
+        if mat.name != "IMG_dev_grey_floor.png":
+            continue
+        apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+                         mat, ppm, obj.data)
+
+    bmesh.update_edit_mesh(obj.data)
+
+
 class CorridorWeldVerticalTest(AnvilTestCase):
     """Test corridor weld after cube cut on a vertical plane."""
 
@@ -68,12 +135,14 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         A horizontal cube cut creates a rectangular hole. Corridor weld
         fills the hole and extrudes inward (+Y, negated face normal).
 
-        Geometry after corridor (9 faces, 12 verts):
-        - 4 frame faces (from cube cut) on the original plane at y=0
+        Geometry after corridor (11 faces, 14 verts):
+        - 3 wall frame faces (from cube cut) on the original plane at y=0
+        - 4 grey floor faces split around the cut and along the corridor
         - 1 back face at y=0.5 (end of corridor)
-        - 4 side faces connecting y=0 to y=0.5
+        - 3 side wall faces connecting y=0 to y=0.5
         """
         obj = create_vertical_plane("corridor_vert")
+        _add_grey_floor_to_vertical_plane(obj)
 
         ctx = _get_context_override()
         with bpy.context.temp_override(**ctx):
@@ -86,13 +155,13 @@ class CorridorWeldVerticalTest(AnvilTestCase):
             f.select = True
         bmesh.update_edit_mesh(obj.data)
 
-        # Cube cut: hole at x=[0.25,0.75], z=[0.25,0.75], passing through y=0
+        # Cube cut: hole at x=[0.25,0.75], z=[0.0,0.75], passing through y=0
         # Cuboid spans y=[-0.25, 0.5], fully enclosing the plane at y=0
         # depth=0.75 so the back plane lands at y=0.5 for the corridor cap
         with bpy.context.temp_override(**ctx):
             success, msg = execute_cube_cut(
                 bpy.context,
-                Vector((0.25, -0.25, 0.25)),
+                Vector((0.25, -0.25, 0.0)),
                 Vector((0.75, -0.25, 0.75)),
                 0.75,
                 Vector((1, 0, 0)),
@@ -106,7 +175,7 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         # Set up weld state (simulating what the cube cut operator does)
         # back_plane_offset = 0.5 (back plane at y=0.5 projected onto (0,1,0))
         set_weld_from_edge_selection(bpy.context, 0.75, (0, 1, 0), 0.5,
-                                     Vector((0.25, -0.25, 0.25)),
+                                     Vector((0.25, -0.25, 0.0)),
                                      Vector((0.75, -0.25, 0.75)),
                                      Vector((1, 0, 0)), Vector((0, 0, 1)),
                                      0)
@@ -127,20 +196,34 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         bm = bmesh.from_edit_mesh(obj.data)
         bm.faces.ensure_lookup_table()
         bm.verts.ensure_lookup_table()
+        _set_grey_floor_faces_scale(obj)
 
-        self.assertEqual(len(bm.verts), 12)
-        self.assertEqual(len(bm.faces), 9)
+        end_gap_faces = [
+            face for face in bm.faces
+            if round(face.normal.y) == -1
+            and all(abs(v.co.y - 0.5) < 0.0001 for v in face.verts)
+        ]
+        self.assertEqual(len(end_gap_faces), 1,
+                         "Should have one corridor end gap face")
+        end_gap_mat = obj.data.materials[end_gap_faces[0].material_index]
+        self.assertEqual(end_gap_mat.name, "IMG_dev_orange_wall.png",
+                         "Corridor end gap should use the wall texture")
+
+        self.assertEqual(len(bm.verts), 14)
+        self.assertEqual(len(bm.faces), 11)
 
         # Verify all vertex positions
         expected_verts = sorted([
             # Original plane corners
             (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
             (1.0, 0.0, 1.0), (0.0, 0.0, 1.0),
+            # Added connected grey floor corners
+            (0.0, -0.5, 0.0), (1.0, -0.5, 0.0),
             # Hole corners (from cube cut) at y=0
-            (0.25, 0.0, 0.25), (0.75, 0.0, 0.25),
+            (0.25, 0.0, 0.0), (0.75, 0.0, 0.0),
             (0.75, 0.0, 0.75), (0.25, 0.0, 0.75),
             # Extruded corridor verts at y=+0.5 (negated -Y normal * depth 0.5)
-            (0.25, 0.5, 0.25), (0.75, 0.5, 0.25),
+            (0.25, 0.5, 0.0), (0.75, 0.5, 0.0),
             (0.75, 0.5, 0.75), (0.25, 0.5, 0.75),
         ])
         actual_verts = sorted([_vert_key(v) for v in bm.verts])
@@ -152,32 +235,39 @@ class CorridorWeldVerticalTest(AnvilTestCase):
             (0, -1, 0, 0.5, 0.0, 0.88): sorted([
                 (0.0, 0.0, 1.0), (0.25, 0.0, 0.75),
                 (0.75, 0.0, 0.75), (1.0, 0.0, 1.0)]),
-            (0, -1, 0, 0.88, 0.0, 0.5): sorted([
-                (0.75, 0.0, 0.25), (0.75, 0.0, 0.75),
+            (0, -1, 0, 0.88, 0.0, 0.44): sorted([
+                (0.75, 0.0, 0.0), (0.75, 0.0, 0.75),
                 (1.0, 0.0, 0.0), (1.0, 0.0, 1.0)]),
-            (0, -1, 0, 0.5, 0.0, 0.12): sorted([
-                (0.0, 0.0, 0.0), (0.25, 0.0, 0.25),
-                (0.75, 0.0, 0.25), (1.0, 0.0, 0.0)]),
-            (0, -1, 0, 0.12, 0.0, 0.5): sorted([
+            (0, -1, 0, 0.12, 0.0, 0.44): sorted([
                 (0.0, 0.0, 0.0), (0.0, 0.0, 1.0),
-                (0.25, 0.0, 0.25), (0.25, 0.0, 0.75)]),
+                (0.25, 0.0, 0.0), (0.25, 0.0, 0.75)]),
+            # Grey floor faces
+            (0, 0, 1, 0.08, -0.17, 0.0): sorted([
+                (0.0, -0.5, 0.0), (0.0, 0.0, 0.0),
+                (0.25, 0.0, 0.0)]),
+            (0, 0, 1, 0.5, -0.25, 0.0): sorted([
+                (0.0, -0.5, 0.0), (0.25, 0.0, 0.0),
+                (0.75, 0.0, 0.0), (1.0, -0.5, 0.0)]),
+            (0, 0, 1, 0.92, -0.17, 0.0): sorted([
+                (0.75, 0.0, 0.0), (1.0, -0.5, 0.0),
+                (1.0, 0.0, 0.0)]),
+            (0, 0, 1, 0.5, 0.25, 0.0): sorted([
+                (0.25, 0.0, 0.0), (0.25, 0.5, 0.0),
+                (0.75, 0.0, 0.0), (0.75, 0.5, 0.0)]),
             # Back face (end of corridor at y=0.5)
-            (0, -1, 0, 0.5, 0.5, 0.5): sorted([
-                (0.25, 0.5, 0.25), (0.25, 0.5, 0.75),
-                (0.75, 0.5, 0.25), (0.75, 0.5, 0.75)]),
+            (0, -1, 0, 0.5, 0.5, 0.38): sorted([
+                (0.25, 0.5, 0.0), (0.25, 0.5, 0.75),
+                (0.75, 0.5, 0.0), (0.75, 0.5, 0.75)]),
             # Side faces (connecting y=0 to y=0.5)
-            (0, 0, 1, 0.5, 0.25, 0.25): sorted([
-                (0.25, 0.0, 0.25), (0.25, 0.5, 0.25),
-                (0.75, 0.0, 0.25), (0.75, 0.5, 0.25)]),
             (0, 0, -1, 0.5, 0.25, 0.75): sorted([
                 (0.25, 0.0, 0.75), (0.25, 0.5, 0.75),
                 (0.75, 0.0, 0.75), (0.75, 0.5, 0.75)]),
-            (1, 0, 0, 0.25, 0.25, 0.5): sorted([
-                (0.25, 0.0, 0.25), (0.25, 0.0, 0.75),
-                (0.25, 0.5, 0.25), (0.25, 0.5, 0.75)]),
-            (-1, 0, 0, 0.75, 0.25, 0.5): sorted([
-                (0.75, 0.0, 0.25), (0.75, 0.0, 0.75),
-                (0.75, 0.5, 0.25), (0.75, 0.5, 0.75)]),
+            (1, 0, 0, 0.25, 0.25, 0.38): sorted([
+                (0.25, 0.0, 0.0), (0.25, 0.0, 0.75),
+                (0.25, 0.5, 0.0), (0.25, 0.5, 0.75)]),
+            (-1, 0, 0, 0.75, 0.25, 0.38): sorted([
+                (0.75, 0.0, 0.0), (0.75, 0.0, 0.75),
+                (0.75, 0.5, 0.0), (0.75, 0.5, 0.75)]),
         }
 
         for face in bm.faces:
@@ -194,16 +284,19 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         expected_uvs = {
             # Frame faces
             (0, -1, 0, 0.5, 0.0, 0.88):  (0.0, 0.25, 0.75),
-            (0, -1, 0, 0.88, 0.0, 0.5):  (-90.0, 0.75, 0.75),
-            (0, -1, 0, 0.5, 0.0, 0.12):  (180.0, 0.75, 0.25),
-            (0, -1, 0, 0.12, 0.0, 0.5):  (90.0, 0.25, 0.25),
+            (0, -1, 0, 0.88, 0.0, 0.44): (-90.0, 0.75, 0.75),
+            (0, -1, 0, 0.12, 0.0, 0.44): (90.0, 0.25, 0.0),
+            # Grey floor faces
+            (0, 0, 1, 0.08, -0.17, 0.0): (0.0, 0.0, 0.0),
+            (0, 0, 1, 0.5, -0.25, 0.0): (0.0, 0.0, 0.0),
+            (0, 0, 1, 0.92, -0.17, 0.0): (0.0, 0.0, 0.0),
+            (0, 0, 1, 0.5, 0.25, 0.0):  (0.0, 0.0, 0.0),
             # Back face (UV projected from adjacent frame face)
-            (0, -1, 0, 0.5, 0.5, 0.5):   (-90.0, 0.25, 0.75),
+            (0, -1, 0, 0.5, 0.5, 0.38):   (90.0, 0.25, 0.0),
             # Side faces
-            (0, 0, 1, 0.5, 0.25, 0.25):  (0.0, 0.25, 0.25),
             (0, 0, -1, 0.5, 0.25, 0.75): (180.0, 0.75, 0.75),
-            (1, 0, 0, 0.25, 0.25, 0.5):  (-90.0, 0.25, 0.75),
-            (-1, 0, 0, 0.75, 0.25, 0.5): (90.0, 0.75, 0.25),
+            (1, 0, 0, 0.25, 0.25, 0.38):  (-90.0, 0.25, 0.75),
+            (-1, 0, 0, 0.75, 0.25, 0.38): (90.0, 0.75, 0.0),
         }
 
         for face in bm.faces:

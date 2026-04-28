@@ -11,6 +11,7 @@ from ..core.uv_layers import get_unlocked_uv_layers
 from ..core.hotspot_queries import face_has_hotspot_material
 
 from .face_cache import face_data_cache, cache_single_face
+from .modal_state import blocking_modal_operator_ids
 
 
 _auto_hotspot_pending = False
@@ -89,7 +90,7 @@ def _apply_auto_hotspots_deferred():
         # Skip if modal operator is running (e.g., extrude, grab)
         # Keep pending so we re-check after modal ends
         window = context.window
-        if window and window.modal_operators:
+        if blocking_modal_operator_ids(window):
             return 0.1  # Re-check in 0.1s
 
         force = _force_auto_hotspot

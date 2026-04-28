@@ -526,7 +526,7 @@ def get_uv_islands(bm, faces, uv_layer):
     return multi_quad_islands, single_quad_islands, ngon_islands
 
 
-def make_single_quad_into_rectangle(bm, island, uv_layer):
+def make_single_quad_into_rectangle(bm, island, uv_layer, world_matrix):
     """Set UVs for a single quad face based on its 3D edge lengths.
 
     This always succeeds for a valid single-quad island.
@@ -535,6 +535,7 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
         bm: BMesh instance
         island: List containing exactly one quad face
         uv_layer: UV layer to operate on
+        world_matrix: Object matrix used to measure displayed edge lengths
 
     Returns:
         Dict with keys:
@@ -544,8 +545,14 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
     loops = list(face.loops)
 
     # Calculate edge lengths
-    edge1_len = (loops[0].vert.co - loops[1].vert.co).length
-    edge2_len = (loops[1].vert.co - loops[2].vert.co).length
+    edge1_len = (
+        (world_matrix @ loops[0].vert.co)
+        - (world_matrix @ loops[1].vert.co)
+    ).length
+    edge2_len = (
+        (world_matrix @ loops[1].vert.co)
+        - (world_matrix @ loops[2].vert.co)
+    ).length
 
     # Set UVs directly
     loops[0][uv_layer].uv = Vector((0, 0))
@@ -562,7 +569,7 @@ def make_single_quad_into_rectangle(bm, island, uv_layer):
     }
 
 
-def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
+def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces, world_matrix):
     """Two-pass BFS grid UV generation with averaged row/column dimensions.
 
     Pass 1: BFS to assign integer grid coordinates (col, row) to each loop.
@@ -578,6 +585,7 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
         faces: list of quad BMFaces forming the grid
         uv_layer: BMesh UV layer to write to
         edge_faces: dict of edge -> list of faces (adjacency within the grid)
+        world_matrix: Object matrix used to measure displayed edge lengths
 
     Returns:
         True if all loops were assigned grid positions, False otherwise.
@@ -694,7 +702,10 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
             ev0, ev1 = e.verts
             gp0 = loop_pos[fl_vtl[ev0]]
             gp1 = loop_pos[fl_vtl[ev1]]
-            length = (ev0.co - ev1.co).length
+            length = (
+                (world_matrix @ ev0.co)
+                - (world_matrix @ ev1.co)
+            ).length
 
             if gp0[1] == gp1[1]:
                 h_lengths.append(length)  # horizontal edge -> column width
@@ -733,7 +744,7 @@ def _bfs_propagate_grid_uvs(faces, uv_layer, edge_faces):
     return True
 
 
-def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
+def try_make_multi_quad_into_rectangle(bm, island, uv_layer, world_matrix):
     """Fit a multi-quad island's UVs into a rectangle by propagating UVs across shared edges.
 
     Starting from the first face (whose UVs are set from 3D edge lengths),
@@ -744,6 +755,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
         bm: BMesh instance
         island: List of quad faces in the island (must have more than one face)
         uv_layer: UV layer to operate on
+        world_matrix: Object matrix used to measure displayed edge lengths
 
     Returns:
         Dict with keys:
@@ -771,7 +783,7 @@ def try_make_multi_quad_into_rectangle(bm, island, uv_layer):
         bfs_edge_faces[edge] = faces_on_edge
 
     # Run shared BFS propagation (using seam-filtered adjacency)
-    if not _bfs_propagate_grid_uvs(island, uv_layer, bfs_edge_faces):
+    if not _bfs_propagate_grid_uvs(island, uv_layer, bfs_edge_faces, world_matrix):
         debug_log(f"[try_make_multi_quad_into_rectangle] BFS grid failed (non-grid topology)")
         return {
             'success': False,
@@ -959,7 +971,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     multi_quad_not_rectangled_islands = []
 
     for i, island in enumerate(multi_quad_islands):
-        result = try_make_multi_quad_into_rectangle(bm, island, uv_layer)
+        result = try_make_multi_quad_into_rectangle(bm, island, uv_layer, world_matrix)
 
         if result is not None and result['success']:
             debug_log(f"[Hotspot] Multi-quad island {i}: SUCCESS - aspect={result['aspect_ratio']:.3f}")
@@ -981,7 +993,7 @@ def apply_hotspots_to_mesh(bm, me, faces, allow_combined_faces, world_matrix, pi
     single_quad_rectangled_islands = []
 
     for i, island in enumerate(single_quad_islands):
-        result = make_single_quad_into_rectangle(bm, island, uv_layer)
+        result = make_single_quad_into_rectangle(bm, island, uv_layer, world_matrix)
         debug_log(f"[Hotspot] Single-quad island {i}: aspect={result['aspect_ratio']:.3f}")
         single_quad_rectangled_islands.append((island, result))
     debug_log(f"[Hotspot Perf] Phase 4b - Single-quad rectangle fitting: {time.perf_counter() - t0:.4f}s ({len(single_quad_rectangled_islands)} islands)")

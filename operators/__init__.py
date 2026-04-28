@@ -12,7 +12,7 @@ from . import pixels_per_meter
 from . import modal_draw
 from . import cube_cut
 from . import box_builder
-from . import backface_select
+from . import visible_select
 from . import select_linked
 from . import uv_select_invalid
 from . import weld
@@ -20,8 +20,12 @@ from . import vertex_paint_color_picker
 from . import overlap_check
 from . import grid_overlay
 from . import fixed_hotspot_overlay
+from . import library_object_overlay
 from . import uv_transform_modal
 from . import uv_randomize_offset
+from . import cursor_to_grid
+from .. import prefabs
+from .. import texture_browser
 
 
 def register():
@@ -39,7 +43,7 @@ def register():
     modal_draw.register()
     cube_cut.register()
     box_builder.register()
-    backface_select.register()
+    visible_select.register()
     select_linked.register()
     uv_select_invalid.register()
     weld.register()
@@ -47,13 +51,21 @@ def register():
     overlap_check.register()
     grid_overlay.register()
     fixed_hotspot_overlay.register()
+    library_object_overlay.register()
     uv_transform_modal.register()
     uv_randomize_offset.register()
+    cursor_to_grid.register()
+    texture_browser.register()
+    prefabs.register()
 
 
 def unregister():
+    prefabs.unregister()
+    texture_browser.unregister()
+    cursor_to_grid.unregister()
     uv_randomize_offset.unregister()
     uv_transform_modal.unregister()
+    library_object_overlay.unregister()
     fixed_hotspot_overlay.unregister()
     grid_overlay.unregister()
     overlap_check.unregister()
@@ -61,7 +73,7 @@ def unregister():
     weld.unregister()
     uv_select_invalid.unregister()
     select_linked.unregister()
-    backface_select.unregister()
+    visible_select.unregister()
     box_builder.unregister()
     cube_cut.unregister()
     modal_draw.unregister()

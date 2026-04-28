@@ -40,6 +40,7 @@ from .interaction import (
     compute_offset_from_drag,
     compute_rotation_from_drag,
     snap_aspect_ratio,
+    snap_aspect_ratio_on_axis,
     snap_edge_and_aspect,
     snap_point_to_face_features,
     snap_quad_vertices_to_face,
@@ -144,6 +145,28 @@ class MESH_OT_uv_transform_modal(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     _active_instance = None
+
+    action_face_index: bpy.props.IntProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_other_face_indices: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_scale_u: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_scale_v: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_rotation: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_offset_x: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_offset_y: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
 
     @classmethod
     def poll(cls, context):
@@ -381,9 +404,9 @@ class MESH_OT_uv_transform_modal(Operator):
 
         # ---- Confirm (keyboard) ----
         if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
-            self._normalize_and_apply(context)
+            result = self._finish_from_modal(context)
             self._cleanup(context)
-            return {'FINISHED'}
+            return result
 
         # ---- Mouse press - start drag or confirm ----
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -412,9 +435,9 @@ class MESH_OT_uv_transform_modal(Operator):
                 return {'RUNNING_MODAL'}
             else:
                 # Click on empty space = confirm
-                self._normalize_and_apply(context)
+                result = self._finish_from_modal(context)
                 self._cleanup(context)
-                return {'FINISHED'}
+                return result
 
         # ---- Mouse release - end drag ----
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
@@ -639,8 +662,14 @@ class MESH_OT_uv_transform_modal(Operator):
             )
             if self._drag_index % 2 == 0:
                 new_sv = snapped_sv
+                active_axis = 'v'
             else:
                 new_su = snapped_su
+                active_axis = 'u'
+
+            new_su, new_sv = snap_aspect_ratio_on_axis(
+                new_su, new_sv, active_axis
+            )
 
             new_ox, new_oy = recompute_offset_for_fixed_edge(
                 self._drag_index, self._drag_start_quad,
@@ -685,15 +714,24 @@ class MESH_OT_uv_transform_modal(Operator):
     def _apply_transform(self, context):
         """Apply the current working transform to the primary face UVs,
         propagate to every other selected face, and update the panel."""
+        self._apply_transform_values(
+            context, self._face_index, self._other_face_indices,
+            self._scale_u, self._scale_v, self._rotation,
+            self._offset_x, self._offset_y
+        )
+
+    def _apply_transform_values(self, context, face_index, other_face_indices,
+                                scale_u, scale_v, rotation, offset_x, offset_y):
+        """Apply explicit UV transform values to the captured face set."""
         obj = context.active_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()
 
-        if self._face_index >= len(bm.faces):
+        if face_index >= len(bm.faces):
             return
 
-        face = bm.faces[self._face_index]
+        face = bm.faces[face_index]
         if not face.is_valid:
             return
 
@@ -701,38 +739,42 @@ class MESH_OT_uv_transform_modal(Operator):
         if uv_layer is None:
             return
 
+        props = context.scene.level_design_props
+        ppm = props.pixels_per_meter
+        material = me.materials[face.material_index] if face.material_index < len(me.materials) else None
+        world_matrix = obj.matrix_world.copy()
+
         apply_uv_to_face(
             face, uv_layer,
-            self._scale_u, self._scale_v, self._rotation,
-            self._offset_x, self._offset_y,
-            self._material, self._ppm, me
+            scale_u, scale_v, rotation,
+            offset_x, offset_y,
+            material, ppm, me
         )
 
-        cache_single_face(face, bm, self._ppm, me)
+        cache_single_face(face, bm, ppm, me)
 
         # Propagate the primary face's UV settings to the other selected
         # faces using the same transfer path that Alt+LMB uses.
         # set_uv_from_source_params (called by the dispatch) handles caching.
-        for idx in self._other_face_indices:
+        for idx in other_face_indices:
             if idx >= len(bm.faces):
                 continue
             target = bm.faces[idx]
             if not target.is_valid:
                 continue
             _dispatch_set_uv_from_other_face(
-                face, target, uv_layer, self._ppm, me,
-                self._world_matrix, bm=bm,
+                face, target, uv_layer, ppm, me,
+                world_matrix, bm=bm,
             )
 
         # Update panel properties
-        props = context.scene.level_design_props
         set_updating_from_selection(True)
         try:
-            props.texture_scale_u = self._scale_u
-            props.texture_scale_v = self._scale_v
-            props.texture_rotation = self._rotation % 360.0
-            props.texture_offset_x = self._offset_x % 1.0
-            props.texture_offset_y = self._offset_y % 1.0
+            props.texture_scale_u = scale_u
+            props.texture_scale_v = scale_v
+            props.texture_rotation = rotation % 360.0
+            props.texture_offset_x = offset_x % 1.0
+            props.texture_offset_y = offset_y % 1.0
         finally:
             set_updating_from_selection(False)
             sync_scale_tracking(context)
@@ -868,6 +910,40 @@ class MESH_OT_uv_transform_modal(Operator):
         self._offset_x = self._offset_x % 1.0
         self._offset_y = self._offset_y % 1.0
         self._apply_transform(context)
+
+    def _capture_action_properties(self):
+        """Store the final modal UV transform on hidden operator properties."""
+        self.action_face_index = self._face_index
+        self.action_other_face_indices = ",".join(str(idx) for idx in self._other_face_indices)
+        self.action_scale_u = self._scale_u
+        self.action_scale_v = self._scale_v
+        self.action_rotation = self._rotation
+        self.action_offset_x = self._offset_x
+        self.action_offset_y = self._offset_y
+
+    def _get_action_other_face_indices(self):
+        if not self.action_other_face_indices:
+            return []
+        return [int(part) for part in self.action_other_face_indices.split(",") if part]
+
+    def _finish_from_modal(self, context):
+        self._offset_x = self._offset_x % 1.0
+        self._offset_y = self._offset_y % 1.0
+        self._capture_action_properties()
+        return self.execute(context)
+
+    def execute(self, context):
+        self._apply_transform_values(
+            context,
+            self.action_face_index,
+            self._get_action_other_face_indices(),
+            self.action_scale_u,
+            self.action_scale_v,
+            self.action_rotation,
+            self.action_offset_x,
+            self.action_offset_y,
+        )
+        return {'FINISHED'}
 
     def _cleanup(self, context):
         """Remove draw handlers and restore state."""

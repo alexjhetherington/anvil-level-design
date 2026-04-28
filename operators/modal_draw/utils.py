@@ -220,12 +220,34 @@ def raycast_scene(context, event):
     if origin is None or direction is None:
         return (False, None, None, None, None, None)
 
-    from ..backface_select.raycast import raycast_scene_skip_backfaces
+    from ..visible_select.raycast import (
+        raycast_scene_skip_backfaces,
+        raycast_scene_skip_hidden_and_backfaces,
+    )
 
     depsgraph = context.evaluated_depsgraph_get()
-    result = raycast_scene_skip_backfaces(
-        depsgraph, context.scene, origin, direction, max_iterations=64
-    )
+    active_obj = context.active_object
+    if (context.mode == 'EDIT_MESH' and active_obj is not None
+            and active_obj.type == 'MESH'):
+        import bmesh
+        bm = bmesh.from_edit_mesh(active_obj.data)
+        bm.faces.ensure_lookup_table()
+
+        def is_hidden_edit_face(obj, face_index):
+            source_obj = getattr(obj, "original", obj)
+            if source_obj != active_obj:
+                return False
+            if face_index is None or face_index < 0 or face_index >= len(bm.faces):
+                return False
+            return bm.faces[face_index].hide
+
+        result = raycast_scene_skip_hidden_and_backfaces(
+            depsgraph, context.scene, origin, direction, 64, is_hidden_edit_face
+        )
+    else:
+        result = raycast_scene_skip_backfaces(
+            depsgraph, context.scene, origin, direction, max_iterations=64
+        )
 
     return result
 

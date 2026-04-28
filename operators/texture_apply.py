@@ -6,11 +6,13 @@ from bpy_extras import view3d_utils
 
 from ..core.logging import debug_log
 from ..core.workspace_check import is_level_design_workspace
+from ..core.library import is_library_object
 from ..core.face_id import get_face_id_layer, save_face_selection, restore_face_selection
 from ..core.geometry import normalize_offset
 from ..core.materials import (
     find_material_with_image,
     create_material_with_image,
+    ensure_material_slot,
     get_unassigned_material,
     get_texture_dimensions_from_material,
     get_image_from_material,
@@ -24,12 +26,13 @@ from ..core.hotspot_queries import (
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from ..handlers import (
-    cache_single_face, get_active_image, set_active_image, redraw_ui_panels,
-    update_ui_from_selection, update_active_image_from_face,
+    cache_single_face, get_active_image, set_active_image,
+    set_previous_image, redraw_ui_panels, update_ui_from_selection,
+    update_active_image_from_face,
 )
 from ..handlers import cross_object_undo
-from .backface_select.paint_base import ModalPaintBase
-from .backface_select.raycast import (
+from .visible_select.paint_base import ModalPaintBase
+from .visible_select.raycast import (
     raycast_bvh_skip_backfaces,
     raycast_bvh_skip_backfaces_polys,
 )
@@ -563,6 +566,9 @@ def _invoke_apply_setup(op, context, event):
     if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
         debug_log("[ApplyImage] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
         return {'PASS_THROUGH'}
+    if is_library_object(obj):
+        debug_log("[ApplyImage] PASS_THROUGH: active object is from a library")
+        return {'PASS_THROUGH'}
 
     if not context.tool_settings.mesh_select_mode[2]:
         debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
@@ -570,15 +576,16 @@ def _invoke_apply_setup(op, context, event):
 
     bm_check = bmesh.from_edit_mesh(obj.data)
     bm_check.faces.ensure_lookup_table()
-    selected_count = sum(1 for f in bm_check.faces if f.select)
+    source_face, selected_count = _single_selected_face(bm_check)
     if selected_count != 1:
         debug_log(f"[ApplyImage] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
         return {'PASS_THROUGH'}
 
-    source_face = bm_check.faces.active
-    if source_face is None or not source_face.select:
-        debug_log(f"[ApplyImage] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
-        return {'PASS_THROUGH'}
+    active_face = bm_check.faces.active
+    if active_face is not None and active_face.select:
+        source_face = active_face
+    else:
+        bm_check.faces.active = source_face
 
     source_mat = (
         obj.data.materials[source_face.material_index]
@@ -592,7 +599,7 @@ def _invoke_apply_setup(op, context, event):
     if not image and not source_is_unassigned:
         image = source_image
     if not image and not source_is_unassigned:
-        debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
+        debug_log("[ApplyImage] PASS_THROUGH: no active image")
         return {'PASS_THROUGH'}
 
     op._source_face_index = source_face.index
@@ -616,9 +623,7 @@ def _invoke_apply_setup(op, context, event):
         if mat is None:
             mat = create_material_with_image(image)
     op._mat = mat
-    if mat.name not in obj.data.materials:
-        obj.data.materials.append(mat)
-    op._mat_index = obj.data.materials.find(mat.name)
+    op._mat_index = ensure_material_slot(obj.data, mat)
 
     op._other_objects_info = []
     op._other_bmeshes = {}
@@ -644,6 +649,21 @@ def _invoke_apply_setup(op, context, event):
     image_name = image.name if image is not None else "<unassigned>"
     debug_log(f"[ApplyImage] invoke OK: source_face={op._source_face_index}, image={image_name}, mat={mat.name}")
     return None
+
+
+def _single_selected_face(bm):
+    selected_face = None
+    selected_count = 0
+
+    for face in bm.faces:
+        if not face.select:
+            continue
+        selected_face = face
+        selected_count += 1
+        if selected_count > 1:
+            break
+
+    return selected_face, selected_count
 
 
 def _closest_target_world(paint_obj, paint_bvh, source_bm, source_materials,
@@ -714,6 +734,9 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
     Returns True if the hit was processed, False if it was a duplicate of an
     earlier hit in this paint session.
     """
+    if is_library_object(hit_obj):
+        return False
+
     visit_key = (id(hit_obj), hit_face_index)
     if visit_key in op._paint_visited_other:
         return False
@@ -747,10 +770,8 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
         if (
                 len(other_me.materials) == 0
                 and not getattr(op, '_unassign_material', False)):
-            other_me.materials.append(get_unassigned_material())
-        if op_mat.name not in other_me.materials:
-            other_me.materials.append(op_mat)
-        target_face.material_index = other_me.materials.find(op_mat.name)
+            ensure_material_slot(other_me, get_unassigned_material())
+        target_face.material_index = ensure_material_slot(other_me, op_mat)
 
     if getattr(op, '_unassign_material', False):
         cross_object_undo.record_target_after(transaction_id, hit_obj, other_bm)
@@ -799,6 +820,9 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
 
     # ---- Apply to other object if it was the closest hit ----
     if hit_obj is not None and hit_obj is not obj:
+        if is_library_object(hit_obj):
+            debug_log(f"[ApplyImage] skipped library object: {hit_obj.name}")
+            return
         if _apply_to_other_obj(op, bm, me, hit_obj, hit_face_index, uv_func):
             debug_log(f"[ApplyImage] cross-object hit: {hit_obj.name} face {hit_face_index}")
         return
@@ -864,7 +888,7 @@ def _discard_other_bmeshes(op):
 def _invoke_uv_transform_setup(op, context, event):
     """Common invoke setup for UV-transform-only paint operators.
 
-    Like _invoke_apply_setup but does not require a file browser image and
+    Like _invoke_apply_setup but does not require an active image and
     does not touch materials.  Only the UV transform (offset, rotation, scale)
     from the selected source face is used.
 
@@ -874,6 +898,9 @@ def _invoke_uv_transform_setup(op, context, event):
     if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
         debug_log("[UVTransform] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
         return {'PASS_THROUGH'}
+    if is_library_object(obj):
+        debug_log("[UVTransform] PASS_THROUGH: active object is from a library")
+        return {'PASS_THROUGH'}
 
     if not context.tool_settings.mesh_select_mode[2]:
         debug_log("[UVTransform] PASS_THROUGH: not in face select mode")
@@ -881,15 +908,16 @@ def _invoke_uv_transform_setup(op, context, event):
 
     bm_check = bmesh.from_edit_mesh(obj.data)
     bm_check.faces.ensure_lookup_table()
-    selected_count = sum(1 for f in bm_check.faces if f.select)
+    source_face, selected_count = _single_selected_face(bm_check)
     if selected_count != 1:
         debug_log(f"[UVTransform] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
         return {'PASS_THROUGH'}
 
-    source_face = bm_check.faces.active
-    if source_face is None or not source_face.select:
-        debug_log(f"[UVTransform] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
-        return {'PASS_THROUGH'}
+    active_face = bm_check.faces.active
+    if active_face is not None and active_face.select:
+        source_face = active_face
+    else:
+        bm_check.faces.active = source_face
 
     op._source_face_index = source_face.index
     op._obj_matrix = obj.matrix_world.copy()
@@ -944,6 +972,9 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 
     # ---- Apply to other object if it was the closest hit ----
     if hit_obj is not None and hit_obj is not obj:
+        if is_library_object(hit_obj):
+            debug_log(f"[UVTransform] skipped library object: {hit_obj.name}")
+            return
         if _apply_to_other_obj(op, bm, me, hit_obj, hit_face_index, _dispatch_set_uv_from_other_face):
             debug_log(f"[UVTransform] cross-object hit: {hit_obj.name} face {hit_face_index}")
         return
@@ -980,6 +1011,8 @@ def _pick_source_from_cursor(op, context, event):
     """
     edit_obj = context.object
     if not edit_obj or edit_obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+        return None
+    if is_library_object(edit_obj):
         return None
 
     bm_edit = bmesh.from_edit_mesh(edit_obj.data)
@@ -1064,6 +1097,11 @@ def _pick_source_from_cursor(op, context, event):
         op.report({'WARNING'}, "No face under cursor")
         return None
 
+    if is_library_object(hit_obj):
+        debug_log(f"[PickImage] skipped library object: {hit_obj.name}")
+        op.report({'WARNING'}, "Select local object")
+        return None
+
     hit_me = hit_obj.data
     hit_mat = hit_me.materials[hit_mat_index] if hit_mat_index < len(hit_me.materials) else None
     image = get_image_from_material(hit_mat)
@@ -1073,9 +1111,7 @@ def _pick_source_from_cursor(op, context, event):
 
 def _assign_unassigned_material_to_faces(selected_faces, me):
     mat = get_unassigned_material()
-    if mat.name not in me.materials:
-        me.materials.append(mat)
-    mat_index = me.materials.find(mat.name)
+    mat_index = ensure_material_slot(me, mat)
 
     for face in selected_faces:
         face.material_index = mat_index
@@ -1083,13 +1119,13 @@ def _assign_unassigned_material_to_faces(selected_faces, me):
 
 def _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm, me):
     if len(me.materials) == 0 and len(selected_faces) < len(bm.faces):
-        me.materials.append(get_unassigned_material())
+        ensure_material_slot(me, get_unassigned_material())
 
 
 # ---- Apply Image to Face (Alt+Left Click) ----
 
 class apply_image_to_face(ModalPaintBase, Operator):
-    """Apply selected File Browser image to hovered face (drag to paint)"""
+    """Apply active image to hovered face (drag to paint)"""
     bl_idname = "leveldesign.apply_image_to_face"
     bl_label = "Apply Image to Face"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1199,7 +1235,7 @@ class apply_image_to_face(ModalPaintBase, Operator):
 # ---- Stretch Apply Image to Face (Shift+Alt+Left Click) ----
 
 class stretch_apply_image_to_face(ModalPaintBase, Operator):
-    """Stretch-apply selected File Browser image to hovered face (drag to paint)"""
+    """Stretch-apply active image to hovered face (drag to paint)"""
     bl_idname = "leveldesign.stretch_apply_image_to_face"
     bl_label = "Stretch Apply Image to Face"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1287,9 +1323,7 @@ class pick_image_from_face(Operator):
         if mat is None:
             mat = create_material_with_image(image)
         _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
-        if mat.name not in me.materials:
-            me.materials.append(mat)
-        mat_index = me.materials.find(mat.name)
+        mat_index = ensure_material_slot(me, mat)
 
         for face in selected_faces:
             face.material_index = mat_index
@@ -1374,6 +1408,7 @@ class pick_image_from_face(Operator):
 
         update_ui_from_selection(context)
         update_active_image_from_face(context)
+        set_previous_image(image)
         redraw_ui_panels(context)
         self.report({'INFO'}, f"Applied: {image.name}")
 
@@ -1420,9 +1455,7 @@ class stretch_pick_image_from_face(Operator):
         if mat is None:
             mat = create_material_with_image(image)
         _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
-        if mat.name not in me.materials:
-            me.materials.append(mat)
-        mat_index = me.materials.find(mat.name)
+        mat_index = ensure_material_slot(me, mat)
 
         for face in selected_faces:
             face.material_index = mat_index
@@ -1460,6 +1493,7 @@ class stretch_pick_image_from_face(Operator):
 
         update_ui_from_selection(context)
         update_active_image_from_face(context)
+        set_previous_image(image)
         redraw_ui_panels(context)
         self.report({'INFO'}, f"Stretch applied: {image.name}")
 

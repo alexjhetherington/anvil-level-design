@@ -1,11 +1,21 @@
+import os
+
 import bmesh
 import bpy
 from mathutils import Vector
 
 from ..core.uv_projection import apply_uv_to_face
 from ..core.uv_projection import derive_transform_from_uvs
+from ..core.materials import find_material_with_image, create_material_with_image
+from ..hotspot_mapping.json_storage import add_texture_as_hotspottable
 from .base_test import AnvilTestCase
-from .helpers import create_vertical_plane, create_textured_cube, add_uv_layer, _get_context_override
+from .helpers import (
+    create_vertical_plane, create_textured_cube, add_uv_layer,
+    _get_context_override, TEXTURE_PATH,
+)
+
+
+HOTSPOT_TEXTURE_PATH = os.path.join(os.path.dirname(__file__), "dev_hotspot.png")
 
 
 def _setup_cube_and_select_top_face(name, scale_u, scale_v):
@@ -19,6 +29,7 @@ def _setup_cube_and_select_top_face(name, scale_u, scale_v):
     ctx = _get_context_override()
     with bpy.context.temp_override(**ctx):
         bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type='FACE')
     bm = bmesh.from_edit_mesh(obj.data)
 
     # Select only the top face (normal pointing +Z)
@@ -65,6 +76,8 @@ def _select_edge_by_vert_filter(bm, me, vert_filter):
 
     Flushes selection and updates the edit mesh so the operator poll sees it.
     """
+    with bpy.context.temp_override(**_get_context_override()):
+        bpy.ops.mesh.select_mode(type='EDGE')
     bm.select_mode = {'EDGE'}
     for v in bm.verts:
         v.select_set(False)
@@ -81,6 +94,133 @@ def _select_edge_by_vert_filter(bm, me, vert_filter):
             bmesh.update_edit_mesh(me)
             return
     raise RuntimeError("No matching edge found")
+
+
+def _get_or_create_material_for_image(image):
+    mat = find_material_with_image(image)
+    if mat is None:
+        mat = create_material_with_image(image)
+    return mat
+
+
+def _create_connected_dev_textured_wall_with_hotspot_slot_zero(name):
+    """Create two connected quads with slot 0 reserved for a non-dev texture."""
+    hotspot_image = bpy.data.images.load(HOTSPOT_TEXTURE_PATH, check_existing=True)
+    add_texture_as_hotspottable(
+        hotspot_image.name, hotspot_image.size[0], hotspot_image.size[1])
+    hotspot_mat = _get_or_create_material_for_image(hotspot_image)
+
+    dev_image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+    dev_mat = _get_or_create_material_for_image(dev_image)
+
+    mesh = bpy.data.meshes.new(name)
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    mesh.materials.append(hotspot_mat)
+    mesh.materials.append(dev_mat)
+    dev_mat_index = mesh.materials.find(dev_mat.name)
+
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.object.mode_set(mode='EDIT')
+
+    bm = bmesh.from_edit_mesh(mesh)
+    v0 = bm.verts.new((0, 0, 0))
+    v1 = bm.verts.new((1, 0, 0))
+    v2 = bm.verts.new((1, 0, 1))
+    v3 = bm.verts.new((0, 0, 1))
+    face = bm.faces.new((v0, v1, v2, v3))
+    face.material_index = 0
+    bm.normal_update()
+
+    _select_edge_by_vert_filter(
+        bm, mesh, lambda v: abs(v.co.x - 1.0) < 1e-5)
+
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.mesh.extrude_region_move(
+            TRANSFORM_OT_translate={"value": Vector((1, 0, 0))}
+        )
+
+    bm = bmesh.from_edit_mesh(mesh)
+    uv_layer = bm.loops.layers.uv.verify()
+    bm.faces.ensure_lookup_table()
+    ppm = bpy.context.scene.level_design_props.pixels_per_meter
+
+    # Paint-equivalent setup: both connected quads use the dev texture in
+    # material slot 1, leaving slot 0 as the visible bad-fallback texture.
+    for wall_face in bm.faces:
+        wall_face.material_index = dev_mat_index
+        apply_uv_to_face(
+            wall_face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+            dev_mat, ppm, mesh,
+        )
+
+    return obj, dev_mat.name, hotspot_mat.name
+
+
+def _select_rightmost_face(obj):
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.mesh.select_mode(type='FACE')
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    bm.select_mode = {'FACE'}
+    target = None
+    best_x = -float('inf')
+    for vert in bm.verts:
+        vert.select_set(False)
+    for edge in bm.edges:
+        edge.select_set(False)
+    for face in bm.faces:
+        face.select_set(False)
+        center_x = face.calc_center_median().x
+        if center_x > best_x:
+            best_x = center_x
+            target = face
+    target.select_set(True)
+    bm.faces.active = target
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(obj.data)
+
+
+def _extrude_selected_region(direction):
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.mesh.extrude_region_move(
+            TRANSFORM_OT_translate={"value": direction}
+        )
+
+
+def _move_selected_region(direction):
+    ctx = _get_context_override()
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.transform.translate(value=direction)
+
+
+def _face_material_name(me, face):
+    if face.material_index < 0 or face.material_index >= len(me.materials):
+        return f"<invalid:{face.material_index}>"
+    mat = me.materials[face.material_index]
+    if mat is None:
+        return "<empty>"
+    return mat.name
+
+
+def _describe_faces_with_materials(bm, me):
+    parts = []
+    for face in bm.faces:
+        center = face.calc_center_median()
+        parts.append(
+            f"face={face.index} mat={face.material_index}:"
+            f"{_face_material_name(me, face)} "
+            f"center=({center.x:.2f},{center.y:.2f},{center.z:.2f}) "
+            f"normal=({face.normal.x:.0f},{face.normal.y:.0f},{face.normal.z:.0f})"
+        )
+    return "; ".join(parts)
 
 
 def _setup_plane_and_select_edge(name, vert_filter):
@@ -141,12 +281,94 @@ class _UVExtendBase(AnvilTestCase):
         self.assertAlmostEqual(transform['offset_y'], offset_y, places=3)
 
 
-class UVExtendKeyboardTest(_UVExtendBase):
-    """Test UV projection during extrude using the E key (modal workflow).
+class ExtrudeConnectedFaceMaterialTest(AnvilTestCase):
+    """Regression coverage for Blender's connected face-region extrude path."""
 
-    Simulates the real user workflow: press E, constrain to axis, type value,
-    press Enter. The extrude runs as a modal operator, so the depsgraph
-    handler detects it via window.modal_operators.
+    def test_extrude_connected_dev_textured_face_zero_area_stage_preserves_material_on_side_walls(self):
+        obj, dev_mat_name, hotspot_mat_name = (
+            _create_connected_dev_textured_wall_with_hotspot_slot_zero(
+                "connected_extrude_material_fallback"
+            )
+        )
+
+        self.assertEqual(obj.data.materials[0].name, hotspot_mat_name)
+        self.assertNotEqual(obj.data.materials[0].name, dev_mat_name)
+
+        _select_rightmost_face(obj)
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        extrude_direction = bm.faces.active.normal.copy()
+        _extrude_selected_region(Vector((0, 0, 0)))
+        yield 0.5
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+
+        self.assertEqual(
+            len(bm.faces), 6,
+            "Extruding one quad from a two-quad wall should leave six faces",
+        )
+
+        zero_area_faces = [
+            face for face in bm.faces
+            if face.calc_area() < 1e-8
+        ]
+        self.assertGreater(
+            len(zero_area_faces), 0,
+            "Zero-distance extrude should expose collapsed side walls",
+        )
+
+        bad_zero_area_faces = [
+            face for face in zero_area_faces
+            if _face_material_name(obj.data, face) != dev_mat_name
+        ]
+        bad_zero_area_descriptions = [
+            f"{face.index}:{_face_material_name(obj.data, face)}"
+            for face in bad_zero_area_faces
+        ]
+        self.assertEqual(
+            bad_zero_area_descriptions, [],
+            "Collapsed zero-area extrusion faces should copy the selected "
+            f"dev material before the moved cap creates area. Faces: "
+            f"{_describe_faces_with_materials(bm, obj.data)}",
+        )
+
+        moved_face_indices = {face.index for face in zero_area_faces}
+        _move_selected_region(extrude_direction)
+        yield 0.5
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+
+        bad_faces = [
+            face for face in bm.faces
+            if _face_material_name(obj.data, face) != dev_mat_name
+        ]
+
+        # Leave the extrusion side walls selected in --save outputs.
+        for face in bm.faces:
+            face.select_set(face.index in moved_face_indices)
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data)
+
+        bad_descriptions = [
+            f"{face.index}:{_face_material_name(obj.data, face)}"
+            for face in bad_faces
+        ]
+        self.assertEqual(
+            bad_descriptions, [],
+            "Connected face extrusion should keep the dev material on every "
+            f"generated side wall. Faces: {_describe_faces_with_materials(bm, obj.data)}",
+        )
+
+
+class UVExtendKeyboardTest(_UVExtendBase):
+    """Test UV projection during modal extrude workflows.
+
+    Face-normal extrudes use the E key path. Axis-constrained edge extrudes
+    invoke the same modal extrude operator directly so timer-driven tests do
+    not depend on raw keymap focus. In both cases the depsgraph handler sees a
+    modal topology operation via window.modal_operators.
     """
 
     def test_uv_extend_up(self):
@@ -215,6 +437,7 @@ class UVExtendKeyboardTest(_UVExtendBase):
                                  mat, ppm, obj.data)
                 break
         bmesh.update_edit_mesh(obj.data)
+        self.refresh_face_cache()
 
         yield from self.simulate_extrude(value=1)
 
@@ -329,6 +552,7 @@ class UVExtendToolTest(_UVExtendBase):
                                  mat, ppm, obj.data)
                 break
         bmesh.update_edit_mesh(obj.data)
+        self.refresh_face_cache()
 
         yield from self._extrude_non_modal(obj, Vector((0, 0, 1)))
 

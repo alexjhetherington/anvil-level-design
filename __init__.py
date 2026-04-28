@@ -17,6 +17,7 @@ from . import operators
 from . import panels
 from . import workspace
 from . import hotspot_mapping
+from .texture_browser import properties as texture_browser_properties
 from .core.workspace_check import is_level_design_workspace
 from .operators.gltf_export_extension import glTF2ExportUserExtension
 
@@ -283,6 +284,65 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         default=True,
     )
 
+    # === Texture Browser User Settings ===
+    texture_browser_preview_scale: bpy.props.FloatProperty(
+        name="Texture Browser Icon Size",
+        description="Remembered texture browser thumbnail size",
+        default=50.0,
+        min=0.0,
+        max=100.0,
+        subtype='PERCENTAGE',
+    )
+
+    texture_browser_filters_initialized: bpy.props.BoolProperty(
+        name="Texture Browser Filters Initialized",
+        default=False,
+        options={'HIDDEN'},
+    )
+
+    texture_browser_last_folder_path: bpy.props.StringProperty(
+        name="Texture Browser Last Folder",
+        description="Last folder browsed in the texture browser",
+        subtype='DIR_PATH',
+        options={'HIDDEN'},
+    )
+
+    texture_browser_favorites: bpy.props.CollectionProperty(
+        type=texture_browser_properties.AnvilTextureBrowserFavoriteFolder,
+    )
+
+    texture_browser_active_favorite_index: bpy.props.IntProperty(
+        name="Active Favorite Folder",
+        default=0,
+    )
+
+    texture_browser_collections: bpy.props.CollectionProperty(
+        type=texture_browser_properties.AnvilTextureBrowserCollection,
+    )
+
+    texture_browser_active_collection_index: bpy.props.IntProperty(
+        name="Active Texture Collection",
+        default=0,
+    )
+
+    texture_browser_include_suffixes: bpy.props.CollectionProperty(
+        type=texture_browser_properties.AnvilTextureBrowserSuffixFilter,
+    )
+
+    texture_browser_active_include_index: bpy.props.IntProperty(
+        name="Active Include Suffix",
+        default=0,
+    )
+
+    texture_browser_exclude_suffixes: bpy.props.CollectionProperty(
+        type=texture_browser_properties.AnvilTextureBrowserSuffixFilter,
+    )
+
+    texture_browser_active_exclude_index: bpy.props.IntProperty(
+        name="Active Exclude Suffix",
+        default=0,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -390,16 +450,15 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.ortho_view": "Navigation",
             "leveldesign.ortho_pan": "Navigation",
             "leveldesign.context_menu": REMAPPED_CATEGORY,
-            "leveldesign.backface_select": "Selection",
-            "leveldesign.backface_shortest_path_pick": "Selection",
-            "leveldesign.backface_object_select": "Selection",
+            "leveldesign.visible_select": "Selection",
+            "leveldesign.visible_shortest_path_pick": "Selection",
+            "leveldesign.visible_object_select": "Selection",
             "leveldesign.select_linked": "Selection",
             "leveldesign.select_invalid_uvs": "Selection",
             "leveldesign.face_uv_mode": "UV",
             "leveldesign.face_aligned_project": "UV",
             "leveldesign.align_uv": "UV",
             "leveldesign.fit_to_face": "UV",
-            "leveldesign.force_apply_texture": "UV",
             "leveldesign.apply_image_to_face": "UV",
             "leveldesign.pick_image_from_face": "UV",
             "leveldesign.stretch_apply_image_to_face": "UV",
@@ -412,8 +471,13 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.line_mode_activate": "Tools",
             "leveldesign.box_builder": "Tools",
             "leveldesign.cube_cut": "Tools",
+            "leveldesign.prefab_browser": "Tools",
+            "leveldesign.texture_browser": "Tools",
+            "leveldesign.prefab_rotate_left": "Tools",
+            "leveldesign.prefab_rotate_right": "Tools",
             "leveldesign.context_weld": "Tools",
             "leveldesign.toggle_grid_overlay": "Tools",
+            "leveldesign.cursor_to_grid": "Tools",
             "leveldesign.uv_transform_modal": "UV",
             "leveldesign.snapping_mode_dispatch": "UV",
         }
@@ -468,8 +532,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                             kmi.properties.direction == kmi_addon.properties.direction):
                                             kmi_user = kmi
                                             break
-                                    elif kmi_addon.idname in ("leveldesign.backface_select",
-                                                              "leveldesign.backface_object_select"):
+                                    elif kmi_addon.idname == "leveldesign.visible_select":
                                         # Match on extend + loop properties
                                         props_match = True
                                         for prop_name in ("extend", "loop"):
@@ -479,6 +542,18 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                                     props_match = False
                                                     break
                                         if props_match:
+                                            kmi_user = kmi
+                                            break
+                                    elif kmi_addon.idname == "leveldesign.visible_shortest_path_pick":
+                                        if (hasattr(kmi.properties, "use_fill") and
+                                            hasattr(kmi_addon.properties, "use_fill") and
+                                            kmi.properties.use_fill == kmi_addon.properties.use_fill):
+                                            kmi_user = kmi
+                                            break
+                                    elif kmi_addon.idname == "leveldesign.visible_object_select":
+                                        if (hasattr(kmi.properties, "extend") and
+                                            hasattr(kmi_addon.properties, "extend") and
+                                            kmi.properties.extend == kmi_addon.properties.extend):
                                             kmi_user = kmi
                                             break
                                     else:
@@ -521,7 +596,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             else:
                                 suffix = "Linked"
                             display_name = f"Select Linked ({suffix})"
-                        elif kmi_addon.idname == "leveldesign.backface_select":
+                        elif kmi_addon.idname == "leveldesign.visible_select":
                             extend = getattr(kmi_addon.properties, "extend", False)
                             loop = getattr(kmi_addon.properties, "loop", False)
                             if loop and extend:
@@ -532,10 +607,14 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                                 suffix = "Extend"
                             else:
                                 suffix = "Click"
-                            display_name = f"Select ({suffix})"
-                        elif kmi_addon.idname == "leveldesign.backface_object_select":
+                            display_name = f"Visible Select (Edit Mode) ({suffix})"
+                        elif kmi_addon.idname == "leveldesign.visible_shortest_path_pick":
+                            use_fill = getattr(kmi_addon.properties, "use_fill", False)
+                            suffix = "Filled Shortest Path" if use_fill else "Shortest Path"
+                            display_name = f"Visible Select (Edit Mode) ({suffix})"
+                        elif kmi_addon.idname == "leveldesign.visible_object_select":
                             extend = getattr(kmi_addon.properties, "extend", False)
-                            display_name = f"Object Select ({'Extend' if extend else 'Click'})"
+                            display_name = f"Visible Select (Object Mode) ({'Extend' if extend else 'Click'})"
                         elif kmi_addon.idname == "leveldesign.face_aligned_project":
                             display_name = "Face Aligned Project"
                         elif kmi_addon.idname == "leveldesign.align_uv":
@@ -649,6 +728,7 @@ def register():
     bpy.utils.register_class(LEVELDESIGN_OT_pref_double_pixels)
     bpy.utils.register_class(LEVELDESIGN_OT_pref_halve_pixels)
     bpy.utils.register_class(LEVELDESIGN_OT_set_pref_interpolation)
+    texture_browser_properties.register()
     bpy.utils.register_class(LevelDesignPreferences)
 
     _uv_editor_warning_handle = bpy.types.SpaceImageEditor.draw_handler_add(
@@ -685,6 +765,7 @@ def unregister():
     handlers.unregister()
     properties.unregister()
     bpy.utils.unregister_class(LevelDesignPreferences)
+    texture_browser_properties.unregister()
     bpy.utils.unregister_class(LEVELDESIGN_OT_set_pref_interpolation)
     bpy.utils.unregister_class(LEVELDESIGN_OT_pref_halve_pixels)
     bpy.utils.unregister_class(LEVELDESIGN_OT_pref_double_pixels)

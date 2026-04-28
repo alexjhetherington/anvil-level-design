@@ -13,18 +13,11 @@ from mathutils import Vector
 from . import utils
 from . import snapping
 from . import preview
+from . import view_context
 
 
 # Minimum rectangle size (world units) to prevent degenerate geometry
 MIN_RECTANGLE_SIZE = 0.001
-
-
-class _MousePosition:
-    """Simple container for mouse position, used when re-snapping after grid change."""
-    def __init__(self, x, y, ctrl=False):
-        self.mouse_region_x = x
-        self.mouse_region_y = y
-        self.ctrl = ctrl
 
 
 def _get_undo_redo_keys(context):
@@ -94,6 +87,32 @@ class ModalDrawBase:
         """
         raise NotImplementedError
 
+    def _capture_action_properties(self, context, first_vertex, second_vertex,
+                                   depth, local_x, local_y, local_z):
+        """Store modal-derived action values on operator properties."""
+        pass
+
+    def _run_action(self, context, first_vertex, second_vertex, depth,
+                    local_x, local_y, local_z):
+        """Execute from captured properties when the subclass supports it."""
+        self._capture_action_properties(
+            context, first_vertex, second_vertex, depth, local_x, local_y, local_z
+        )
+
+        if self.__class__.__dict__.get("execute") is not None:
+            self._last_action_result = None
+            self._action_reported = False
+            operator_result = self.execute(context)
+            if self._last_action_result is not None:
+                return self._last_action_result
+            if 'FINISHED' in operator_result:
+                return (True, "Finished")
+            return (False, "Cancelled")
+
+        return self._execute_action(
+            context, first_vertex, second_vertex, depth, local_x, local_y, local_z
+        )
+
     def _get_tool_name(self):
         """Return the display name for header text (e.g. 'Cube Cut', 'Box')."""
         raise NotImplementedError
@@ -132,9 +151,68 @@ class ModalDrawBase:
     def _get_depth_invalid_message(self, depth):
         return None
 
+    def _clear_header_for_target(self, target):
+        if target is None:
+            return
+        try:
+            target.area.header_text_set(None)
+        except ReferenceError:
+            return
+
+    def _set_active_view_target(self, target):
+        previous = getattr(self, "_active_view_target", None)
+        changed = previous is None or not target.matches(previous)
+        if changed:
+            self._clear_header_for_target(previous)
+        self._active_view_target = target
+        return changed
+
+    def _resolve_view_event(self, context, event):
+        target = view_context.view_target_under_mouse(
+            context.window, event.mouse_x, event.mouse_y
+        )
+        if target is None:
+            previous = getattr(self, "_active_view_target", None)
+            if previous is not None and previous.is_live():
+                target = previous
+        if target is None:
+            target = view_context.view_target_for_area(
+                context.window,
+                context.screen,
+                context.area,
+                context.region,
+            )
+        if target is None:
+            return (None, None, False)
+
+        changed = self._set_active_view_target(target)
+        return (target, view_context.view_mouse_event_for_target(event, target), changed)
+
+    def _synthetic_event_for_last_mouse(self, ctrl, shift, alt):
+        target = getattr(self, "_active_view_target", None)
+        last_mouse = getattr(self, "_last_mouse_window_pos", None)
+        if target is None or last_mouse is None:
+            return None
+
+        return view_context.synthetic_mouse_event(
+            last_mouse[0],
+            last_mouse[1],
+            target,
+            ctrl,
+            shift,
+            alt,
+        )
+
     # --- Operator lifecycle ---
 
     def invoke(self, context, event):
+        self._active_view_target = None
+        self._last_mouse_window_pos = None
+        view_target, view_event, _view_changed = self._resolve_view_event(context, event)
+        if view_target is None:
+            self.report({'ERROR'}, "No 3D View available")
+            return {'CANCELLED'}
+
         # Cancel any existing modal draw tool (same as pressing ESC on it)
         prev = ModalDrawBase._active_instance
         if prev is not None:
@@ -173,38 +251,41 @@ class ModalDrawBase:
         self._depth_start_mouse_pos = (0, 0)  # (x, y) for geometric depth calc
         self._invalid_message = None
 
-        # View tracking
-        self._is_2d_view = utils.is_2d_view(context)
-
         # Axis lock (Ctrl held during FIRST_VERTEX to extend face plane infinitely)
         self._axis_lock_normal = None
         self._axis_lock_plane_point = None
 
         # Grid size tracking (for detecting changes)
-        self._last_grid_size = utils.get_grid_size(context)
-        self._last_mouse_region_pos = None  # (x, y) tuple
+        self._last_grid_size = None
 
         # Cache undo/redo key bindings for clean exit
         self._undo_redo_keys = _get_undo_redo_keys(context)
 
-        # Set up preview drawing
-        self._preview = preview.get_preview()
-        self._preview.register_handlers()
-        self._preview.set_state(self.STATE_FIRST_VERTEX)
+        with context.temp_override(**view_target.override_kwargs()):
+            # View tracking
+            self._is_2d_view = utils.is_2d_view(context)
 
-        # Set cursor
-        context.window.cursor_modal_set('CROSSHAIR')
+            # Grid size tracking (for detecting changes)
+            self._last_grid_size = utils.get_grid_size(context)
 
-        # Add modal handler
-        context.window_manager.modal_handler_add(self)
+            # Set up preview drawing
+            self._preview = preview.get_preview()
+            self._preview.register_handlers()
+            self._preview.set_state(self.STATE_FIRST_VERTEX)
 
-        # Header text
-        self._update_header(context)
+            # Set cursor
+            context.window.cursor_modal_set('CROSSHAIR')
 
-        # Show preview immediately at current mouse position
-        self._last_mouse_region_pos = (event.mouse_region_x, event.mouse_region_y)
-        self._handle_mouse_move(context, event)
-        utils.tag_redraw_all_3d_views()
+            # Add modal handler
+            context.window_manager.modal_handler_add(self)
+
+            # Header text
+            self._update_header(context)
+
+            # Show preview immediately at current mouse position
+            self._last_mouse_window_pos = (event.mouse_x, event.mouse_y)
+            self._handle_mouse_move(context, view_event)
+            utils.tag_redraw_all_3d_views()
 
         return {'RUNNING_MODAL'}
 
@@ -218,56 +299,74 @@ class ModalDrawBase:
             self._cleanup(context)
             return {'CANCELLED'}
 
-        # Update 2D view check (user might switch views)
-        self._is_2d_view = utils.is_2d_view(context)
-
-        # Check if grid size changed (user may have custom hotkeys for this)
-        current_grid_size = utils.get_grid_size(context)
-        if current_grid_size != self._last_grid_size:
-            self._last_grid_size = current_grid_size
-            # Re-snap with new grid size using last known mouse position
-            if self._last_mouse_region_pos is not None:
-                ctrl = self._axis_lock_normal is not None
-                fake_event = _MousePosition(*self._last_mouse_region_pos, ctrl=ctrl)
-                self._handle_mouse_move(context, fake_event)
-                utils.tag_redraw_all_3d_views()
-
-        # ESC to cancel
-        if event.type == 'ESC' and event.value == 'PRESS':
+        view_target, view_event, view_changed = self._resolve_view_event(context, event)
+        if view_target is None:
             self._cleanup(context)
             return {'CANCELLED'}
 
-        # Mouse move - update previews
-        if event.type == 'MOUSEMOVE':
-            self._last_mouse_region_pos = (event.mouse_region_x, event.mouse_region_y)
-            self._handle_mouse_move(context, event)
-            utils.tag_redraw_all_3d_views()
-            return {'RUNNING_MODAL'}
+        with context.temp_override(**view_target.override_kwargs()):
+            # Update 2D view check from the viewport currently under the mouse.
+            self._is_2d_view = utils.is_2d_view(context)
 
-        # Left click - advance state
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            result = self._handle_click(context, event)
-            utils.tag_redraw_all_3d_views()
-            return result
+            if view_changed:
+                self._update_header(context)
 
-        # Ctrl press/release during FIRST_VERTEX - update axis lock preview
-        if (event.type in ('LEFT_CTRL', 'RIGHT_CTRL')
-                and self._state == self.STATE_FIRST_VERTEX
-                and not self._is_2d_view
-                and self._last_mouse_region_pos is not None):
-            ctrl = (event.value == 'PRESS')
-            fake_event = _MousePosition(*self._last_mouse_region_pos, ctrl=ctrl)
-            self._handle_mouse_move(context, fake_event)
-            self._update_header(context)
-            utils.tag_redraw_all_3d_views()
-            return {'PASS_THROUGH'}
+            if view_changed and self._state == self.STATE_DEPTH:
+                self._depth_start_mouse_pos = (
+                    view_event.mouse_region_x,
+                    view_event.mouse_region_y,
+                )
 
-        # Undo/redo - exit cleanly (uses cached key bindings)
-        if event.value == 'PRESS':
-            event_key = (event.type, event.ctrl, event.shift, event.alt)
-            if event_key in self._undo_redo_keys:
+            # Check if grid size changed (user may have custom hotkeys for this)
+            current_grid_size = utils.get_grid_size(context)
+            if current_grid_size != self._last_grid_size:
+                self._last_grid_size = current_grid_size
+                # Re-snap with new grid size using last known mouse position
+                if self._last_mouse_window_pos is not None:
+                    ctrl = self._axis_lock_normal is not None
+                    fake_event = self._synthetic_event_for_last_mouse(ctrl, event.shift, event.alt)
+                    if fake_event is not None:
+                        self._handle_mouse_move(context, fake_event)
+                        utils.tag_redraw_all_3d_views()
+
+            # ESC to cancel
+            if event.type == 'ESC' and event.value == 'PRESS':
                 self._cleanup(context)
                 return {'CANCELLED'}
+
+            # Mouse move - update previews
+            if event.type == 'MOUSEMOVE':
+                self._last_mouse_window_pos = (event.mouse_x, event.mouse_y)
+                self._handle_mouse_move(context, view_event)
+                utils.tag_redraw_all_3d_views()
+                return {'RUNNING_MODAL'}
+
+            # Left click - advance state
+            if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+                self._last_mouse_window_pos = (event.mouse_x, event.mouse_y)
+                result = self._handle_click(context, view_event)
+                utils.tag_redraw_all_3d_views()
+                return result
+
+            # Ctrl press/release during FIRST_VERTEX - update axis lock preview
+            if (event.type in ('LEFT_CTRL', 'RIGHT_CTRL')
+                    and self._state == self.STATE_FIRST_VERTEX
+                    and not self._is_2d_view
+                    and self._last_mouse_window_pos is not None):
+                ctrl = (event.value == 'PRESS')
+                fake_event = self._synthetic_event_for_last_mouse(ctrl, event.shift, event.alt)
+                if fake_event is not None:
+                    self._handle_mouse_move(context, fake_event)
+                    self._update_header(context)
+                    utils.tag_redraw_all_3d_views()
+                return {'PASS_THROUGH'}
+
+            # Undo/redo - exit cleanly (uses cached key bindings)
+            if event.value == 'PRESS':
+                event_key = (event.type, event.ctrl, event.shift, event.alt)
+                if event_key in self._undo_redo_keys:
+                    self._cleanup(context)
+                    return {'CANCELLED'}
 
         # Pass through all other events (navigation, user hotkeys, etc.)
         return {'PASS_THROUGH'}
@@ -630,7 +729,7 @@ class ModalDrawBase:
             self._update_header(context)
             return {'RUNNING_MODAL'}
 
-        result = self._execute_action(
+        result = self._run_action(
             context,
             self._first_vertex,
             self._second_vertex,
@@ -641,10 +740,11 @@ class ModalDrawBase:
         )
         success, message = result[0], result[1]
 
-        if success:
-            self.report({'INFO'}, message)
-        else:
-            self.report({'ERROR'}, message)
+        if not getattr(self, "_action_reported", False):
+            if success:
+                self.report({'INFO'}, message)
+            else:
+                self.report({'ERROR'}, message)
 
         self._cleanup(context)
         return {'FINISHED'}
@@ -661,10 +761,23 @@ class ModalDrawBase:
         utils.tag_redraw_all_3d_views()
 
         # Restore cursor
-        context.window.cursor_modal_restore()
+        target = getattr(self, "_active_view_target", None)
+        try:
+            if target is not None:
+                target.window.cursor_modal_restore()
+            else:
+                context.window.cursor_modal_restore()
+        except ReferenceError:
+            context.window.cursor_modal_restore()
 
         # Clear header
-        context.area.header_text_set(None)
+        self._clear_header_for_target(target)
+        try:
+            if context.area is not None:
+                context.area.header_text_set(None)
+        except ReferenceError:
+            pass
+        self._active_view_target = None
 
     def _get_rectangle_invalid_message_for_vertices(self, first_vertex, second_vertex):
         diff = second_vertex - first_vertex
@@ -702,4 +815,5 @@ class ModalDrawBase:
         else:
             text = f"{tool_name} | ESC to cancel"
 
-        context.area.header_text_set(text)
+        if context.area is not None:
+            context.area.header_text_set(text)

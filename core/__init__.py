@@ -42,7 +42,8 @@ from .materials import (
     is_vertex_colors_enabled,
     remove_unused_nodes,
     get_default_material_settings,
-    get_selected_image_path,
+    consolidate_duplicate_materials,
+    reset_duplicate_material_consolidation,
 )
 from .uv_projection import (
     get_face_local_axes,

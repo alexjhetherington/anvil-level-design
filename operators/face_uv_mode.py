@@ -261,6 +261,45 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
     bl_label = "Face UV Mode"
     bl_options = {'REGISTER', 'UNDO'}
 
+    action_face_index: bpy.props.IntProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_edge_index: bpy.props.IntProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_texture_edge: bpy.props.EnumProperty(
+        items=[
+            ('BOTTOM', "Bottom", ""),
+            ('RIGHT', "Right", ""),
+            ('TOP', "Top", ""),
+            ('LEFT', "Left", ""),
+        ],
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_fit_mode: bpy.props.EnumProperty(
+        items=[
+            ('NONE', "None", ""),
+            ('VERTICAL', "Vertical", ""),
+            ('HORIZONTAL', "Horizontal", ""),
+        ],
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_scale_u: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_scale_v: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_rotation: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_offset_x: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_offset_y: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+
     @classmethod
     def poll(cls, context):
         return is_level_design_workspace() and context.object and context.object.type == 'MESH' and context.mode == 'EDIT_MESH'
@@ -706,6 +745,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             # Clear pre-fit scales on confirm (they're now the real scales)
             self.pre_fit_scale_u = None
             self.pre_fit_scale_v = None
+            self._capture_action_properties(context)
             self._remove_draw_handler()
             context.workspace.status_text_set(None)
             context.area.tag_redraw()
@@ -720,6 +760,23 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
+
+    def _capture_action_properties(self, context):
+        props = context.scene.level_design_props
+        self.action_face_index = self.face_index
+        self.action_edge_index = self.last_edge_index
+        self.action_texture_edge = self.texture_edge
+        if self.fit_mode == 'vertical':
+            self.action_fit_mode = 'VERTICAL'
+        elif self.fit_mode == 'horizontal':
+            self.action_fit_mode = 'HORIZONTAL'
+        else:
+            self.action_fit_mode = 'NONE'
+        self.action_scale_u = props.texture_scale_u
+        self.action_scale_v = props.texture_scale_v
+        self.action_rotation = props.texture_rotation
+        self.action_offset_x = props.texture_offset_x
+        self.action_offset_y = props.texture_offset_y
 
 
 class LEVELDESIGN_OT_snapping_mode_dispatch(Operator):

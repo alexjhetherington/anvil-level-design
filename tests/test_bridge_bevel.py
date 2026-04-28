@@ -11,6 +11,8 @@ from .helpers import create_vertical_plane, _get_context_override
 
 def _select_edges_by_filter(bm, me, edge_filter):
     """Select all edges that satisfy edge_filter(edge)."""
+    with bpy.context.temp_override(**_get_context_override()):
+        bpy.ops.mesh.select_mode(type='EDGE')
     bm.select_mode = {'EDGE'}
     for v in bm.verts:
         v.select_set(False)
@@ -627,10 +629,10 @@ class BridgeBevelCorridorTest(AnvilTestCase):
         window = bpy.context.window or bpy.context.window_manager.windows[0]
         mx, my = self._get_3d_viewport_center()
 
-        # Ctrl+B to start bevel modal
-        window.event_simulate(type='B', value='PRESS', x=mx, y=my, ctrl=True)
-        yield
-        window.event_simulate(type='B', value='RELEASE', x=mx, y=my)
+        # Start the same modal operator as Ctrl+B without relying on raw
+        # key dispatch from the timer-driven test runner.
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            bpy.ops.mesh.bevel('INVOKE_DEFAULT', affect='EDGES')
         yield
 
         # Mouse move to kick the modal into tracking
@@ -760,10 +762,10 @@ class BridgeBevelCorridorTest(AnvilTestCase):
         window = bpy.context.window or bpy.context.window_manager.windows[0]
         mx, my = self._get_3d_viewport_center()
 
-        # Ctrl+B to start bevel modal
-        window.event_simulate(type='B', value='PRESS', x=mx, y=my, ctrl=True)
-        yield
-        window.event_simulate(type='B', value='RELEASE', x=mx, y=my)
+        # Start the same modal operator as Ctrl+B without relying on raw
+        # key dispatch from the timer-driven test runner.
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            bpy.ops.mesh.bevel('INVOKE_DEFAULT', affect='EDGES')
         yield
 
         # Mouse move to kick the modal into tracking
@@ -941,9 +943,8 @@ class BridgeBevelCorridorTest(AnvilTestCase):
         window = bpy.context.window or bpy.context.window_manager.windows[0]
         mx, my = self._get_3d_viewport_center()
 
-        window.event_simulate(type='B', value='PRESS', x=mx, y=my, ctrl=True)
-        yield
-        window.event_simulate(type='B', value='RELEASE', x=mx, y=my)
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            bpy.ops.mesh.bevel('INVOKE_DEFAULT', affect='EDGES')
         yield
         window.event_simulate(type='MOUSEMOVE', value='NOTHING', x=mx, y=my)
         yield

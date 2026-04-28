@@ -769,7 +769,6 @@ class CrossObjectTextureUndoTest(AnvilTestCase):
 
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='EDIT')
-        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
         bm_source = bmesh.from_edit_mesh(source_mesh)
         _make_vertical_face(bm_source, 0)
         _make_vertical_face(bm_source, 2)
@@ -936,6 +935,10 @@ class CrossObjectTextureUndoTest(AnvilTestCase):
         apply_uv_to_face(bm_source.faces[0], uv_source, 4.0, 2.0, 15.0,
                          0.1, 0.2, mat_source, ppm, source_mesh)
         bmesh.update_edit_mesh(source_mesh)
+        self.refresh_face_cache()
+        source_t = derive_transform_from_uvs(
+            bm_source.faces[0], uv_source, ppm, source_mesh)
+        self.assertAlmostEqual(source_t['scale_u'], 4.0, places=3)
         with bpy.context.temp_override(**undo_ctx):
             bpy.ops.ed.undo_push(message="After intervening source UV edit")
 
@@ -1137,8 +1140,15 @@ class CrossObjectTextureUndoTest(AnvilTestCase):
         apply_uv_to_face(bm_source.faces[0], uv_source, 4.0, 2.0, 15.0,
                          0.1, 0.2, mat_source, ppm, source_mesh)
         bmesh.update_edit_mesh(source_mesh)
+        self.refresh_face_cache()
+        source_t = derive_transform_from_uvs(
+            bm_source.faces[0], uv_source, ppm, source_mesh)
+        self.assertAlmostEqual(source_t['scale_u'], 4.0, places=3)
         with bpy.context.temp_override(**undo_ctx):
             bpy.ops.ed.undo_push(message="After intervening source UV edit")
+        source_t = derive_transform_from_uvs(
+            bm_source.faces[0], uv_source, ppm, source_mesh)
+        self.assertAlmostEqual(source_t['scale_u'], 4.0, places=3)
 
         face0 = _get_object_face_transform(target_obj, 0)
         face1 = _get_object_face_transform(target_obj, 1)
@@ -1522,6 +1532,33 @@ class UVTransformApplyTest(AnvilTestCase):
         face_data_cache.clear()
         with bpy.context.temp_override(**ctx):
             bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_apply_to_other_obj_when_target_is_library_object_skips_cross_object_paint(self):
+        """Cross-object dispatch must not paint library objects."""
+        class _FakeOp:
+            pass
+
+        class _FakeLibraryMesh:
+            library = object()
+
+        class _FakeLibraryObject:
+            library = None
+            data = _FakeLibraryMesh()
+
+        def fail_if_called(source_face, target_face, uv_layer, ppm, me, obj_matrix):
+            self.fail("UV transfer should not run for a library target")
+
+        op = _FakeOp()
+        op._paint_visited_other = set()
+        op._other_bmeshes = {}
+
+        processed = _apply_to_other_obj(
+            op, None, None, _FakeLibraryObject(), 0, fail_if_called
+        )
+
+        self.assertFalse(processed)
+        self.assertEqual(op._paint_visited_other, set())
+        self.assertEqual(op._other_bmeshes, {})
 
     def test_closest_target_world_picks_closer_other_obj_despite_source_scale(self):
         """Cross-object selection compares world distances.

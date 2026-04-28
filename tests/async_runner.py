@@ -209,7 +209,7 @@ def run_suite_async(suite, verbosity, on_complete):
             except Exception:
                 pass
             state["index"] += 1
-            state["phase"] = "setup_class"
+            state["phase"] = "settle"
             return DEFAULT_TICK
 
         except Exception:
@@ -223,7 +223,7 @@ def run_suite_async(suite, verbosity, on_complete):
             except Exception:
                 pass
             state["index"] += 1
-            state["phase"] = "setup_class"
+            state["phase"] = "settle"
             return DEFAULT_TICK
 
         return DEFAULT_TICK

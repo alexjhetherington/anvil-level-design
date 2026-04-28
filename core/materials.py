@@ -1,4 +1,3 @@
-import os
 import re
 
 import bpy
@@ -8,6 +7,77 @@ from .logging import debug_log
 
 _BLENDER_SUFFIX = re.compile(r'\.\d{3,}$')
 _UNASSIGNED_MATERIAL_NAME = "ANVIL_Unassigned"
+_last_material_count = 0
+
+
+def reset_duplicate_material_consolidation():
+    """Reset material dedupe state after file lifecycle changes."""
+    global _last_material_count
+    _last_material_count = 0
+
+
+def consolidate_duplicate_materials():
+    """Find and merge duplicate IMG_ materials created by copy/paste.
+
+    When objects are duplicated, Blender creates copies of materials with
+    suffixes like .001, .002, etc. This function finds these duplicates
+    and consolidates them to the base material name.
+    """
+    global _last_material_count
+
+    current_count = len(bpy.data.materials)
+
+    if current_count <= _last_material_count:
+        _last_material_count = current_count
+        return
+
+    _last_material_count = current_count
+
+    duplicate_pattern = re.compile(r'^(IMG_.+)\.(\d{3,})$')
+
+    material_groups = {}
+
+    for mat in bpy.data.materials:
+        match = duplicate_pattern.match(mat.name)
+        if match:
+            base_name = match.group(1)
+            suffix_num = int(match.group(2))
+            if base_name not in material_groups:
+                material_groups[base_name] = []
+            material_groups[base_name].append((suffix_num, mat))
+
+    if not material_groups:
+        return
+
+    for base_name, duplicates in material_groups.items():
+        if base_name not in bpy.data.materials:
+            duplicates.sort(key=lambda x: x[0])
+            duplicates[0][1].name = base_name
+
+    replacements = {}
+    for base_name, duplicates in material_groups.items():
+        canonical = bpy.data.materials[base_name]
+        for suffix_num, mat in duplicates:
+            if mat != canonical:
+                replacements[mat] = canonical
+
+    if not replacements:
+        return
+
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or not obj.data:
+            continue
+
+        materials = obj.data.materials
+        for i, mat in enumerate(materials):
+            if mat in replacements:
+                materials[i] = replacements[mat]
+
+    for dup_mat in replacements.keys():
+        if dup_mat.users == 0:
+            bpy.data.materials.remove(dup_mat)
+
+    _last_material_count = len(bpy.data.materials)
 
 
 def get_image_from_material(mat):
@@ -52,27 +122,47 @@ def get_texture_dimensions_from_material(mat, ppm, default_size=128):
     return (tex_width / ppm, tex_height / ppm)
 
 
-def find_material_with_image(image):
-    """Return existing material that uses this image, or None"""
-    expected_name = f"IMG_{image.name}"
-    mat = bpy.data.materials.get(expected_name)
-    if mat:
-        debug_log(f"[FindMaterial] image={image.name!r} -> lookup={expected_name!r} -> FOUND")
-        return mat
-    # HACK: Blender appends .001/.002/etc. to image datablock names when there
-    # are naming conflicts. This happens when: (1) the same filename exists in
-    # different directories, (2) file append/link brings in a same-named image,
-    # or (3) undo/redo recreates datablocks. The material was created under the
-    # original unsuffixed name (IMG_foo.png), but the image it references may
-    # now be named foo.png.001. Strip the suffix to find the existing material.
-    base_name = _BLENDER_SUFFIX.sub('', image.name)
-    if base_name != image.name:
-        fallback_name = f"IMG_{base_name}"
-        mat = bpy.data.materials.get(fallback_name)
-        if mat:
-            debug_log(f"[FindMaterial] image={image.name!r} -> fallback={fallback_name!r} -> FOUND")
+def find_local_material_named(material_name):
+    """Return the local material with this exact name, or None."""
+    for mat in bpy.data.materials:
+        if mat.name == material_name and mat.library is None:
             return mat
-    debug_log(f"[FindMaterial] image={image.name!r} -> NOT FOUND")
+    return None
+
+
+def _material_name_for_image(image):
+    # Blender may suffix the image datablock name after conflicts or undo/redo.
+    # The material name should stay canonical, e.g. foo.png.001 -> IMG_foo.png.
+    image_name = _BLENDER_SUFFIX.sub('', image.name)
+    return f"IMG_{image_name}"
+
+
+def ensure_material_slot(mesh, mat):
+    """Ensure this exact material datablock is in the mesh slots."""
+    for index, slot_mat in enumerate(mesh.materials):
+        if slot_mat == mat:
+            return index
+
+    mesh.materials.append(mat)
+    return len(mesh.materials) - 1
+
+
+def find_material_with_image(image):
+    """Return the existing local material named for this image, or None."""
+    if image is None:
+        return None
+
+    material_name = _material_name_for_image(image)
+    mat = find_local_material_named(material_name)
+    if mat:
+        debug_log(
+            f"[FindMaterial] image={image.name!r} -> local material {mat.name!r}"
+        )
+        return mat
+
+    debug_log(
+        f"[FindMaterial] image={image.name!r} -> no local material named {material_name!r}"
+    )
     return None
 
 
@@ -176,10 +266,11 @@ def get_default_material_settings():
 
 def create_material_with_image(image):
     """Create a new material using the given image texture with scene default settings"""
-    debug_log(f"[CreateMaterial] creating IMG_{image.name} for image={image.name!r}")
+    material_name = _material_name_for_image(image)
+    debug_log(f"[CreateMaterial] creating {material_name} for image={image.name!r}")
     defaults = get_default_material_settings()
 
-    mat = bpy.data.materials.new(name=f"IMG_{image.name}")
+    mat = bpy.data.materials.new(name=material_name)
     mat.use_nodes = True
     mat.use_backface_culling = True
 
@@ -236,40 +327,3 @@ def create_material_with_image(image):
         nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
 
     return mat
-
-
-def _get_selected_file_path_from_area(area):
-    if area.type != 'FILE_BROWSER':
-        return None
-
-    space = area.spaces.active
-    params = space.params
-    if not params or not params.filename:
-        return None
-
-    directory = params.directory.decode('utf-8')
-    filepath = bpy.path.abspath(directory + params.filename)
-    if not os.path.isfile(filepath):
-        debug_log(f"[FileBrowser] Skipping non-file selection: {filepath}")
-        return None
-
-    return filepath
-
-
-def get_selected_image_path(screen, active_area):
-    """Return absolute filepath of selected image in File Browser, or None"""
-    if not screen:
-        return None
-
-    areas = []
-    if active_area and active_area.type == 'FILE_BROWSER':
-        areas.append(active_area)
-    for area in screen.areas:
-        if area not in areas:
-            areas.append(area)
-
-    for area in areas:
-        filepath = _get_selected_file_path_from_area(area)
-        if filepath:
-            return filepath
-    return None

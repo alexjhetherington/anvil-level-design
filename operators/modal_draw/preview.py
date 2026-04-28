@@ -9,7 +9,10 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
+from . import measurement_labels
 from . import utils
+from ...core.workspace_check import is_level_design_workspace
+from .prefab_ghost import draw_prefab_albedo_ghost
 
 
 # Colors for visual feedback
@@ -62,14 +65,23 @@ class ModalDrawPreview:
         self._line_end = None          # Current line end point
         self._candidate_valid = True   # Whether current candidate can be confirmed
 
+        # Prefab placement ghost data
+        self._prefab_ghost = None
+        self._ghost_matrix = None
+
     def register_handlers(self):
         """Register draw handlers for all 3D view spaces."""
         self.unregister_handlers()
 
-        # Register for POST_VIEW (3D drawing)
+        # Register preview wire drawing and screen-space measurement labels.
         self._handlers.append(
             bpy.types.SpaceView3D.draw_handler_add(
                 self._draw_3d, (), 'WINDOW', 'POST_VIEW'
+            )
+        )
+        self._handlers.append(
+            bpy.types.SpaceView3D.draw_handler_add(
+                self._draw_measurement_labels, (), 'WINDOW', 'POST_PIXEL'
             )
         )
 
@@ -119,6 +131,14 @@ class ModalDrawPreview:
         """Set whether the current preview candidate is valid."""
         self._candidate_valid = valid
 
+    def set_prefab_ghost(self, prefab_ghost):
+        """Set local-space albedo data for the prefab placement ghost."""
+        self._prefab_ghost = prefab_ghost
+
+    def update_prefab_ghost_matrix(self, matrix):
+        """Set the world transform for the prefab placement ghost."""
+        self._ghost_matrix = matrix
+
     def clear_face_grid(self):
         """Clear the face grid overlay data."""
         self._face_plane_point = None
@@ -159,9 +179,13 @@ class ModalDrawPreview:
         self._line_mode = False
         self._line_end = None
         self._candidate_valid = True
+        self._prefab_ghost = None
+        self._ghost_matrix = None
 
     def _draw_3d(self):
         """Main 3D drawing callback."""
+        if not is_level_design_workspace():
+            return
         if self._state == 'NONE':
             return
 
@@ -173,6 +197,7 @@ class ModalDrawPreview:
 
         try:
             if self._state == 'FIRST_VERTEX':
+                self._draw_prefab_ghost()
                 self._draw_face_grid()
                 self._draw_snap_point()
             elif self._state == 'LINE_END':
@@ -189,6 +214,35 @@ class ModalDrawPreview:
             gpu.state.depth_test_set('NONE')
             gpu.state.depth_mask_set(True)
             gpu.state.line_width_set(1.0)
+
+    def _draw_measurement_labels(self):
+        """Draw edge-length labels for preview geometry when Blender's overlay is enabled."""
+        if not is_level_design_workspace():
+            return
+        if self._state == 'NONE':
+            return
+
+        segments = self._get_measurement_segments()
+        if not segments:
+            return
+
+        context = bpy.context
+        scene = context.scene
+        unit_settings = scene.unit_settings if scene is not None else None
+        theme_3d = None
+        try:
+            theme_3d = context.preferences.themes[0].view_3d
+        except Exception:
+            pass
+
+        measurement_labels.draw_measurement_segments(
+            context.region,
+            context.region_data,
+            context.space_data,
+            unit_settings,
+            theme_3d,
+            segments
+        )
 
     def _draw_snap_point(self):
         """Draw the snap preview cross."""
@@ -478,6 +532,43 @@ class ModalDrawPreview:
         edges = utils.get_cuboid_edges()
         self._draw_edges(vertices, edges, self._get_candidate_color(COLOR_CUBOID))
 
+    def _get_measurement_segments(self):
+        """Return world-space segments to label for the active preview shape."""
+        if self._state == 'LINE_END':
+            if self._first_vertex is None or self._line_end is None:
+                return []
+
+            return [(self._first_vertex, self._line_end, None)]
+
+        if self._state == 'SECOND_VERTEX':
+            if self._first_vertex is None or self._second_vertex is None:
+                return []
+            if self._local_x is None or self._local_y is None:
+                return []
+
+            corners = self._get_rectangle_corners(self._first_vertex, self._second_vertex)
+            return measurement_labels.segments_from_loop(corners)
+
+        if self._state == 'DEPTH':
+            if self._first_vertex is None or self._second_vertex is None:
+                return []
+            if self._local_x is None or self._local_y is None or self._local_z is None:
+                return []
+
+            vertices = utils.build_cuboid_vertices(
+                self._first_vertex,
+                self._second_vertex,
+                self._depth,
+                self._local_x,
+                self._local_y,
+                self._local_z
+            )
+            return measurement_labels.segments_from_indexed_vertices(
+                vertices, utils.get_cuboid_edges()
+            )
+
+        return []
+
     def _get_candidate_color(self, valid_color):
         """Return the active color for the current candidate validity."""
         if self._candidate_valid:
@@ -533,6 +624,10 @@ class ModalDrawPreview:
                 batch.draw(shader)
             except Exception:
                 pass  # Silent fail if drawing is not possible
+
+    def _draw_prefab_ghost(self):
+        """Draw an albedo ghost for prefab placement."""
+        draw_prefab_albedo_ghost(self._prefab_ghost, self._ghost_matrix)
 
     def _draw_edges(self, vertices, edges, color):
         """Draw edges of a shape."""

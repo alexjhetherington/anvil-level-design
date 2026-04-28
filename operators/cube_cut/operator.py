@@ -5,6 +5,8 @@ Thin subclass of ModalDrawBase that executes cube cut geometry.
 """
 
 import bpy
+from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty
+from mathutils import Vector
 
 from . import geometry
 from ..modal_draw.base_operator import ModalDrawBase, MIN_RECTANGLE_SIZE
@@ -17,6 +19,33 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
     bl_idname = "leveldesign.cube_cut"
     bl_label = "Cube Cut"
     bl_options = {'REGISTER', 'UNDO'}
+
+    action_first_vertex: FloatVectorProperty(
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_second_vertex: FloatVectorProperty(
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_depth: FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_local_x: FloatVectorProperty(
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_local_y: FloatVectorProperty(
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_local_z: FloatVectorProperty(
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    action_ortho_infinite_cut: BoolProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
 
     @classmethod
     def poll(cls, context):
@@ -51,7 +80,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
         self._second_vertex = self._second_vertex + offset
         self._depth = 10000
 
-        result = self._execute_action(
+        result = self._run_action(
             context,
             self._first_vertex,
             self._second_vertex,
@@ -62,10 +91,11 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
         )
         success, message = result[0], result[1]
 
-        if success:
-            self.report({'INFO'}, message)
-        else:
-            self.report({'ERROR'}, message)
+        if not getattr(self, "_action_reported", False):
+            if success:
+                self.report({'INFO'}, message)
+            else:
+                self.report({'ERROR'}, message)
 
         self._cleanup(context)
         return {'FINISHED'}
@@ -83,6 +113,7 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
                         local_x, local_y, local_z):
+        # The first clicked point becomes the cut pivot.
         # Snapshot coplanar faces BEFORE the cut modifies geometry
         from mathutils import Vector
         obj = context.active_object
@@ -129,6 +160,39 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
             )
 
         return result
+
+    def _capture_action_properties(self, context, first_vertex, second_vertex,
+                                   depth, local_x, local_y, local_z):
+        self.action_first_vertex = first_vertex
+        self.action_second_vertex = second_vertex
+        self.action_depth = depth
+        self.action_local_x = local_x
+        self.action_local_y = local_y
+        self.action_local_z = local_z
+        self.action_ortho_infinite_cut = self._is_2d_view
+
+    def execute(self, context):
+        first_vertex = Vector(self.action_first_vertex)
+        second_vertex = Vector(self.action_second_vertex)
+        local_x = Vector(self.action_local_x)
+        local_y = Vector(self.action_local_y)
+        local_z = Vector(self.action_local_z)
+
+        result = self._execute_action(
+            context, first_vertex, second_vertex, self.action_depth,
+            local_x, local_y, local_z
+        )
+        self._last_action_result = result
+
+        success, message = result[0], result[1]
+        if success:
+            self.report({'INFO'}, message)
+            self._action_reported = True
+            return {'FINISHED'}
+
+        self.report({'ERROR'}, message)
+        self._action_reported = True
+        return {'CANCELLED'}
 
     def _get_tool_name(self):
         return "Cube Cut"
