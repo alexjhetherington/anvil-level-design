@@ -226,6 +226,12 @@ Hold ctrl to lock the axis, allowing you to move the cursor off a given face whi
 
 After a cube cut, WELD will invert the cube.
 
+#### Knife Cut
+
+Press K in edit mode to enter knife cut mode. Click on mesh faces to place cut points snapped to the Anvil grid. Press Enter, Space, or Right Click to confirm the cut. Press Escape to cancel.
+
+Hold Shift to place points off-grid on the surface. Hold Alt to snap to the closest vertex (including previously placed cut points).
+
 ### Camera and Viewport Tools
 
 Hotkeys are intended to be blender default.
