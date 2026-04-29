@@ -226,6 +226,10 @@ Hold ctrl to lock the axis, allowing you to move the cursor off a given face whi
 
 After a cube cut, WELD will invert the cube.
 
+#### 3D Cursor to Grid
+
+Press Shift-X (or click the cursor icon next to the grid size display) to enter 3D Cursor to Grid mode. Click to place Blender's 3D cursor snapped to the Anvil grid. Hold Shift to place the cursor off-grid on the surface. Hold Ctrl to lock the grid plane, allowing you to move the cursor into the air while keeping it on the same virtual grid plane.
+
 ### Camera and Viewport Tools
 
 Hotkeys are intended to be blender default.

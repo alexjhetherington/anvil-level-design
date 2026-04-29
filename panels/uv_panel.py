@@ -67,6 +67,11 @@ class LEVELDESIGN_PT_status_panel(Panel):
             icon=overlay_icon,
             emboss=False,
         )
+        row.operator(
+            "leveldesign.cursor_to_grid",
+            text="",
+            icon='PIVOT_CURSOR',
+        )
 
         from ..operators.weld import get_weld_display_name
         weld_mode = props.weld_mode
