@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.6
+- Show pixel size next to grid size in panel @gulagkulak
+
 # 1.6.5
 - Applying textures of different size from the file browser no longer resets scale
 
