@@ -52,13 +52,20 @@ class LEVELDESIGN_PT_status_panel(Panel):
         snap_icon = get_snap_mode_icon(context.tool_settings)
         box = layout.box()
         row = box.row()
+
+        # Compute pixel size for the current grid scale
+        ppm = props.pixels_per_meter
+        grid_px = anvil_scale * ppm
+        # Format as integer if whole number
+        px_str = f"{int(grid_px)}px" if grid_px == int(grid_px) else f"{grid_px:.1f}px"
+
         if label:
             row.label(
-                text=f"Grid Size: {anvil_scale}  ({label})  [ / ]", icon=snap_icon
+                text=f"Grid Size: {anvil_scale}  ({px_str})  ({label})  [ / ]", icon=snap_icon
             )
         else:
             row.label(
-                text=f"Grid Size: {anvil_scale}  [ / ]", icon=snap_icon
+                text=f"Grid Size: {anvil_scale}  ({px_str})  [ / ]", icon=snap_icon
             )
         overlay_icon = 'HIDE_OFF' if props.show_grid_overlay else 'HIDE_ON'
         row.operator(
