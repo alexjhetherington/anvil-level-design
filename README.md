@@ -75,6 +75,7 @@ Ctrl-Alt Left mouse applies a UV without changing the material. Ctrl-Alt Right m
 
 Manual UV adjustments are possible via the Anvil LD panel:
 * Scale, Rotation, and Offset can be manually set. At 1 scale, the pixels per meter setting controls how large materials appear in the level
+* Offset can be randomised using the randomise buttons by the Offset fields. The icon is a 'refresh' icon because the selection is limited :)
 * UV shapes that do not match the 3d face are not strongly support but:
 * When UV lock is turned on, adjusting a face will cause the applied material to warp along with the face
 * When UV lock is turned off, adjust a face will not affect the material in world space e.g. when extending a wall, the applied wall material will remain natural looking (bricks won't stretch)

@@ -74,6 +74,11 @@ def mark_multi_face_set_offset():
     _multi_face_unset_offset = False
 
 
+def mark_multi_face_unset_offset():
+    global _multi_face_unset_offset
+    _multi_face_unset_offset = True
+
+
 def get_last_edit_object_name():
     return _last_edit_object_name
 

@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.7
+- Add randomise offsets button
+
 # 1.6.6
 - Show pixel size next to grid size in panel @gulagkulak
 

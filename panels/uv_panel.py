@@ -367,7 +367,19 @@ class LEVELDESIGN_PT_uv_settings_panel(Panel):
         off_row = col.row(align=True)
         off_row.alert = multi_face and is_multi_face_unset_offset()
         off_row.prop(props, "texture_offset_x")
+        op = off_row.operator(
+            "leveldesign.randomize_uv_offset",
+            text="",
+            icon='FILE_REFRESH',
+        )
+        op.axis = 'X'
         off_row.prop(props, "texture_offset_y")
+        op = off_row.operator(
+            "leveldesign.randomize_uv_offset",
+            text="",
+            icon='FILE_REFRESH',
+        )
+        op.axis = 'Y'
 
 
 class LEVELDESIGN_PT_hotspotting_panel(Panel):
