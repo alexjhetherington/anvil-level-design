@@ -21,6 +21,7 @@ from . import overlap_check
 from . import grid_overlay
 from . import fixed_hotspot_overlay
 from . import uv_transform_modal
+from . import cursor_to_grid
 
 
 def register():
@@ -47,9 +48,11 @@ def register():
     grid_overlay.register()
     fixed_hotspot_overlay.register()
     uv_transform_modal.register()
+    cursor_to_grid.register()
 
 
 def unregister():
+    cursor_to_grid.unregister()
     uv_transform_modal.unregister()
     fixed_hotspot_overlay.unregister()
     grid_overlay.unregister()
