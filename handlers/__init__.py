@@ -19,7 +19,6 @@ from .face_cache import (  # noqa: F401
     mark_multi_face_set_scale,
     mark_multi_face_set_rotation,
     mark_multi_face_set_offset,
-    mark_multi_face_unset_offset,
     get_all_selected_hotspot,
     get_any_selected_hotspot,
     get_any_selected_fixed_hotspot,
