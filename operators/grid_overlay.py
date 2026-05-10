@@ -416,6 +416,11 @@ class LEVELDESIGN_OT_toggle_grid_overlay(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.level_design_props
         props.show_grid_overlay = not props.show_grid_overlay
+        print(
+            "Anvil Level Design: Grid overlay toggled "
+            f"enabled={props.show_grid_overlay}",
+            flush=True,
+        )
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()

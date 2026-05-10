@@ -68,8 +68,22 @@ class APIAvailabilityTest(AnvilTestCase):
         # ghost texture preview to match the material's interpolation.
         if not hasattr(gpu.types.GPUTexture, "filter_mode"):
             missing.append("gpu.types.GPUTexture.filter_mode")
+        # GPU platform fields used by Eevee crash diagnostics.
+        for fn_name in ("vendor_get", "renderer_get", "version_get"):
+            if not hasattr(gpu.platform, fn_name):
+                missing.append(f"gpu.platform.{fn_name}")
 
         self.assertEqual(
             missing, [],
             f"Missing GPU API symbols: {', '.join(missing)}"
+        )
+
+    def test_all_required_bpy_utility_apis_exist(self):
+        missing = []
+        if not hasattr(bpy.utils, "script_paths"):
+            missing.append("bpy.utils.script_paths")
+
+        self.assertEqual(
+            missing, [],
+            f"Missing bpy utility API symbols: {', '.join(missing)}"
         )

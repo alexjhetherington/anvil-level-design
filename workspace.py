@@ -2,6 +2,7 @@ import os
 
 import bpy
 
+from .core.diagnostics import print_eevee_crash_diagnostics
 from .core.workspace_check import LEVEL_DESIGN_WORKSPACE_NAME, HOTSPOT_MAPPING_WORKSPACE_NAME
 
 
@@ -57,6 +58,11 @@ def create_level_design_workspace():
         return False
 
     filepath = _get_workspaces_blend_path()
+    print(
+        "Anvil Level Design: Appending Level Design workspace "
+        f"from {filepath!r}",
+        flush=True,
+    )
     with bpy.data.libraries.load(filepath) as (data_from, data_to):
         data_to.workspaces = [LEVEL_DESIGN_WORKSPACE_NAME]
 
@@ -72,6 +78,11 @@ def create_hotspot_mapping_workspace():
         return False
 
     filepath = _get_workspaces_blend_path()
+    print(
+        "Anvil Level Design: Appending Hotspot Mapping workspace "
+        f"from {filepath!r}",
+        flush=True,
+    )
     with bpy.data.libraries.load(filepath) as (data_from, data_to):
         data_to.workspaces = [HOTSPOT_MAPPING_WORKSPACE_NAME]
 
@@ -106,11 +117,14 @@ class LEVELDESIGN_OT_create_hotspot_mapping_workspace(bpy.types.Operator):
 
 def setup_addon_workspaces():
     """Create addon workspaces and configure scene settings for new files."""
+    print_eevee_crash_diagnostics("before workspace setup", True)
     if _specialized_template_active:
+        print("Anvil Level Design: Workspace setup skipped for specialized template", flush=True)
         return
     create_hotspot_mapping_workspace()
     create_level_design_workspace()
     bpy.ops.workspace.reorder_to_front()
+    print_eevee_crash_diagnostics("after workspace append/reorder", False)
 
     # Configure scene settings
     prefs = bpy.context.preferences.addons.get(__package__)

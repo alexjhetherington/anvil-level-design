@@ -554,6 +554,14 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
 def register():
     global _version_warning_handle
 
+    version = ".".join(str(v) for v in bl_info["version"])
+    blender_version = ".".join(str(v) for v in bpy.app.version[:3])
+    print(
+        "Anvil Level Design: Registering "
+        f"addon_version={version} blender={blender_version} "
+        f"package={__package__!r}",
+        flush=True,
+    )
     print("Anvil Level Design: Debug logging is DISABLED (toggle in Anvil Settings > Debug)", flush=True)
 
     if not _VERSION_OK:
