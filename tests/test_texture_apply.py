@@ -2,6 +2,7 @@ import math
 
 import bmesh
 import bpy
+from bpy.types import Operator
 from mathutils import Vector
 
 from ..core.uv_projection import derive_transform_from_uvs
@@ -12,6 +13,7 @@ from ..core.materials import find_material_with_image, create_material_with_imag
 from ..operators.texture_apply import (
     set_uv_from_other_face, stretch_uv_from_other_face,
     _closest_target_world, _apply_to_other_obj, _dispatch_set_uv_from_other_face,
+    _flush_other_bmeshes,
 )
 from ..core.face_id import get_face_id_layer
 from mathutils.bvhtree import BVHTree
@@ -33,6 +35,68 @@ def _get_material():
     if not mat:
         mat = create_material_with_image(image)
     return mat
+
+
+def _get_undo_context():
+    """Build a context override for edit-mode undo."""
+    window = bpy.context.window or bpy.context.window_manager.windows[0]
+    return {"window": window, "screen": window.screen}
+
+
+_TEST_CROSS_OBJECT_APPLY_PARAMS = {}
+_TEST_CROSS_OBJECT_APPLY_OPERATOR_REGISTERED = False
+
+
+class ANVIL_TEST_OT_cross_object_texture_apply(Operator):
+    """Test-only wrapper that gives cross-object apply a real operator undo step."""
+
+    bl_idname = "anvil_test.cross_object_texture_apply"
+    bl_label = "Test Cross-Object Texture Apply"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        source_obj = bpy.data.objects[_TEST_CROSS_OBJECT_APPLY_PARAMS['source_obj']]
+        source_mesh = source_obj.data
+        target_obj = bpy.data.objects[_TEST_CROSS_OBJECT_APPLY_PARAMS['target_obj']]
+        target_face_index = _TEST_CROSS_OBJECT_APPLY_PARAMS['target_face_index']
+        source_face_index = _TEST_CROSS_OBJECT_APPLY_PARAMS['source_face_index']
+        mat = bpy.data.materials[_TEST_CROSS_OBJECT_APPLY_PARAMS['mat']]
+        ppm = _TEST_CROSS_OBJECT_APPLY_PARAMS['ppm']
+
+        class _FakeOp:
+            pass
+
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+
+        op = _FakeOp()
+        op._paint_obj = source_obj
+        op._source_face_index = source_face_index
+        op._mat = mat
+        op._ppm = ppm
+        op._other_bmeshes = {}
+        op._paint_visited_other = set()
+        op._cross_object_undo_transaction_id = None
+
+        processed = _apply_to_other_obj(
+            op, bm_source, source_mesh, target_obj, target_face_index,
+            _dispatch_set_uv_from_other_face
+        )
+        if not processed:
+            return {'CANCELLED'}
+        _flush_other_bmeshes(op)
+        return {'FINISHED'}
+
+
+def _ensure_test_cross_object_apply_operator_registered():
+    global _TEST_CROSS_OBJECT_APPLY_OPERATOR_REGISTERED
+    if _TEST_CROSS_OBJECT_APPLY_OPERATOR_REGISTERED:
+        return
+    try:
+        bpy.utils.register_class(ANVIL_TEST_OT_cross_object_texture_apply)
+    except ValueError:
+        pass
+    _TEST_CROSS_OBJECT_APPLY_OPERATOR_REGISTERED = True
 
 
 def _create_two_face_plane(name, source_scale_u, source_scale_v,
@@ -628,6 +692,478 @@ def _create_two_face_two_material_plane(name, source_scale_u, source_scale_v,
 
     return obj
 
+
+def _get_object_face_transform(obj, face_index):
+    """Return the derived transform for an object-mode mesh face."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    try:
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv.verify()
+        return derive_transform_from_uvs(
+            bm.faces[face_index], uv_layer,
+            bpy.context.scene.level_design_props.pixels_per_meter,
+            obj.data,
+        )
+    finally:
+        bm.free()
+
+
+class CrossObjectTextureUndoTest(AnvilTestCase):
+    """Test cross-object texture apply undo while source stays in edit mode."""
+
+    def _run_cross_object_apply(self, source_obj, source_mesh, source_face_index,
+                                target_obj, target_face_index, mat, ppm):
+        class _FakeOp:
+            pass
+
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+
+        op = _FakeOp()
+        op._paint_obj = source_obj
+        op._source_face_index = source_face_index
+        op._mat = mat
+        op._ppm = ppm
+        op._other_bmeshes = {}
+        op._paint_visited_other = set()
+        op._cross_object_undo_transaction_id = None
+
+        processed = _apply_to_other_obj(
+            op, bm_source, source_mesh, target_obj, target_face_index,
+            _dispatch_set_uv_from_other_face
+        )
+        self.assertTrue(processed)
+        _flush_other_bmeshes(op)
+
+    def _run_cross_object_apply_as_undo_operator(self, source_obj,
+                                                source_face_index, target_obj,
+                                                target_face_index, mat, ppm):
+        _ensure_test_cross_object_apply_operator_registered()
+        _TEST_CROSS_OBJECT_APPLY_PARAMS.clear()
+        _TEST_CROSS_OBJECT_APPLY_PARAMS.update({
+            'source_obj': source_obj.name,
+            'source_face_index': source_face_index,
+            'target_obj': target_obj.name,
+            'target_face_index': target_face_index,
+            'mat': mat.name,
+            'ppm': ppm,
+        })
+        result = bpy.ops.anvil_test.cross_object_texture_apply()
+        self.assertEqual(result, {'FINISHED'})
+
+    def test_cross_object_texture_apply_undo_preserves_blender_undo_order(self):
+        """Cross-object texture applies undo only when their marker is crossed."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat_source = _get_material()
+        mat_target = _get_second_material()
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+
+        source_mesh = bpy.data.meshes.new("cross_object_undo_source_mesh")
+        source_mesh.materials.append(mat_source)
+        source_obj = bpy.data.objects.new("cross_object_undo_source_obj", source_mesh)
+        bpy.context.collection.objects.link(source_obj)
+        bpy.context.view_layer.objects.active = source_obj
+        source_obj.select_set(True)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        _make_vertical_face(bm_source, 0)
+        _make_vertical_face(bm_source, 2)
+        bm_source.normal_update()
+        uv_source = bm_source.loops.layers.uv.verify()
+        bm_source.faces.ensure_lookup_table()
+        for face in bm_source.faces:
+            face.material_index = 0
+        apply_uv_to_face(bm_source.faces[0], uv_source, 2.5, 1.5, 45.0,
+                         0.3, 0.7, mat_source, ppm, source_mesh)
+        apply_uv_to_face(bm_source.faces[1], uv_source, 1.0, 1.0, 0.0,
+                         0.0, 0.0, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+
+        target_mesh = bpy.data.meshes.new("cross_object_undo_target_mesh")
+        target_mesh.materials.append(mat_target)
+        bm_target = bmesh.new()
+        _make_vertical_face(bm_target, 0)
+        _make_vertical_face(bm_target, 2)
+        bm_target.normal_update()
+        uv_target = bm_target.loops.layers.uv.verify()
+        bm_target.faces.ensure_lookup_table()
+        for face in bm_target.faces:
+            face.material_index = 0
+            apply_uv_to_face(face, uv_target, 1.0, 1.0, 0.0, 0.0, 0.0,
+                             mat_target, ppm, target_mesh)
+        bm_target.to_mesh(target_mesh)
+        bm_target.free()
+
+        target_obj = bpy.data.objects.new("cross_object_undo_target_obj", target_mesh)
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.x = 5
+        bpy.context.view_layer.update()
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before cross-object texture applies")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 0, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After cross-object texture apply 1")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 1, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After cross-object texture apply 2")
+
+        # A later active-edit-mesh operation should undo first without changing
+        # either cross-object target face.
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+        apply_uv_to_face(bm_source.faces[1], uv_source, 3.0, 1.0, 0.0,
+                         0.0, 0.0, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After unrelated source edit")
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 2.5, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 2.5, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 1.0, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.redo()
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_cross_object_texture_apply_after_intervening_source_uv_edit_undo_restores_only_latest_target_paint(self):
+        """Undoing the latest cross-object paint should preserve earlier target paints."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat_source = _get_material()
+        mat_target = _get_second_material()
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+
+        source_mesh = bpy.data.meshes.new("cross_object_intervening_edit_source_mesh")
+        source_mesh.materials.append(mat_source)
+        source_obj = bpy.data.objects.new(
+            "cross_object_intervening_edit_source_obj", source_mesh
+        )
+        bpy.context.collection.objects.link(source_obj)
+        bpy.context.view_layer.objects.active = source_obj
+        source_obj.select_set(True)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        _make_vertical_face(bm_source, 0)
+        _make_vertical_face(bm_source, 2)
+        bm_source.normal_update()
+        uv_source = bm_source.loops.layers.uv.verify()
+        bm_source.faces.ensure_lookup_table()
+        for face in bm_source.faces:
+            face.material_index = 0
+        apply_uv_to_face(bm_source.faces[0], uv_source, 2.5, 1.5, 45.0,
+                         0.3, 0.7, mat_source, ppm, source_mesh)
+        apply_uv_to_face(bm_source.faces[1], uv_source, 4.0, 2.0, 15.0,
+                         0.1, 0.2, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+
+        target_mesh = bpy.data.meshes.new("cross_object_intervening_edit_target_mesh")
+        target_mesh.materials.append(mat_target)
+        bm_target = bmesh.new()
+        _make_vertical_face(bm_target, 0)
+        _make_vertical_face(bm_target, 2)
+        bm_target.normal_update()
+        uv_target = bm_target.loops.layers.uv.verify()
+        bm_target.faces.ensure_lookup_table()
+        for face in bm_target.faces:
+            face.material_index = 0
+            apply_uv_to_face(face, uv_target, 1.0, 1.0, 0.0, 0.0, 0.0,
+                             mat_target, ppm, target_mesh)
+        bm_target.to_mesh(target_mesh)
+        bm_target.free()
+
+        target_obj = bpy.data.objects.new(
+            "cross_object_intervening_edit_target_obj", target_mesh
+        )
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.x = 5
+        bpy.context.view_layer.update()
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before cross-object source change")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 0, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After first cross-object paint")
+
+        # Any ordinary undoable edit on the active source object should sit
+        # between the two cross-object paint transactions without merging them.
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+        apply_uv_to_face(bm_source.faces[0], uv_source, 4.0, 2.0, 15.0,
+                         0.1, 0.2, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After intervening source UV edit")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 1, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After second cross-object paint")
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 4.0, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_cross_object_texture_apply_when_target_mesh_reverts_during_undo_restores_prior_target_paints(self):
+        """Undo bridge restores the full target state if Blender reverts the mesh."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat_source = _get_material()
+        mat_target = _get_second_material()
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+
+        source_mesh = bpy.data.meshes.new("cross_object_target_revert_source_mesh")
+        source_mesh.materials.append(mat_source)
+        source_obj = bpy.data.objects.new(
+            "cross_object_target_revert_source_obj", source_mesh
+        )
+        bpy.context.collection.objects.link(source_obj)
+        bpy.context.view_layer.objects.active = source_obj
+        source_obj.select_set(True)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        _make_vertical_face(bm_source, 0)
+        bm_source.normal_update()
+        uv_source = bm_source.loops.layers.uv.verify()
+        bm_source.faces.ensure_lookup_table()
+        bm_source.faces[0].material_index = 0
+        apply_uv_to_face(bm_source.faces[0], uv_source, 2.5, 1.5, 45.0,
+                         0.3, 0.7, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+
+        target_mesh = bpy.data.meshes.new("cross_object_target_revert_target_mesh")
+        target_mesh.materials.append(mat_target)
+        bm_target = bmesh.new()
+        _make_vertical_face(bm_target, 0)
+        _make_vertical_face(bm_target, 2)
+        bm_target.normal_update()
+        uv_target = bm_target.loops.layers.uv.verify()
+        bm_target.faces.ensure_lookup_table()
+        for face in bm_target.faces:
+            face.material_index = 0
+            apply_uv_to_face(face, uv_target, 1.0, 1.0, 0.0, 0.0, 0.0,
+                             mat_target, ppm, target_mesh)
+        bm_target.to_mesh(target_mesh)
+        bm_target.free()
+
+        target_obj = bpy.data.objects.new(
+            "cross_object_target_revert_target_obj", target_mesh
+        )
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.x = 5
+        bpy.context.view_layer.update()
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before cross-object source change")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 0, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After first cross-object paint")
+
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+        apply_uv_to_face(bm_source.faces[0], uv_source, 4.0, 2.0, 15.0,
+                         0.1, 0.2, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After intervening source UV edit")
+
+        self._run_cross_object_apply(
+            source_obj, source_mesh, 0, target_obj, 1, mat_source, ppm
+        )
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After second cross-object paint")
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 4.0, places=3)
+
+        # Simulate Blender restoring an older object-mode snapshot for the
+        # non-active target mesh before the cross-object undo bridge runs.
+        bm_target = bmesh.new()
+        bm_target.from_mesh(target_mesh)
+        uv_target = bm_target.loops.layers.uv.verify()
+        bm_target.faces.ensure_lookup_table()
+        for face in bm_target.faces:
+            face.material_index = 0
+            apply_uv_to_face(face, uv_target, 1.0, 1.0, 0.0, 0.0, 0.0,
+                             mat_target, ppm, target_mesh)
+        bm_target.to_mesh(target_mesh)
+        bm_target.free()
+        target_mesh.update()
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    def test_cross_object_texture_apply_operator_after_intervening_source_uv_edit_undo_restores_only_latest_target_paint(self):
+        """Operator undo should preserve earlier target paints."""
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mat_source = _get_material()
+        mat_target = _get_second_material()
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+
+        source_mesh = bpy.data.meshes.new("cross_object_operator_source_mesh")
+        source_mesh.materials.append(mat_source)
+        source_obj = bpy.data.objects.new(
+            "cross_object_operator_source_obj", source_mesh
+        )
+        bpy.context.collection.objects.link(source_obj)
+        bpy.context.view_layer.objects.active = source_obj
+        source_obj.select_set(True)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        _make_vertical_face(bm_source, 0)
+        bm_source.normal_update()
+        uv_source = bm_source.loops.layers.uv.verify()
+        bm_source.faces.ensure_lookup_table()
+        bm_source.faces[0].select_set(True)
+        bm_source.faces.active = bm_source.faces[0]
+        bm_source.faces[0].material_index = 0
+        apply_uv_to_face(bm_source.faces[0], uv_source, 2.5, 1.5, 45.0,
+                         0.3, 0.7, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+
+        target_mesh = bpy.data.meshes.new("cross_object_operator_target_mesh")
+        target_mesh.materials.append(mat_target)
+        bm_target = bmesh.new()
+        _make_vertical_face(bm_target, 0)
+        _make_vertical_face(bm_target, 2)
+        bm_target.normal_update()
+        uv_target = bm_target.loops.layers.uv.verify()
+        bm_target.faces.ensure_lookup_table()
+        for face in bm_target.faces:
+            face.material_index = 0
+            apply_uv_to_face(face, uv_target, 1.0, 1.0, 0.0, 0.0, 0.0,
+                             mat_target, ppm, target_mesh)
+        bm_target.to_mesh(target_mesh)
+        bm_target.free()
+
+        target_obj = bpy.data.objects.new(
+            "cross_object_operator_target_obj", target_mesh
+        )
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.x = 5
+        bpy.context.view_layer.update()
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before real cross-object paints")
+
+        self._run_cross_object_apply_as_undo_operator(
+            source_obj, 0, target_obj, 0, mat_source, ppm
+        )
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        # Any ordinary undoable edit on the active source object should sit
+        # between the two real operator paint transactions without merging them.
+        bm_source = bmesh.from_edit_mesh(source_mesh)
+        bm_source.faces.ensure_lookup_table()
+        apply_uv_to_face(bm_source.faces[0], uv_source, 4.0, 2.0, 15.0,
+                         0.1, 0.2, mat_source, ppm, source_mesh)
+        bmesh.update_edit_mesh(source_mesh)
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After intervening source UV edit")
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        self._run_cross_object_apply_as_undo_operator(
+            source_obj, 0, target_obj, 1, mat_source, ppm
+        )
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 4.0, places=3)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        face0 = _get_object_face_transform(target_obj, 0)
+        face1 = _get_object_face_transform(target_obj, 1)
+        self.assertAlmostEqual(face0['scale_u'], 2.5, places=3)
+        self.assertAlmostEqual(face1['scale_u'], 1.0, places=3)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
 
 class UVTransformApplyTest(AnvilTestCase):
     """Test UV-transform-only apply (no material change)."""

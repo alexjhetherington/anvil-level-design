@@ -119,3 +119,5 @@ def unregister():
     reset_face_cache()
     from .active_image import reset as reset_active_image
     reset_active_image()
+    from .cross_object_undo import reset as reset_cross_object_undo
+    reset_cross_object_undo()

@@ -26,6 +26,7 @@ from .file_browser import (
     start_file_browser_watcher, set_was_first_save, get_was_first_save,
     reset as reset_file_browser,
 )
+from . import cross_object_undo
 
 
 # Set True on file load to allow first depsgraph to sync active image from selected face
@@ -136,6 +137,7 @@ def on_undo_pre(scene):
     """Handler called before an undo operation."""
     if _active_operator_abuses_undo():
         return
+    cross_object_undo.handle_undo_pre()
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
 
@@ -144,6 +146,7 @@ def on_undo_pre(scene):
 def on_undo_post(scene):
     """Handler called after an undo operation."""
     face_data_cache.clear()
+    cross_object_undo.handle_undo_post()
     try:
         context = bpy.context
         if context.mode == 'EDIT_MESH':
@@ -177,6 +180,7 @@ def on_redo_pre(scene):
     """Handler called before a redo operation."""
     if _active_operator_abuses_undo():
         return
+    cross_object_undo.handle_redo_pre()
     set_undo_in_progress(True)
     set_auto_hotspot_pending(False)
 
@@ -185,6 +189,7 @@ def on_redo_pre(scene):
 def on_redo_post(scene):
     """Handler called after a redo operation."""
     face_data_cache.clear()
+    cross_object_undo.handle_redo_post()
     try:
         context = bpy.context
         if context.mode == 'EDIT_MESH':
@@ -265,6 +270,7 @@ def on_load_post(dummy):
 
     reset_face_cache()
     reset_file_browser()
+    cross_object_undo.reset()
     _file_loaded_into_edit_depsgraph = True
     reset_mode_tracking()
 

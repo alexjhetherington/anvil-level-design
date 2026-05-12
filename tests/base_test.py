@@ -31,12 +31,14 @@ def _purge_all():
         set_active_image, set_previous_image, face_data_cache,
         on_depsgraph_update,
     )
+    from ..handlers.cross_object_undo import reset as reset_cross_object_undo
 
     # Clear handler state that holds references to Blender data blocks
     # before removing the data, preventing dangling pointer access.
     set_active_image(None)
     set_previous_image(None)
     face_data_cache.clear()
+    reset_cross_object_undo()
 
     # Reset weld module state (clears transient flags like _weld_op_running).
     # Mesh-stored weld data is cleaned up when objects are deleted below.

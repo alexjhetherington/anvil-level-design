@@ -5,6 +5,8 @@ from .base_test import AnvilTestCase
 
 # Every bpy.ops.* operator the addon depends on (excluding custom leveldesign/hotspot ops)
 _REQUIRED_OPERATORS = [
+    "ed.redo",
+    "ed.undo",
     "ed.undo_push",
     "export_scene.gltf",
     "file.make_paths_relative",
@@ -86,4 +88,18 @@ class APIAvailabilityTest(AnvilTestCase):
         self.assertEqual(
             missing, [],
             f"Missing bpy utility API symbols: {', '.join(missing)}"
+        )
+
+    def test_all_required_blender_data_apis_exist(self):
+        missing = []
+        mesh = bpy.data.meshes.new("api_availability_mesh")
+        try:
+            if not hasattr(mesh.materials, "clear"):
+                missing.append("Mesh.materials.clear")
+        finally:
+            bpy.data.meshes.remove(mesh)
+
+        self.assertEqual(
+            missing, [],
+            f"Missing Blender data APIs: {', '.join(missing)}"
         )

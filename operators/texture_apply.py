@@ -26,6 +26,7 @@ from ..handlers import (
     cache_single_face, get_active_image, set_active_image, redraw_ui_panels,
     update_ui_from_selection, update_active_image_from_face,
 )
+from ..handlers import cross_object_undo
 from .backface_select.paint_base import ModalPaintBase
 from .backface_select.raycast import (
     raycast_bvh_skip_backfaces,
@@ -607,6 +608,7 @@ def _invoke_apply_setup(op, context, event):
     op._other_objects_info = []
     op._other_bmeshes = {}
     op._paint_visited_other = set()
+    op._cross_object_undo_transaction_id = None
     for other_obj in context.view_layer.objects:
         if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
             continue
@@ -718,6 +720,12 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
     target_face = other_bm.faces[hit_face_index]
     source_face = source_bm.faces[op._source_face_index]
 
+    transaction_id = getattr(op, '_cross_object_undo_transaction_id', None)
+    if transaction_id is None:
+        transaction_id = cross_object_undo.begin_transaction(op._paint_obj)
+        op._cross_object_undo_transaction_id = transaction_id
+    cross_object_undo.record_target_before(transaction_id, hit_obj, other_bm)
+
     op_mat = getattr(op, '_mat', None)
     if op_mat is not None:
         if op_mat.name not in other_me.materials:
@@ -745,6 +753,7 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
         bm=None, source_uv_layer=source_uv, source_me=source_me,
         source_to_target=source_to_target,
     )
+    cross_object_undo.record_target_after(transaction_id, hit_obj, other_bm)
     return True
 
 
@@ -804,12 +813,24 @@ def _flush_other_bmeshes(op):
         data['bm'].free()
     op._other_bmeshes.clear()
 
+    transaction_id = getattr(op, '_cross_object_undo_transaction_id', None)
+    if transaction_id is not None:
+        if cross_object_undo.transaction_has_targets(transaction_id):
+            cross_object_undo.write_frontier_marker(op._paint_obj, transaction_id)
+        else:
+            cross_object_undo.discard_transaction(transaction_id)
+        op._cross_object_undo_transaction_id = None
+
 
 def _discard_other_bmeshes(op):
     """Free all cross-object bmeshes without writing back."""
     for data in op._other_bmeshes.values():
         data['bm'].free()
     op._other_bmeshes.clear()
+    transaction_id = getattr(op, '_cross_object_undo_transaction_id', None)
+    if transaction_id is not None:
+        cross_object_undo.discard_transaction(transaction_id)
+        op._cross_object_undo_transaction_id = None
 
 
 def _invoke_uv_transform_setup(op, context, event):
@@ -852,6 +873,7 @@ def _invoke_uv_transform_setup(op, context, event):
     op._other_objects_info = []
     op._other_bmeshes = {}
     op._paint_visited_other = set()
+    op._cross_object_undo_transaction_id = None
     for other_obj in context.view_layer.objects:
         if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
             continue

@@ -2,6 +2,8 @@
 
 # 1.6.7
 - Add randomise offsets button
+- Support undo / redo for cross object transactions (experimental!)
+- Add some graphics cards diagnostics logs on by default (to help with debugging some obscure issues)
 
 # 1.6.6
 - Show pixel size next to grid size in panel @gulagkulak
