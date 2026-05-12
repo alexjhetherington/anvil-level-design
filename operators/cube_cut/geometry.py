@@ -646,8 +646,10 @@ def execute_cube_cut(context, first_vertex, second_vertex, depth, local_x, local
         debug_log(f"[CubeCut] Removing {len(loose_verts)} loose vertices")
         bmesh.ops.delete(bm, geom=loose_verts, context='VERTS')
 
-    # Merge very close vertices
-    bmesh.ops.remove_doubles(bm, verts=[v for v in bm.verts if v.is_valid], dist=EPSILON)
+    # Merge very close vertices without welding separate mesh islands that
+    # happen to have colocated coordinates.
+    _remove_doubles_within_connected_components(
+        bm, [v for v in bm.verts if v.is_valid], EPSILON)
 
     # Recalculate normals for newly created faces
     bm.normal_update()
@@ -857,6 +859,43 @@ def _split_edges_at_intersections(bm, edge_splits):
                     edges_to_keep.append(new_edge)
 
     return new_verts, faces_with_split_edges, vert_plane_map
+
+
+def _connected_vertex_components(verts):
+    """Return edge-connected components from the supplied vertices."""
+    remaining = set(v for v in verts if v.is_valid)
+    components = []
+
+    while remaining:
+        start = remaining.pop()
+        component = [start]
+        stack = [start]
+
+        while stack:
+            current = stack.pop()
+            for edge in current.link_edges:
+                if not edge.is_valid:
+                    continue
+                other = edge.other_vert(current)
+                if other not in remaining:
+                    continue
+                remaining.remove(other)
+                component.append(other)
+                stack.append(other)
+
+        components.append(component)
+
+    return components
+
+
+def _remove_doubles_within_connected_components(bm, verts, dist):
+    """Merge close verts only within each existing edge-connected island."""
+    components = _connected_vertex_components(verts)
+    for component in components:
+        valid_component = [v for v in component if v.is_valid]
+        if len(valid_component) < 2:
+            continue
+        bmesh.ops.remove_doubles(bm, verts=valid_component, dist=dist)
 
 
 def _find_cuboid_face_intersections(bm, cuboid):

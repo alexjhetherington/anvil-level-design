@@ -447,3 +447,97 @@ class CubeCutTest(AnvilTestCase):
         self.assertEqual(verts_actual, expected_verts)
         self.assertEqual(edges_actual, expected_edges)
         obj.data.update()
+
+    def test_cube_cut_overlapping_disconnected_planes_preserves_separate_colocated_vertices(self):
+        """Cube cut on overlapping disconnected planes preserves separate colocated vertices."""
+        mesh = bpy.data.meshes.new("overlapping_disconnected_planes")
+        bm_new = bmesh.new()
+
+        for _ in range(2):
+            v0 = bm_new.verts.new((0, 0, 0))
+            v1 = bm_new.verts.new((1, 0, 0))
+            v2 = bm_new.verts.new((1, 0, 1))
+            v3 = bm_new.verts.new((0, 0, 1))
+            bm_new.faces.new((v0, v1, v2, v3))
+
+        bm_new.to_mesh(mesh)
+        bm_new.free()
+
+        obj = bpy.data.objects.new("overlapping_disconnected_planes", mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        _apply_material_face_aligned(obj, 1.0)
+
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(mesh)
+        bm.select_mode = {'FACE'}
+        for f in bm.faces:
+            f.select = True
+        bmesh.update_edit_mesh(mesh)
+
+        with bpy.context.temp_override(**ctx):
+            success, msg = execute_cube_cut(
+                bpy.context,
+                Vector((0.25, -0.5, 0.25)),
+                Vector((0.75, -0.5, 0.75)),
+                1.0,
+                Vector((1, 0, 0)),
+                Vector((0, 0, 1)),
+                Vector((0, 1, 0)),
+            )
+
+        self.assertTrue(success, msg)
+
+        bm = bmesh.from_edit_mesh(mesh)
+
+        def vertex_components():
+            remaining = set(v for v in bm.verts if v.is_valid and v.link_edges)
+            components = []
+            while remaining:
+                start = remaining.pop()
+                component = [start]
+                stack = [start]
+                while stack:
+                    current = stack.pop()
+                    for edge in current.link_edges:
+                        other = edge.other_vert(current)
+                        if other not in remaining:
+                            continue
+                        remaining.remove(other)
+                        component.append(other)
+                        stack.append(other)
+                components.append(component)
+            return components
+
+        def vertex_key(v):
+            return (round(v.co.x, 4), round(v.co.y, 4), round(v.co.z, 4))
+
+        components = vertex_components()
+        self.assertEqual(
+            len(components), 2,
+            "Cube cut should keep overlapping disconnected mesh islands separate")
+
+        coord_counts = {}
+        for v in bm.verts:
+            if not v.is_valid:
+                continue
+            key = vertex_key(v)
+            coord_counts[key] = coord_counts.get(key, 0) + 1
+
+        self.assertTrue(
+            coord_counts,
+            "Cube cut should leave valid vertices on the overlapping planes")
+        for key, count in coord_counts.items():
+            self.assertEqual(
+                count, 2,
+                f"Coordinate {key} should still have one vertex per disconnected plane")
+
+        bmesh.update_edit_mesh(mesh)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()

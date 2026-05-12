@@ -3,6 +3,7 @@
 # 1.6.7
 - Add randomise offsets button
 - Support undo / redo for cross object transactions (experimental!)
+- Cube cut no longer merges vertices across unconnected meshes within the same object
 - Add some graphics cards diagnostics logs on by default (to help with debugging some obscure issues)
 
 # 1.6.6
