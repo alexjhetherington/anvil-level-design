@@ -35,12 +35,12 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
         if self._first_vertex is None or self._second_vertex is None:
             return {'RUNNING_MODAL'}
 
-        # Check minimum size
-        diff = self._second_vertex - self._first_vertex
-        local_dx = abs(diff.dot(self._local_x))
-        local_dy = abs(diff.dot(self._local_y))
-
-        if local_dx < MIN_RECTANGLE_SIZE and local_dy < MIN_RECTANGLE_SIZE:
+        invalid_message = self._get_rectangle_invalid_message_for_vertices(
+            self._first_vertex, self._second_vertex
+        )
+        if invalid_message is not None:
+            self._set_invalid_message(invalid_message)
+            self._update_header(context)
             return {'RUNNING_MODAL'}
 
         # Shift both vertices back 5000 units along -local_z so the cut
@@ -69,6 +69,17 @@ class MESH_OT_cube_cut(ModalDrawBase, bpy.types.Operator):
 
         self._cleanup(context)
         return {'FINISHED'}
+
+    def _get_rectangle_invalid_message(self, local_dx, local_dy):
+        if local_dx < MIN_RECTANGLE_SIZE and local_dy < MIN_RECTANGLE_SIZE:
+            return "Move away from the start point"
+        if self._line_mode and local_dy < MIN_RECTANGLE_SIZE:
+            return "Width must be greater than zero"
+        if local_dx < MIN_RECTANGLE_SIZE:
+            return "Width must be greater than zero"
+        if local_dy < MIN_RECTANGLE_SIZE:
+            return "Height must be greater than zero"
+        return None
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
                         local_x, local_y, local_z):

@@ -18,6 +18,7 @@ COLOR_RECTANGLE = (1.0, 0.5, 0.0, 0.9)        # Orange - rectangle preview
 COLOR_CUBOID = (1.0, 0.5, 0.0, 0.9)           # Orange - cuboid preview
 COLOR_DEPTH_INDICATOR = (0.0, 1.0, 0.5, 0.9)  # Green - depth direction
 COLOR_GRID_POINT = (0.7, 0.7, 0.7)            # Light grey (no alpha - set per-point)
+COLOR_INVALID = (1.0, 0.05, 0.0, 0.95)        # Red - invalid candidate
 
 POINT_SIZE = 10.0
 LINE_WIDTH = 2.0
@@ -59,6 +60,7 @@ class ModalDrawPreview:
         # Line mode data
         self._line_mode = False        # Whether in rotated/line mode
         self._line_end = None          # Current line end point
+        self._candidate_valid = True   # Whether current candidate can be confirmed
 
     def register_handlers(self):
         """Register draw handlers for all 3D view spaces."""
@@ -113,6 +115,10 @@ class ModalDrawPreview:
         """Update the current line end point."""
         self._line_end = point
 
+    def set_candidate_valid(self, valid):
+        """Set whether the current preview candidate is valid."""
+        self._candidate_valid = valid
+
     def clear_face_grid(self):
         """Clear the face grid overlay data."""
         self._face_plane_point = None
@@ -152,6 +158,7 @@ class ModalDrawPreview:
         self._snap_was_clamped = False
         self._line_mode = False
         self._line_end = None
+        self._candidate_valid = True
 
     def _draw_3d(self):
         """Main 3D drawing callback."""
@@ -195,11 +202,22 @@ class ModalDrawPreview:
             tangent1 = self._snap_tangent1
             tangent2 = self._snap_tangent2
 
-        self._draw_cross(self._snap_point, tangent1, tangent2, COLOR_SNAP_POINT)
+        self._draw_cross(self._snap_point, tangent1, tangent2, COLOR_SNAP_POINT, LINE_WIDTH)
 
     def _draw_line_preview(self):
         """Draw the line segment from first vertex to line end point."""
         if self._first_vertex is None or self._line_end is None:
+            return
+
+        color = self._get_candidate_color(COLOR_RECTANGLE)
+        if not self._candidate_valid and (self._line_end - self._first_vertex).length_squared < 1e-10:
+            self._draw_cross(
+                self._first_vertex,
+                self._local_x,
+                self._local_y,
+                color,
+                LINE_WIDTH
+            )
             return
 
         line_points = [self._first_vertex[:], self._line_end[:]]
@@ -212,14 +230,14 @@ class ModalDrawPreview:
                 return
             shader.uniform_float("viewportSize", (region.width, region.height))
             shader.uniform_float("lineWidth", LINE_WIDTH)
-            shader.uniform_float("color", COLOR_RECTANGLE)
+            shader.uniform_float("color", color)
 
             batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": line_points})
             batch.draw(shader)
         except Exception:
             try:
                 shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-                shader.uniform_float("color", COLOR_RECTANGLE)
+                shader.uniform_float("color", color)
 
                 batch = batch_for_shader(shader, 'LINES', {"pos": line_points})
                 batch.draw(shader)
@@ -374,7 +392,7 @@ class ModalDrawPreview:
             z = p0.z - (normal.x / normal.z) * (coord1 - p0.x) - (normal.y / normal.z) * (coord2 - p0.y)
             return Vector((coord1, coord2, z))
 
-    def _draw_cross(self, position, tangent1, tangent2, color):
+    def _draw_cross(self, position, tangent1, tangent2, color, line_width):
         """Draw a cross at the given position oriented along tangent axes."""
         if tangent1 is None or tangent2 is None:
             # Fallback: draw a small world-aligned cross
@@ -399,7 +417,7 @@ class ModalDrawPreview:
             if region is None:
                 return
             shader.uniform_float("viewportSize", (region.width, region.height))
-            shader.uniform_float("lineWidth", LINE_WIDTH)
+            shader.uniform_float("lineWidth", line_width)
             shader.uniform_float("color", color)
 
             batch = batch_for_shader(shader, 'LINES', {"pos": line_points})
@@ -423,7 +441,23 @@ class ModalDrawPreview:
             return
 
         corners = self._get_rectangle_corners(self._first_vertex, self._second_vertex)
-        self._draw_line_loop(corners, COLOR_RECTANGLE)
+        color = self._get_candidate_color(COLOR_RECTANGLE)
+
+        if not self._candidate_valid:
+            diff = self._second_vertex - self._first_vertex
+            local_dx = abs(diff.dot(self._local_x))
+            local_dy = abs(diff.dot(self._local_y))
+            if local_dx < 1e-10 and local_dy < 1e-10:
+                self._draw_cross(
+                    self._first_vertex,
+                    self._local_x,
+                    self._local_y,
+                    color,
+                    LINE_WIDTH
+                )
+                return
+
+        self._draw_line_loop(corners, color)
 
     def _draw_cuboid_preview(self):
         """Draw the full cuboid preview."""
@@ -442,7 +476,13 @@ class ModalDrawPreview:
         )
 
         edges = utils.get_cuboid_edges()
-        self._draw_edges(vertices, edges, COLOR_CUBOID)
+        self._draw_edges(vertices, edges, self._get_candidate_color(COLOR_CUBOID))
+
+    def _get_candidate_color(self, valid_color):
+        """Return the active color for the current candidate validity."""
+        if self._candidate_valid:
+            return valid_color
+        return COLOR_INVALID
 
     def _get_rectangle_corners(self, corner1, corner2):
         """Get the 4 corners of the rectangle."""

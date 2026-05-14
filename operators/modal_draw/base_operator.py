@@ -119,6 +119,19 @@ class ModalDrawBase:
             context, event, first_vertex, second_vertex, local_z, initial_mouse_pos
         )
 
+    def _get_line_end_invalid_message(self, line_length):
+        if line_length < MIN_RECTANGLE_SIZE:
+            return "Move away from the start point"
+        return None
+
+    def _get_rectangle_invalid_message(self, local_dx, local_dy):
+        if local_dx < MIN_RECTANGLE_SIZE and local_dy < MIN_RECTANGLE_SIZE:
+            return "Move away from the start point"
+        return None
+
+    def _get_depth_invalid_message(self, depth):
+        return None
+
     # --- Operator lifecycle ---
 
     def invoke(self, context, event):
@@ -158,6 +171,7 @@ class ModalDrawBase:
         # Depth phase
         self._depth = 0.0
         self._depth_start_mouse_pos = (0, 0)  # (x, y) for geometric depth calc
+        self._invalid_message = None
 
         # View tracking
         self._is_2d_view = utils.is_2d_view(context)
@@ -358,12 +372,16 @@ class ModalDrawBase:
         if snapped is not None:
             self._line_end = snapped
             self._preview.update_line_end(snapped)
+            self._set_invalid_message(
+                self._get_line_end_invalid_message((snapped - self._first_vertex).length)
+            )
             # Update snap point for crosshair display
             if self._is_2d_view:
                 tangent1, tangent2 = utils.get_2d_view_tangents(context)
             else:
                 tangent1, tangent2 = utils.get_snap_aligned_tangents(self._hit_face_normal)
             self._preview.update_snap_point(snapped, tangent1, tangent2)
+            self._update_header(context)
 
     def _update_second_vertex_preview(self, context, event):
         """Update the rectangle preview."""
@@ -389,6 +407,10 @@ class ModalDrawBase:
         if snapped is not None:
             self._preview.update_second_vertex(snapped)
             self._second_vertex = snapped
+            self._set_invalid_message(self._get_rectangle_invalid_message_for_vertices(
+                self._first_vertex, self._second_vertex
+            ))
+            self._update_header(context)
 
     def _update_depth_preview(self, context, event):
         """Update the depth/cuboid preview."""
@@ -405,6 +427,7 @@ class ModalDrawBase:
 
         self._depth = depth
         self._preview.update_depth(depth)
+        self._set_invalid_message(self._get_depth_invalid_message(depth))
 
         # Update header with current depth value
         self._update_header(context)
@@ -485,6 +508,7 @@ class ModalDrawBase:
             self._preview.set_state(self.STATE_LINE_END)
             self._state = self.STATE_LINE_END
             self._line_end = self._first_vertex.copy()
+            self._set_invalid_message(self._get_line_end_invalid_message(0.0))
         else:
             self._preview.set_state(self.STATE_SECOND_VERTEX)
             self._state = self.STATE_SECOND_VERTEX
@@ -492,6 +516,9 @@ class ModalDrawBase:
             # Initialize second vertex to first (will update on mouse move)
             self._second_vertex = self._first_vertex.copy()
             self._preview.update_second_vertex(self._second_vertex)
+            self._set_invalid_message(self._get_rectangle_invalid_message_for_vertices(
+                self._first_vertex, self._second_vertex
+            ))
 
         self._update_header(context)
         return {'RUNNING_MODAL'}
@@ -505,7 +532,10 @@ class ModalDrawBase:
         line_vec = self._line_end - self._first_vertex
         line_length = line_vec.length
 
-        if line_length < MIN_RECTANGLE_SIZE:
+        invalid_message = self._get_line_end_invalid_message(line_length)
+        if invalid_message is not None:
+            self._set_invalid_message(invalid_message)
+            self._update_header(context)
             return {'RUNNING_MODAL'}
 
         # Compute new local axes from line direction
@@ -536,6 +566,9 @@ class ModalDrawBase:
         # Initialize second vertex at line end (zero width)
         self._second_vertex = self._line_end.copy()
         self._preview.update_second_vertex(self._second_vertex)
+        self._set_invalid_message(self._get_rectangle_invalid_message_for_vertices(
+            self._first_vertex, self._second_vertex
+        ))
 
         self._update_header(context)
         return {'RUNNING_MODAL'}
@@ -568,13 +601,12 @@ class ModalDrawBase:
         if self._first_vertex is None or self._second_vertex is None:
             return {'RUNNING_MODAL'}
 
-        # Check minimum size
-        diff = self._second_vertex - self._first_vertex
-        local_dx = abs(diff.dot(self._local_x))
-        local_dy = abs(diff.dot(self._local_y))
-
-        if local_dx < MIN_RECTANGLE_SIZE and local_dy < MIN_RECTANGLE_SIZE:
-            # Rectangle too small, ignore click
+        invalid_message = self._get_rectangle_invalid_message_for_vertices(
+            self._first_vertex, self._second_vertex
+        )
+        if invalid_message is not None:
+            self._set_invalid_message(invalid_message)
+            self._update_header(context)
             return {'RUNNING_MODAL'}
 
         # Advance to depth state
@@ -585,12 +617,19 @@ class ModalDrawBase:
         self._depth_start_mouse_pos = (event.mouse_region_x, event.mouse_region_y)
         self._depth = 0.0
         self._preview.update_depth(0.0)
+        self._set_invalid_message(self._get_depth_invalid_message(self._depth))
 
         self._update_header(context)
         return {'RUNNING_MODAL'}
 
     def _confirm_depth(self, context, event):
         """Confirm the depth and execute the action."""
+        invalid_message = self._get_depth_invalid_message(self._depth)
+        if invalid_message is not None:
+            self._set_invalid_message(invalid_message)
+            self._update_header(context)
+            return {'RUNNING_MODAL'}
+
         result = self._execute_action(
             context,
             self._first_vertex,
@@ -627,6 +666,16 @@ class ModalDrawBase:
         # Clear header
         context.area.header_text_set(None)
 
+    def _get_rectangle_invalid_message_for_vertices(self, first_vertex, second_vertex):
+        diff = second_vertex - first_vertex
+        local_dx = abs(diff.dot(self._local_x))
+        local_dy = abs(diff.dot(self._local_y))
+        return self._get_rectangle_invalid_message(local_dx, local_dy)
+
+    def _set_invalid_message(self, invalid_message):
+        self._invalid_message = invalid_message
+        self._preview.set_candidate_valid(invalid_message is None)
+
     def _update_header(self, context):
         """Update header text based on current state."""
         tool_name = self._get_tool_name()
@@ -634,14 +683,22 @@ class ModalDrawBase:
             lock_hint = " (Axis Locked)" if self._axis_lock_normal is not None else " | Ctrl to lock axis"
             text = f"{tool_name}: Click to set first corner{lock_hint} | ESC to cancel"
         elif self._state == self.STATE_LINE_END:
-            text = f"{tool_name}: Click to set line end point | ESC to cancel"
+            if self._invalid_message is not None:
+                text = f"{tool_name}: {self._invalid_message} | ESC to cancel"
+            else:
+                text = f"{tool_name}: Click to set line end point | ESC to cancel"
         elif self._state == self.STATE_SECOND_VERTEX:
-            if self._line_mode:
+            if self._invalid_message is not None:
+                text = f"{tool_name}: {self._invalid_message} | ESC to cancel"
+            elif self._line_mode:
                 text = f"{tool_name}: Click to set width | ESC to cancel"
             else:
                 text = f"{tool_name}: Click to set opposite corner | ESC to cancel"
         elif self._state == self.STATE_DEPTH:
-            text = f"{tool_name}: Move mouse to set depth ({self._depth:.3f}) | Click to confirm | ESC to cancel"
+            if self._invalid_message is not None:
+                text = f"{tool_name}: {self._invalid_message} ({self._depth:.3f}) | ESC to cancel"
+            else:
+                text = f"{tool_name}: Move mouse to set depth ({self._depth:.3f}) | Click to confirm | ESC to cancel"
         else:
             text = f"{tool_name} | ESC to cancel"
 
