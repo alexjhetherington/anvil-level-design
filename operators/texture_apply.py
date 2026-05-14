@@ -11,6 +11,7 @@ from ..core.geometry import normalize_offset
 from ..core.materials import (
     find_material_with_image,
     create_material_with_image,
+    get_unassigned_material,
     get_texture_dimensions_from_material,
     get_image_from_material,
 )
@@ -567,11 +568,6 @@ def _invoke_apply_setup(op, context, event):
         debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
         return {'PASS_THROUGH'}
 
-    image = get_active_image()
-    if not image:
-        debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
-        return {'PASS_THROUGH'}
-
     bm_check = bmesh.from_edit_mesh(obj.data)
     bm_check.faces.ensure_lookup_table()
     selected_count = sum(1 for f in bm_check.faces if f.select)
@@ -584,8 +580,24 @@ def _invoke_apply_setup(op, context, event):
         debug_log(f"[ApplyImage] PASS_THROUGH: active face is None ({source_face is None}) or not selected")
         return {'PASS_THROUGH'}
 
+    source_mat = (
+        obj.data.materials[source_face.material_index]
+        if source_face.material_index < len(obj.data.materials)
+        else None
+    )
+    source_image = get_image_from_material(source_mat)
+    source_is_unassigned = source_image is None
+
+    image = get_active_image()
+    if not image and not source_is_unassigned:
+        image = source_image
+    if not image and not source_is_unassigned:
+        debug_log("[ApplyImage] PASS_THROUGH: no active image in file browser")
+        return {'PASS_THROUGH'}
+
     op._source_face_index = source_face.index
-    op._image = image
+    op._image = None if source_is_unassigned else image
+    op._unassign_material = source_is_unassigned
     op._obj_matrix = obj.matrix_world.copy()
 
     props = context.scene.level_design_props
@@ -597,9 +609,12 @@ def _invoke_apply_setup(op, context, event):
     op._painted_face_indices = set()
     op._faces_previously_hotspottable = set()
 
-    mat = find_material_with_image(image)
-    if mat is None:
-        mat = create_material_with_image(image)
+    if source_is_unassigned:
+        mat = get_unassigned_material()
+    else:
+        mat = find_material_with_image(image)
+        if mat is None:
+            mat = create_material_with_image(image)
     op._mat = mat
     if mat.name not in obj.data.materials:
         obj.data.materials.append(mat)
@@ -626,7 +641,8 @@ def _invoke_apply_setup(op, context, event):
             'materials': other_me.materials,
         })
 
-    debug_log(f"[ApplyImage] invoke OK: source_face={op._source_face_index}, image={image.name}, mat={mat.name}")
+    image_name = image.name if image is not None else "<unassigned>"
+    debug_log(f"[ApplyImage] invoke OK: source_face={op._source_face_index}, image={image_name}, mat={mat.name}")
     return None
 
 
@@ -728,9 +744,17 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
 
     op_mat = getattr(op, '_mat', None)
     if op_mat is not None:
+        if (
+                len(other_me.materials) == 0
+                and not getattr(op, '_unassign_material', False)):
+            other_me.materials.append(get_unassigned_material())
         if op_mat.name not in other_me.materials:
             other_me.materials.append(op_mat)
         target_face.material_index = other_me.materials.find(op_mat.name)
+
+    if getattr(op, '_unassign_material', False):
+        cross_object_undo.record_target_after(transaction_id, hit_obj, other_bm)
+        return True
 
     from ..core.uv_layers import get_render_active_uv_layer
     source_uv = get_render_active_uv_layer(source_bm, source_me)
@@ -800,6 +824,10 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
         op._faces_previously_hotspottable.add(hit_face_index)
 
     target_face.material_index = op._mat_index
+
+    if getattr(op, '_unassign_material', False):
+        op._painted_face_indices.add(hit_face_index)
+        return
 
     uv_func(source_face, target_face, uv_layer, op._ppm, me, op._obj_matrix, bm=bm)
 
@@ -1038,16 +1066,24 @@ def _pick_source_from_cursor(op, context, event):
 
     hit_me = hit_obj.data
     hit_mat = hit_me.materials[hit_mat_index] if hit_mat_index < len(hit_me.materials) else None
-    if not hit_mat:
-        op.report({'WARNING'}, "Face has no material")
-        return None
-
     image = get_image_from_material(hit_mat)
-    if not image:
-        op.report({'WARNING'}, "Material has no image texture")
-        return None
 
     return hit_obj, hit_face_index, image, selected_faces, bm_edit
+
+
+def _assign_unassigned_material_to_faces(selected_faces, me):
+    mat = get_unassigned_material()
+    if mat.name not in me.materials:
+        me.materials.append(mat)
+    mat_index = me.materials.find(mat.name)
+
+    for face in selected_faces:
+        face.material_index = mat_index
+
+
+def _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm, me):
+    if len(me.materials) == 0 and len(selected_faces) < len(bm.faces):
+        me.materials.append(get_unassigned_material())
 
 
 # ---- Apply Image to Face (Alt+Left Click) ----
@@ -1084,6 +1120,12 @@ class apply_image_to_face(ModalPaintBase, Operator):
         _flush_other_bmeshes(self)
 
         if not self._painted_face_indices:
+            return
+
+        if self._image is None:
+            update_ui_from_selection(context)
+            update_active_image_from_face(context)
+            redraw_ui_panels(context)
             return
 
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
@@ -1223,6 +1265,15 @@ class pick_image_from_face(Operator):
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
+        if image is None:
+            _assign_unassigned_material_to_faces(selected_faces, me)
+            bmesh.update_edit_mesh(me)
+            update_ui_from_selection(context)
+            update_active_image_from_face(context)
+            redraw_ui_panels(context)
+            self.report({'INFO'}, "Unassigned material")
+            return {'FINISHED'}
+
         faces_with_previous_hotspot = [f for f in selected_faces if face_has_hotspot_material(f, me)]
         any_previous_was_hotspottable = len(faces_with_previous_hotspot) > 0
 
@@ -1235,6 +1286,7 @@ class pick_image_from_face(Operator):
         mat = find_material_with_image(image)
         if mat is None:
             mat = create_material_with_image(image)
+        _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
         if mat.name not in me.materials:
             me.materials.append(mat)
         mat_index = me.materials.find(mat.name)
@@ -1355,9 +1407,19 @@ class stretch_pick_image_from_face(Operator):
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
+        if image is None:
+            _assign_unassigned_material_to_faces(selected_faces, me)
+            bmesh.update_edit_mesh(me)
+            update_ui_from_selection(context)
+            update_active_image_from_face(context)
+            redraw_ui_panels(context)
+            self.report({'INFO'}, "Unassigned material")
+            return {'FINISHED'}
+
         mat = find_material_with_image(image)
         if mat is None:
             mat = create_material_with_image(image)
+        _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
         if mat.name not in me.materials:
             me.materials.append(mat)
         mat_index = me.materials.find(mat.name)

@@ -11,6 +11,7 @@ from ..core.face_id import get_face_id_layer, save_face_selection, restore_face_
 from ..core.materials import (
     get_image_from_material, get_selected_image_path,
     find_material_with_image, create_material_with_image,
+    get_unassigned_material,
 )
 from ..core.uv_projection import face_aligned_project, apply_uv_to_face, derive_transform_from_uvs
 from ..core.uv_layers import get_render_active_uv_layer
@@ -188,6 +189,9 @@ def apply_texture_from_file_browser():
         mat = find_material_with_image(image)
         if mat is None:
             mat = create_material_with_image(image)
+
+        if in_edit_mode and len(obj.data.materials) == 0 and len(selected_faces) < len(bm.faces):
+            obj.data.materials.append(get_unassigned_material())
 
         fb_id_layer = get_face_id_layer(bm)
         face_old_info = {}

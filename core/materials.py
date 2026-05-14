@@ -6,6 +6,7 @@ from .logging import debug_log
 
 
 _BLENDER_SUFFIX = re.compile(r'\.\d{3,}$')
+_UNASSIGNED_MATERIAL_NAME = "ANVIL_Unassigned"
 
 
 def get_image_from_material(mat):
@@ -72,6 +73,17 @@ def find_material_with_image(image):
             return mat
     debug_log(f"[FindMaterial] image={image.name!r} -> NOT FOUND")
     return None
+
+
+def get_unassigned_material():
+    """Return a neutral material used to preserve untextured face slots."""
+    mat = bpy.data.materials.get(_UNASSIGNED_MATERIAL_NAME)
+    if mat:
+        return mat
+
+    mat = bpy.data.materials.new(name=_UNASSIGNED_MATERIAL_NAME)
+    mat.diffuse_color = (0.8, 0.8, 0.8, 1.0)
+    return mat
 
 
 def get_principled_bsdf_from_material(mat):

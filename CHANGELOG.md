@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.8
+- Assigning textures to face no longer automatically consumes all unassigned faces on an object
+
 # 1.6.7
 - Add randomise offsets button
 - Support undo / redo for cross object transactions (experimental!)
