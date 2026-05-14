@@ -200,11 +200,6 @@ class LEVELDESIGN_OT_toggle_fixed_hotspot_overlay(Operator):
     def execute(self, context):
         props = context.scene.level_design_props
         props.show_fixed_hotspot_overlay = not props.show_fixed_hotspot_overlay
-        print(
-            "Anvil Level Design: Fixed hotspot overlay toggled "
-            f"enabled={props.show_fixed_hotspot_overlay}",
-            flush=True,
-        )
         invalidate_overlay()
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':

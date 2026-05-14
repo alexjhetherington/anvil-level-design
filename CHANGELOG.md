@@ -2,6 +2,7 @@
 
 # 1.6.8
 - Assigning textures to face no longer automatically consumes all unassigned faces on an object
+- Turn off graphics cards diagnostics. The crash is was not Anvil. (I might regret this but I am OCD about not spamming your logs)
 
 # 1.6.7
 - Add randomise offsets button
