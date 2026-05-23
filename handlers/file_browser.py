@@ -90,9 +90,18 @@ def consolidate_duplicate_materials():
     replacements = {}
     for base_name, duplicates in material_groups.items():
         canonical = bpy.data.materials[base_name]
-        for suffix_num, mat in duplicates:
-            if mat != canonical:
-                replacements[mat] = canonical
+        canonical_image = get_image_from_material(canonical)
+
+        if canonical_image is None:
+            continue
+
+        for suffix_num, candidate in duplicates:
+            if candidate is canonical:
+                continue
+
+            is_duplicate = get_image_from_material(candidate) is canonical_image
+            if is_duplicate:
+                replacements[candidate] = canonical
 
     if not replacements:
         return

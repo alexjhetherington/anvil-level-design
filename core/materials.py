@@ -55,7 +55,8 @@ def find_material_with_image(image):
     """Return existing material that uses this image, or None"""
     expected_name = f"IMG_{image.name}"
     mat = bpy.data.materials.get(expected_name)
-    if mat:
+    is_match = mat and get_image_from_material(mat) is image
+    if is_match:
         debug_log(f"[FindMaterial] image={image.name!r} -> lookup={expected_name!r} -> FOUND")
         return mat
     # HACK: Blender appends .001/.002/etc. to image datablock names when there
@@ -68,7 +69,8 @@ def find_material_with_image(image):
     if base_name != image.name:
         fallback_name = f"IMG_{base_name}"
         mat = bpy.data.materials.get(fallback_name)
-        if mat:
+        is_match = mat and get_image_from_material(mat) is image
+        if is_match:
             debug_log(f"[FindMaterial] image={image.name!r} -> fallback={fallback_name!r} -> FOUND")
             return mat
     debug_log(f"[FindMaterial] image={image.name!r} -> NOT FOUND")
