@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.9
+- Opening Asset Browser + File Browser at the same time no longer prevents texture application
+
 # 1.6.8
 - Assigning textures to face no longer automatically consumes all unassigned faces on an object
 - Cube cut of 0 area initial face is no longer allowed

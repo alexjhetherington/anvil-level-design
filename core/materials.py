@@ -1,3 +1,4 @@
+import os
 import re
 
 import bpy
@@ -237,20 +238,38 @@ def create_material_with_image(image):
     return mat
 
 
-def get_selected_image_path(context):
-    """Return absolute filepath of selected image in File Browser, or None"""
-    if not context.window or not context.window.screen:
+def _get_selected_file_path_from_area(area):
+    if area.type != 'FILE_BROWSER':
         return None
 
-    for area in context.window.screen.areas:
-        if area.type == 'FILE_BROWSER':
-            space = area.spaces.active
-            params = space.params
-            if not params or not params.filename:
-                continue
+    space = area.spaces.active
+    params = space.params
+    if not params or not params.filename:
+        return None
 
-            # directory is bytes, filename is str
-            directory = params.directory.decode('utf-8')
-            filepath = bpy.path.abspath(directory + params.filename)
+    directory = params.directory.decode('utf-8')
+    filepath = bpy.path.abspath(directory + params.filename)
+    if not os.path.isfile(filepath):
+        debug_log(f"[FileBrowser] Skipping non-file selection: {filepath}")
+        return None
+
+    return filepath
+
+
+def get_selected_image_path(screen, active_area):
+    """Return absolute filepath of selected image in File Browser, or None"""
+    if not screen:
+        return None
+
+    areas = []
+    if active_area and active_area.type == 'FILE_BROWSER':
+        areas.append(active_area)
+    for area in screen.areas:
+        if area not in areas:
+            areas.append(area)
+
+    for area in areas:
+        filepath = _get_selected_file_path_from_area(area)
+        if filepath:
             return filepath
     return None

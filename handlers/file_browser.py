@@ -127,7 +127,8 @@ def apply_texture_from_file_browser():
         context = bpy.context
         obj = context.object
 
-        current_path = get_selected_image_path(context)
+        screen = context.window.screen if context.window else None
+        current_path = get_selected_image_path(screen, context.area)
 
         if not current_path:
             return
@@ -330,7 +331,8 @@ def _file_browser_watcher_timer():
         if not has_file_browser:
             return 0.5
 
-        current_path = get_selected_image_path(context)
+        screen = context.window.screen if context.window else None
+        current_path = get_selected_image_path(screen, context.area)
 
         if current_path and current_path != _last_file_browser_path:
             apply_texture_from_file_browser()
@@ -350,7 +352,8 @@ def start_file_browser_watcher():
         return
 
     _file_browser_watcher_running = True
-    _last_file_browser_path = get_selected_image_path(bpy.context)
+    screen = bpy.context.window.screen if bpy.context.window else None
+    _last_file_browser_path = get_selected_image_path(screen, bpy.context.area)
     bpy.app.timers.register(_file_browser_watcher_timer, first_interval=0.1)
 
 
