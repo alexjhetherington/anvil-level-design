@@ -9,6 +9,9 @@ from .operator import (
     _raycast_element_aware,
     _nearest_edge_on_face,
     _nearest_vert_on_face,
+    _select_active_element,
+    _selection_history_keys,
+    _restore_selection_history,
 )
 
 
@@ -38,6 +41,8 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
         self._saved_vert_sel = {v.index for v in bm.verts if v.select}
         self._saved_edge_sel = {e.index for e in bm.edges if e.select}
         self._saved_face_sel = {f.index for f in bm.faces if f.select}
+        self._saved_select_history = _selection_history_keys(bm)
+        self._saved_active_face_index = bm.faces.active.index if bm.faces.active else -1
         self._select_mode = tuple(context.tool_settings.mesh_select_mode)
         return True
 
@@ -64,7 +69,8 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
                 return
             self._paint_visited.add(face_index)
 
-            bm.faces[face_index].select = True
+            _select_active_element(bm, bm.faces[face_index], True)
+            bm.faces.active = bm.faces[face_index]
         else:
             face, location, culled_element = _raycast_element_aware(
                 self._paint_bvh, origin_local, dir_local,
@@ -81,11 +87,11 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
                 self._paint_visited.add(elem_key)
 
                 if is_edge_mode:
-                    culled_element.select = True
+                    _select_active_element(bm, culled_element, True)
                     for v in culled_element.verts:
                         v.select = True
                 else:
-                    culled_element.select = True
+                    _select_active_element(bm, culled_element, True)
             else:
                 if is_edge_mode:
                     edge = _nearest_edge_on_face(location, face)
@@ -95,7 +101,7 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
                     if elem_key in self._paint_visited:
                         return
                     self._paint_visited.add(elem_key)
-                    edge.select = True
+                    _select_active_element(bm, edge, True)
                     for v in edge.verts:
                         v.select = True
                 else:
@@ -106,7 +112,7 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
                     if elem_key in self._paint_visited:
                         return
                     self._paint_visited.add(elem_key)
-                    vert.select = True
+                    _select_active_element(bm, vert, True)
 
     def paint_cancel(self, context):
         bm = bmesh.from_edit_mesh(self._paint_obj.data)
@@ -120,6 +126,12 @@ class LEVELDESIGN_OT_backface_paint_select(ModalPaintBase, Operator):
             e.select = e.index in self._saved_edge_sel
         for f in bm.faces:
             f.select = f.index in self._saved_face_sel
+
+        _restore_selection_history(bm, self._saved_select_history)
+        if 0 <= self._saved_active_face_index < len(bm.faces):
+            active_face = bm.faces[self._saved_active_face_index]
+            if active_face.select:
+                bm.faces.active = active_face
 
 
 def register():

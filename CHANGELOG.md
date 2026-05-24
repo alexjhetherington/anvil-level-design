@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.11
+- Select vertex changes 'primary vertex' (enables merge at first and merge at last)
+
 # 1.6.10
 - FIX MAC OS CRASH ON STARTUP (existed for ages!)
 

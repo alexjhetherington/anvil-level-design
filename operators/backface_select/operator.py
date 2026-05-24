@@ -178,6 +178,77 @@ def _is_culled_backface(face, ray_direction_local, materials):
             and has_backface_culling_enabled(face.material_index, materials))
 
 
+def _remove_from_select_history(bm, element):
+    """Remove an element from selection history if it is present."""
+    try:
+        bm.select_history.remove(element)
+    except (ReferenceError, ValueError):
+        pass
+
+
+def _activate_selection_element(bm, element):
+    """Make an explicitly selected element Blender's active edit selection."""
+    _remove_from_select_history(bm, element)
+    bm.select_history.add(element)
+
+
+def _select_active_element(bm, element, selected):
+    """Select/deselect one element and keep Blender's active element in sync."""
+    element.select = selected
+    if selected:
+        _activate_selection_element(bm, element)
+    else:
+        _remove_from_select_history(bm, element)
+
+
+def _selection_history_key(element):
+    """Return a stable key for a bmesh selection-history element."""
+    if isinstance(element, bmesh.types.BMVert):
+        return ('VERT', element.index)
+    if isinstance(element, bmesh.types.BMEdge):
+        return ('EDGE', element.index)
+    if isinstance(element, bmesh.types.BMFace):
+        return ('FACE', element.index)
+    return None
+
+
+def _selection_element_from_key(bm, key):
+    """Resolve a saved selection-history key back to its current element."""
+    if key is None:
+        return None
+    elem_type, index = key
+    if elem_type == 'VERT':
+        bm.verts.ensure_lookup_table()
+        if 0 <= index < len(bm.verts):
+            return bm.verts[index]
+    elif elem_type == 'EDGE':
+        bm.edges.ensure_lookup_table()
+        if 0 <= index < len(bm.edges):
+            return bm.edges[index]
+    elif elem_type == 'FACE':
+        bm.faces.ensure_lookup_table()
+        if 0 <= index < len(bm.faces):
+            return bm.faces[index]
+    return None
+
+
+def _selection_history_keys(bm):
+    """Save bmesh selection history by element type and index."""
+    return [
+        key for key in (_selection_history_key(element) for element in bm.select_history)
+        if key is not None
+    ]
+
+
+def _restore_selection_history(bm, history_keys):
+    """Restore bmesh selection history from saved element keys."""
+    bm.select_history.clear()
+    for key in history_keys:
+        element = _selection_element_from_key(bm, key)
+        if element is not None and element.select:
+            bm.select_history.add(element)
+
+
 def _collect_fan_faces(bvh, bm, materials, region, rv3d, obj_matrix,
                        mouse_2d, max_iterations):
     """Cast fan rays around the cursor to find nearby faces.
@@ -550,28 +621,32 @@ class LEVELDESIGN_OT_backface_select(Operator):
                     culled_element = bm.verts[culled_element.index]
 
         if is_face_mode:
-            face.select = not face.select if self.extend else True
-            bm.faces.active = face
+            new_state = not face.select if self.extend else True
+            _select_active_element(bm, face, new_state)
+            if new_state:
+                bm.faces.active = face
         elif culled_element is not None:
             # Picked an edge/vert from a culled backface
             if is_edge_mode:
                 new_state = not culled_element.select if self.extend else True
-                culled_element.select = new_state
+                _select_active_element(bm, culled_element, new_state)
                 for v in culled_element.verts:
                     v.select = new_state
             else:
-                culled_element.select = not culled_element.select if self.extend else True
+                new_state = not culled_element.select if self.extend else True
+                _select_active_element(bm, culled_element, new_state)
         elif is_edge_mode:
             edge = _nearest_edge_on_face(hit_point, face)
             if edge is not None:
                 new_state = not edge.select if self.extend else True
-                edge.select = new_state
+                _select_active_element(bm, edge, new_state)
                 for v in edge.verts:
                     v.select = new_state
         elif is_vert_mode:
             vert = _nearest_vert_on_face(hit_point, face)
             if vert is not None:
-                vert.select = not vert.select if self.extend else True
+                new_state = not vert.select if self.extend else True
+                _select_active_element(bm, vert, new_state)
 
         bm.select_flush_mode()
         bmesh.update_edit_mesh(me)
