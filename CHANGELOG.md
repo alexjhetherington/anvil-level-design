@@ -1,6 +1,6 @@
 # Anvil Level Design Changelog
 
-# 1.7.0
+# 1.6.10
 - FIX MAC OS CRASH ON STARTUP (existed for ages!)
 
 # 1.6.9
