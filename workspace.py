@@ -106,8 +106,21 @@ class LEVELDESIGN_OT_create_hotspot_mapping_workspace(bpy.types.Operator):
 
 def setup_addon_workspaces():
     """Create addon workspaces and configure scene settings for new files."""
+    global _specialized_template_active
+
     if _specialized_template_active:
-        return
+        remove_addon_workspaces()
+        return None
+
+    workspace_name = _get_active_workspace_name()
+    if workspace_name is None:
+        return 0.1
+
+    if workspace_name in _SPECIALIZED_WORKSPACES:
+        _specialized_template_active = True
+        remove_addon_workspaces()
+        return None
+
     create_hotspot_mapping_workspace()
     create_level_design_workspace()
     bpy.ops.workspace.reorder_to_front()
@@ -136,6 +149,8 @@ def setup_addon_workspaces():
                         space.overlay.grid_subdivisions = grid_subdivisions
                         space.overlay.show_extra_edge_length = show_edge_length
 
+    return None
+
 
 def remove_addon_workspaces():
     """Remove addon workspaces if they exist."""
@@ -158,6 +173,21 @@ _splash_watcher_owner = object()
 _specialized_template_active = False
 
 
+def _get_active_workspace_name():
+    try:
+        window = bpy.context.window
+        if window and window.workspace:
+            return window.workspace.name
+
+        workspace = bpy.context.workspace
+        if workspace:
+            return workspace.name
+    except (AttributeError, RuntimeError):
+        pass
+
+    return None
+
+
 def reset_specialized_template_flag():
     """Reset the flag so setup_addon_workspaces runs on the next load."""
     global _specialized_template_active
@@ -167,29 +197,35 @@ def reset_specialized_template_flag():
 def _on_workspace_changed():
     """One-shot callback: if the first workspace switch in an unsaved file
     is to a specialised template, remove the addon workspaces."""
-    global _specialized_template_active
-    bpy.msgbus.clear_by_owner(_splash_watcher_owner)
-
-    if bpy.data.filepath:
-        return
-
-    workspace_name = bpy.context.window.workspace.name
-    if workspace_name in _SPECIALIZED_WORKSPACES:
-        _specialized_template_active = True
-        remove_addon_workspaces()
+    if not bpy.app.timers.is_registered(_handle_splash_workspace_change):
+        bpy.app.timers.register(_handle_splash_workspace_change, first_interval=0.0)
 
 
 def subscribe_splash_watcher():
     """Subscribe to workspace changes to detect specialised splash selection."""
     bpy.msgbus.clear_by_owner(_splash_watcher_owner)
 
-    window = bpy.context.window
     bpy.msgbus.subscribe_rna(
-        key=window.path_resolve("workspace", False),
+        key=(bpy.types.Window, "workspace"),
         owner=_splash_watcher_owner,
         args=(),
         notify=_on_workspace_changed,
     )
+
+
+def _handle_splash_workspace_change():
+    global _specialized_template_active
+
+    bpy.msgbus.clear_by_owner(_splash_watcher_owner)
+    if bpy.data.filepath:
+        return None
+
+    workspace_name = _get_active_workspace_name()
+    if workspace_name in _SPECIALIZED_WORKSPACES:
+        _specialized_template_active = True
+        remove_addon_workspaces()
+
+    return None
 
 
 def register():
