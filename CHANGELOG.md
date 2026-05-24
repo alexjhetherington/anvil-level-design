@@ -1,7 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.7.0
-- Fix macOS crash when switching workspaces
+- FIX MAC OS CRASH ON STARTUP (existed for ages!)
 
 # 1.6.9
 - Opening Asset Browser + File Browser at the same time no longer prevents texture application
