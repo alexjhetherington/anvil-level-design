@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.12
+- Support Collection Exports
+
 # 1.6.11
 - Select vertex changes 'primary vertex' (enables merge at first and merge at last)
 
