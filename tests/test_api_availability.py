@@ -5,6 +5,8 @@ from .base_test import AnvilTestCase
 
 # Every bpy.ops.* operator the addon depends on (excluding custom leveldesign/hotspot ops)
 _REQUIRED_OPERATORS = [
+    "collection.exporter_add",
+    "collection.exporter_export",
     "ed.redo",
     "ed.undo",
     "ed.undo_push",
@@ -78,11 +80,27 @@ class APIAvailabilityTest(AnvilTestCase):
     def test_all_required_blender_data_apis_exist(self):
         missing = []
         mesh = bpy.data.meshes.new("api_availability_mesh")
+        collection = bpy.data.collections.new("api_availability_collection")
         try:
             if not hasattr(mesh.materials, "clear"):
                 missing.append("Mesh.materials.clear")
+            if not hasattr(bpy.data.collections, "get"):
+                missing.append("BlendDataCollections.get")
+            if not hasattr(bpy.data.collections, "remove"):
+                missing.append("BlendDataCollections.remove")
+            if not hasattr(bpy.data.objects, "remove"):
+                missing.append("BlendDataObjects.remove")
+            if not hasattr(bpy.data.meshes, "remove"):
+                missing.append("BlendDataMeshes.remove")
+            if not hasattr(bpy.data.curves, "remove"):
+                missing.append("BlendDataCurves.remove")
+            if not hasattr(collection, "children"):
+                missing.append("Collection.children")
+            if not hasattr(collection, "exporters"):
+                missing.append("Collection.exporters")
         finally:
             bpy.data.meshes.remove(mesh)
+            bpy.data.collections.remove(collection)
 
         self.assertEqual(
             missing, [],
