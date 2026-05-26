@@ -79,6 +79,10 @@ class APIAvailabilityTest(AnvilTestCase):
 
     def test_all_required_blender_data_apis_exist(self):
         missing = []
+        screen = bpy.context.window.screen
+        if not any(hasattr(area, "ui_type") for area in screen.areas):
+            missing.append("Area.ui_type")
+
         mesh = bpy.data.meshes.new("api_availability_mesh")
         collection = bpy.data.collections.new("api_availability_collection")
         try:

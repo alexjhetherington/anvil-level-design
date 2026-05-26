@@ -24,6 +24,38 @@ _MINIMUM_BLENDER_VERSION = bl_info["blender"]
 _VERSION_OK = bpy.app.version >= _MINIMUM_BLENDER_VERSION
 
 _version_warning_handle = None
+_uv_editor_warning_handle = None
+
+
+def _get_addon_preferences():
+    addon = bpy.context.preferences.addons.get(__package__)
+    if not addon:
+        return None
+    return addon.preferences
+
+
+def _draw_centered_line(font_id, text, center_x, y, max_width, font_size, color):
+    size = font_size
+    blf.size(font_id, size)
+    text_width, text_height = blf.dimensions(font_id, text)
+
+    while text_width > max_width and size > 12:
+        size -= 1
+        blf.size(font_id, size)
+        text_width, text_height = blf.dimensions(font_id, text)
+
+    blf.color(font_id, color[0], color[1], color[2], color[3])
+    blf.position(font_id, center_x - text_width / 2, y, 0)
+    blf.draw(font_id, text)
+    return text_height
+
+
+def _is_current_area_uv_editor():
+    area = bpy.context.area
+    if area is None or area.type != 'IMAGE_EDITOR':
+        return False
+
+    return getattr(area, "ui_type", None) == 'UV'
 
 
 def _draw_version_warning():
@@ -56,6 +88,37 @@ def _draw_version_warning():
     dw, dh = blf.dimensions(font_id, detail)
     blf.position(font_id, center_x - dw / 2, center_y - 20, 0)
     blf.draw(font_id, detail)
+
+
+def _draw_uv_editor_warning():
+    if not is_level_design_workspace():
+        return
+
+    preferences = _get_addon_preferences()
+    if preferences and not preferences.show_level_design_uv_editor_warning:
+        return
+
+    if not _is_current_area_uv_editor():
+        return
+
+    region = bpy.context.region
+    if not region:
+        return
+
+    font_id = 0
+    center_x = region.width // 2
+    center_y = region.height // 2
+    max_width = region.width * 0.9
+
+    _draw_centered_line(
+        font_id,
+        "UV Editing is not supported in the Level Design workspace.",
+        center_x,
+        center_y,
+        max_width,
+        24,
+        (1.0, 0.8, 0.25, 1.0),
+    )
 
 
 class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
@@ -231,6 +294,12 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         default=True,
     )
 
+    show_level_design_uv_editor_warning: bpy.props.BoolProperty(
+        name="Show UV Editor Warning",
+        description="Show a warning over UV editors opened in the Level Design workspace",
+        default=True,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -243,6 +312,11 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.operator("leveldesign.create_hotspot_mapping_workspace")
         row.enabled = not workspace.hotspot_mapping_workspace_exists()
+
+        layout.separator()
+        layout.label(text="Workspace Warnings")
+        box = layout.box()
+        box.prop(self, "show_level_design_uv_editor_warning")
 
         # New File Defaults section
         layout.separator()
@@ -552,7 +626,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
 
 
 def register():
-    global _version_warning_handle
+    global _version_warning_handle, _uv_editor_warning_handle
 
     version = ".".join(str(v) for v in bl_info["version"])
     blender_version = ".".join(str(v) for v in bpy.app.version[:3])
@@ -579,6 +653,10 @@ def register():
     bpy.utils.register_class(LEVELDESIGN_OT_set_pref_interpolation)
     bpy.utils.register_class(LevelDesignPreferences)
 
+    _uv_editor_warning_handle = bpy.types.SpaceImageEditor.draw_handler_add(
+        _draw_uv_editor_warning, (), 'WINDOW', 'POST_PIXEL'
+    )
+
     # Make face orientation front face transparent so only back faces are highlighted
     theme_3d = bpy.context.preferences.themes[0].view_3d
     theme_3d.face_front = (theme_3d.face_front[0], theme_3d.face_front[1], theme_3d.face_front[2], 0.0)
@@ -592,11 +670,15 @@ def register():
 
 
 def unregister():
-    global _version_warning_handle
+    global _version_warning_handle, _uv_editor_warning_handle
 
     if _version_warning_handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_version_warning_handle, 'WINDOW')
         _version_warning_handle = None
+
+    if _uv_editor_warning_handle is not None:
+        bpy.types.SpaceImageEditor.draw_handler_remove(_uv_editor_warning_handle, 'WINDOW')
+        _uv_editor_warning_handle = None
 
     hotspot_mapping.unregister()
     workspace.unregister()
