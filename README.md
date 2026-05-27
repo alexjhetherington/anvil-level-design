@@ -174,10 +174,6 @@ Vertex painting does not work through backface culling, so when you enter vertex
 
 This addon sets the front face orientation colour to transparent in the active theme.
 
-##### Paint Select
-
-Ctrl Left mouse paint selects, which is similar to circle select (hold and drag to add crossed items to the selection) but respects backface culling.
-
 ##### Select Connected
 
 Anvil also has its own select connected. Press L while hovering your cursor over a 3d element so select all connected elements.

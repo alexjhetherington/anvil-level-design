@@ -20,6 +20,8 @@ _REQUIRED_OPERATORS = [
     "mesh.select_edge_loop_multi",
     "mesh.select_edge_ring_multi",
     "mesh.select_linked",
+    "mesh.shortest_path_pick",
+    "mesh.shortest_path_select",
     "object.material_slot_remove",
     "scene.new",
     "object.mode_set",

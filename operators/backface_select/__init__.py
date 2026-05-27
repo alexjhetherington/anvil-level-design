@@ -7,7 +7,6 @@ allowing selection of visible geometry behind them without X-ray mode.
 
 import bpy
 from . import operator
-from . import paint_select
 
 
 _addon_keymaps = []
@@ -15,7 +14,6 @@ _addon_keymaps = []
 
 def register():
     operator.register()
-    paint_select.register()
 
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
@@ -68,13 +66,25 @@ def register():
     kmi.properties.loop = True
     _addon_keymaps.append((km, kmi))
 
-    # Ctrl+click (paint select)
+    # Ctrl+click (shortest path)
     kmi = km.keymap_items.new(
-        paint_select.LEVELDESIGN_OT_backface_paint_select.bl_idname,
+        operator.LEVELDESIGN_OT_backface_shortest_path_pick.bl_idname,
         'LEFTMOUSE', 'PRESS',
         ctrl=True,
         head=True
     )
+    kmi.properties.use_fill = False
+    _addon_keymaps.append((km, kmi))
+
+    # Ctrl+Shift+click (filled shortest path)
+    kmi = km.keymap_items.new(
+        operator.LEVELDESIGN_OT_backface_shortest_path_pick.bl_idname,
+        'LEFTMOUSE', 'PRESS',
+        ctrl=True,
+        shift=True,
+        head=True
+    )
+    kmi.properties.use_fill = True
     _addon_keymaps.append((km, kmi))
 
     # Object mode keymaps
@@ -105,5 +115,4 @@ def unregister():
         km.keymap_items.remove(kmi)
     _addon_keymaps.clear()
 
-    paint_select.unregister()
     operator.unregister()

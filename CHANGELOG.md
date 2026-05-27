@@ -3,6 +3,7 @@
 # 1.6.12
 - Support Collection Exports
 - Disable UV editor in Level Design workspace (it causes crashes - in the future those may be fixed)
+- Remove Paint Select so Ctrl Left Mouse can use backface-aware shortest path selection
 
 # 1.6.11
 - Select vertex changes 'primary vertex' (enables merge at first and merge at last)

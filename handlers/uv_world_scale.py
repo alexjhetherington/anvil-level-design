@@ -65,7 +65,6 @@ def apply_world_scale_uvs(obj, scene):
         'LEVELDESIGN_OT_pick_image_from_face',
         'LEVELDESIGN_OT_stretch_apply_image_to_face',
         'LEVELDESIGN_OT_apply_uv_transform_to_face',
-        'LEVELDESIGN_OT_backface_paint_select',
     }
     is_paint_modal = bool(current_modals & _PAINT_MODALS)
 

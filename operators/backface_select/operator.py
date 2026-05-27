@@ -201,6 +201,117 @@ def _select_active_element(bm, element, selected):
         _remove_from_select_history(bm, element)
 
 
+class _BackfacePick:
+    """Backface-aware mesh pick result for the current select mode."""
+
+    def __init__(self, me, bm, region, rv3d, mouse_2d,
+                 select_mode, face, location, culled_element):
+        self.me = me
+        self.bm = bm
+        self.region = region
+        self.rv3d = rv3d
+        self.mouse_2d = mouse_2d
+        self.select_mode = select_mode
+        self.face = face
+        self.location = location
+        self.culled_element = culled_element
+
+    @property
+    def is_vert_mode(self):
+        return self.select_mode[0]
+
+    @property
+    def is_edge_mode(self):
+        return self.select_mode[1]
+
+    @property
+    def is_face_mode(self):
+        return self.select_mode[2]
+
+    def target_index(self):
+        element = self.target_element()
+        return element.index if element is not None else -1
+
+    def target_element(self):
+        if self.face is None:
+            return None
+        if self.is_face_mode:
+            return self.face
+        if self.culled_element is not None:
+            return self.culled_element
+        if self.is_edge_mode:
+            return _nearest_edge_on_face(self.location, self.face)
+        if self.is_vert_mode:
+            return _nearest_vert_on_face(self.location, self.face)
+        return None
+
+    def select_target_for_shortest_path(self):
+        target = self.target_element()
+        if target is None:
+            return False
+
+        _select_active_element(self.bm, target, True)
+        if isinstance(target, bmesh.types.BMEdge):
+            for vert in target.verts:
+                vert.select = True
+        elif isinstance(target, bmesh.types.BMFace):
+            self.bm.faces.active = target
+
+        self.bm.select_flush_mode()
+        bmesh.update_edit_mesh(self.me)
+        return True
+
+
+def _mouse_2d_from_event(event):
+    return Vector((float(event.mouse_region_x), float(event.mouse_region_y)))
+
+
+def _ray_local_from_mouse(obj, region, rv3d, mouse_2d):
+    coord = (mouse_2d.x, mouse_2d.y)
+    view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
+    matrix_inv = obj.matrix_world.inverted()
+    ray_origin_local = matrix_inv @ ray_origin
+    ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
+
+    return ray_origin_local, ray_direction_local
+
+
+def _resolve_backface_pick(obj, select_mode, region, rv3d, mouse_2d):
+    me = obj.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.faces.ensure_lookup_table()
+
+    ray_origin_local, ray_direction_local = _ray_local_from_mouse(
+        obj, region, rv3d, mouse_2d
+    )
+
+    is_edge_mode = select_mode[1]
+    is_face_mode = select_mode[2]
+
+    bvh = BVHTree.FromBMesh(bm)
+    culled_element = None
+
+    if is_face_mode:
+        location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+            bvh, ray_origin_local, ray_direction_local,
+            bm, me.materials, max_iterations=64
+        )
+        face = bm.faces[face_index] if face_index is not None else None
+    else:
+        face, location, culled_element = _raycast_element_aware(
+            bvh, ray_origin_local, ray_direction_local,
+            bm, me.materials, region, rv3d, obj.matrix_world, mouse_2d,
+            is_edge_mode, max_iterations=64
+        )
+
+    return _BackfacePick(
+        me, bm, region, rv3d, mouse_2d,
+        select_mode, face, location, culled_element
+    )
+
+
 def _selection_history_key(element):
     """Return a stable key for a bmesh selection-history element."""
     if isinstance(element, bmesh.types.BMVert):
@@ -534,71 +645,39 @@ class LEVELDESIGN_OT_backface_select(Operator):
 
     def invoke(self, context, event):
         obj = context.object
-        me = obj.data
-        bm = bmesh.from_edit_mesh(me)
-        bm.faces.ensure_lookup_table()
-
-        # Build ray from mouse position
-        region = context.region
-        rv3d = context.region_data
-        coord = (event.mouse_region_x, event.mouse_region_y)
-        mouse_2d = Vector((float(coord[0]), float(coord[1])))
-
-        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
-        # Transform to object local space
-        matrix_inv = obj.matrix_world.inverted()
-        ray_origin_local = matrix_inv @ ray_origin
-        ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
-
-        select_mode = context.tool_settings.mesh_select_mode
-        is_vert_mode = select_mode[0]
-        is_edge_mode = select_mode[1]
-        is_face_mode = select_mode[2]
-
-        bvh = BVHTree.FromBMesh(bm)
-        culled_element = None
-
-        if is_face_mode:
-            # Face mode: skip culled backfaces entirely
-            location, normal, face_index, distance = raycast_bvh_skip_backfaces(
-                bvh, ray_origin_local, ray_direction_local,
-                bm, me.materials, max_iterations=64
-            )
-            face = bm.faces[face_index] if face_index is not None else None
-        else:
-            # Edge/vert mode: skip culled backfaces but catch nearby
-            # edges/verts on them in screen space
-            face, location, culled_element = _raycast_element_aware(
-                bvh, ray_origin_local, ray_direction_local,
-                bm, me.materials, region, rv3d, obj.matrix_world, mouse_2d,
-                is_edge_mode, max_iterations=64
-            )
+        pick = _resolve_backface_pick(
+            obj, tuple(context.tool_settings.mesh_select_mode),
+            context.region, context.region_data, _mouse_2d_from_event(event)
+        )
+        me = pick.me
+        bm = pick.bm
+        face = pick.face
+        culled_element = pick.culled_element
 
         if face is None:
             if not self.extend:
                 bpy.ops.mesh.select_all(action='DESELECT')
             return {'FINISHED'}
 
-        hit_point = location
+        hit_point = pick.location
 
         # Alt+click: loop select
         if self.loop:
             # Determine the target edge for loop select
             if culled_element is not None:
-                if is_edge_mode:
+                if pick.is_edge_mode:
                     loop_edge = culled_element
                 else:
-                    # For face/vert mode, culled_element isn't an edge —
+                    # For face/vert mode, culled_element isn't an edge -
                     # find the nearest edge on the face instead
                     loop_edge, _ = _screen_nearest_edge_on_face(
-                        face, region, rv3d, obj.matrix_world, mouse_2d
+                        face, pick.region, pick.rv3d,
+                        obj.matrix_world, pick.mouse_2d
                     )
             else:
                 loop_edge = None
 
-            if is_face_mode:
+            if pick.is_face_mode:
                 _do_face_loop_select(bm, me, face, hit_point, self.extend, loop_edge)
             else:
                 _do_edge_loop_select(bm, me, face, hit_point, self.extend, loop_edge)
@@ -613,21 +692,21 @@ class LEVELDESIGN_OT_backface_select(Operator):
             face = bm.faces[face.index]
             # Re-lookup culled_element after bmesh refresh
             if culled_element is not None:
-                if is_edge_mode:
+                if pick.is_edge_mode:
                     bm.edges.ensure_lookup_table()
                     culled_element = bm.edges[culled_element.index]
-                elif is_vert_mode:
+                elif pick.is_vert_mode:
                     bm.verts.ensure_lookup_table()
                     culled_element = bm.verts[culled_element.index]
 
-        if is_face_mode:
+        if pick.is_face_mode:
             new_state = not face.select if self.extend else True
             _select_active_element(bm, face, new_state)
             if new_state:
                 bm.faces.active = face
         elif culled_element is not None:
             # Picked an edge/vert from a culled backface
-            if is_edge_mode:
+            if pick.is_edge_mode:
                 new_state = not culled_element.select if self.extend else True
                 _select_active_element(bm, culled_element, new_state)
                 for v in culled_element.verts:
@@ -635,14 +714,14 @@ class LEVELDESIGN_OT_backface_select(Operator):
             else:
                 new_state = not culled_element.select if self.extend else True
                 _select_active_element(bm, culled_element, new_state)
-        elif is_edge_mode:
+        elif pick.is_edge_mode:
             edge = _nearest_edge_on_face(hit_point, face)
             if edge is not None:
                 new_state = not edge.select if self.extend else True
                 _select_active_element(bm, edge, new_state)
                 for v in edge.verts:
                     v.select = new_state
-        elif is_vert_mode:
+        elif pick.is_vert_mode:
             vert = _nearest_vert_on_face(hit_point, face)
             if vert is not None:
                 new_state = not vert.select if self.extend else True
@@ -651,6 +730,49 @@ class LEVELDESIGN_OT_backface_select(Operator):
         bm.select_flush_mode()
         bmesh.update_edit_mesh(me)
 
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_backface_shortest_path_pick(Operator):
+    """Shortest path select through backface-culled faces"""
+    bl_idname = "leveldesign.backface_shortest_path_pick"
+    bl_label = "Backface-Aware Shortest Path Pick"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    use_fill: bpy.props.BoolProperty()
+
+    @classmethod
+    def poll(cls, context):
+        if not is_level_design_workspace():
+            return False
+        obj = context.object
+        return (obj is not None
+                and obj.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
+
+    def invoke(self, context, event):
+        obj = context.object
+        pick = _resolve_backface_pick(
+            obj, tuple(context.tool_settings.mesh_select_mode),
+            context.region, context.region_data, _mouse_2d_from_event(event)
+        )
+
+        if pick.is_vert_mode:
+            target_index = pick.target_index()
+            if target_index < 0:
+                return {'FINISHED'}
+            bpy.ops.mesh.shortest_path_pick(
+                index=target_index,
+                use_fill=self.use_fill
+            )
+            return {'FINISHED'}
+
+        if not pick.select_target_for_shortest_path():
+            return {'FINISHED'}
+
+        bpy.ops.mesh.shortest_path_select(
+            use_fill=self.use_fill
+        )
         return {'FINISHED'}
 
 
@@ -797,9 +919,11 @@ class LEVELDESIGN_OT_backface_object_select(Operator):
 
 def register():
     bpy.utils.register_class(LEVELDESIGN_OT_backface_select)
+    bpy.utils.register_class(LEVELDESIGN_OT_backface_shortest_path_pick)
     bpy.utils.register_class(LEVELDESIGN_OT_backface_object_select)
 
 
 def unregister():
     bpy.utils.unregister_class(LEVELDESIGN_OT_backface_object_select)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_backface_shortest_path_pick)
     bpy.utils.unregister_class(LEVELDESIGN_OT_backface_select)
