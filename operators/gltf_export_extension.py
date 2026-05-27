@@ -510,8 +510,13 @@ def _separate_loose(scene, enabled):
 
     # Collect mesh objects (list() since we'll be adding new objects)
     mesh_objects = [obj for obj in scene.objects if obj.type == 'MESH']
+    shared_mesh_pointers = _shared_mesh_pointers(mesh_objects)
 
     for obj in mesh_objects:
+        if obj.data is not None and obj.data.as_pointer() in shared_mesh_pointers:
+            debug_log(f"[glTF Anvil]   Skipping linked mesh {obj.name}")
+            continue
+
         for o in scene.objects:
             o.select_set(False)
         obj.select_set(True)
@@ -525,6 +530,25 @@ def _separate_loose(scene, enabled):
             debug_log(f"[glTF Anvil]   Could not separate {obj.name}")
         finally:
             bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _shared_mesh_pointers(mesh_objects):
+    mesh_user_counts = {}
+    for obj in mesh_objects:
+        if obj.data is None:
+            continue
+
+        pointer = obj.data.as_pointer()
+        mesh_user_counts[pointer] = mesh_user_counts.get(pointer, 0) + 1
+
+    # This snapshot is defensive rather than strictly necessary: linked meshes
+    # would skip before separation anyway, but this keeps the policy based on
+    # the pre-separation scene even as mesh.separate mutates object/data users.
+    shared_mesh_pointers = set()
+    for pointer, user_count in mesh_user_counts.items():
+        if user_count > 1:
+            shared_mesh_pointers.add(pointer)
+    return shared_mesh_pointers
 
 
 def _cleanup(export_scene, source_scene, debug):

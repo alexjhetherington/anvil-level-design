@@ -78,6 +78,14 @@ def _create_loose_mesh_object(collection, object_name, mesh_name):
     return obj
 
 
+def _create_linked_duplicate(collection, source_object, object_name):
+    duplicate = source_object.copy()
+    duplicate.name = object_name
+    duplicate.data = source_object.data
+    collection.objects.link(duplicate)
+    return duplicate
+
+
 def _set_anvil_export_settings(scene, scale, apply_modifiers, separate_loose):
     props = scene.level_design_props
     props.gltf_anvil_enabled = True
@@ -284,6 +292,31 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
         self.assertEqual(len(gltf_data.get("nodes", [])), 2)
         self.assertEqual(scene.level_design_props.last_export_filepath, filepath)
 
+    def _run_separate_loose_linked_duplicate_export_route_test(self, route):
+        scene = bpy.context.scene
+        scene.name = "Scene"
+        collection = _create_export_collection(scene)
+        obj = _create_loose_mesh_object(collection, "LooseBlock", "LooseBlockMesh")
+        _create_linked_duplicate(collection, obj, "LooseBlockLinked")
+        _set_anvil_export_settings(scene, 1.0, False, True)
+
+        filepath, gltf_data = _export_using_route(
+            route,
+            collection,
+            f"matrix_separate_loose_linked_duplicate_{route}.gltf",
+        )
+
+        _assert_export_names(
+            self,
+            gltf_data,
+            [_expected_scene_name_for_route(route)],
+            ["LooseBlock", "LooseBlockLinked"],
+            ["LooseBlockMesh"],
+        )
+        self.assertEqual(len(gltf_data.get("meshes", [])), 1)
+        self.assertEqual(len(gltf_data.get("nodes", [])), 2)
+        self.assertEqual(scene.level_design_props.last_export_filepath, filepath)
+
     def test_gltf_anvil_scale_full_export_route_writes_original_names_and_scaled_geometry(self):
         self._run_scale_export_route_test(FULL_EXPORT_ROUTE)
 
@@ -301,6 +334,12 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
 
     def test_gltf_anvil_separate_loose_collection_export_route_writes_original_names_and_two_meshes(self):
         self._run_separate_loose_export_route_test(COLLECTION_EXPORT_ROUTE)
+
+    def test_gltf_anvil_separate_loose_full_export_route_with_linked_duplicate_skips_splitting_and_writes_one_shared_mesh(self):
+        self._run_separate_loose_linked_duplicate_export_route_test(FULL_EXPORT_ROUTE)
+
+    def test_gltf_anvil_separate_loose_collection_export_route_with_linked_duplicate_skips_splitting_and_writes_one_shared_mesh(self):
+        self._run_separate_loose_linked_duplicate_export_route_test(COLLECTION_EXPORT_ROUTE)
 
 
 class GltfExportRouteFlowTest(AnvilTestCase):
