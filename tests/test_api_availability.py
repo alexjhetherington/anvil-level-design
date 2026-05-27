@@ -30,6 +30,7 @@ _REQUIRED_OPERATORS = [
     "uv.follow_active_quads",
     "uv.unwrap",
     "view3d.view_axis",
+    "view3d.view_persportho",
     "view3d.walk",
     "wm.call_menu",
     "wm.call_panel",
@@ -39,6 +40,20 @@ _REQUIRED_OPERATORS = [
 
 
 class APIAvailabilityTest(AnvilTestCase):
+
+    def test_related_blender_default_perspective_orthographic_keymap_item_is_available_for_preferences_display(self):
+        keymap = bpy.context.window_manager.keyconfigs.default.keymaps.get("3D View")
+        found = False
+        if keymap:
+            for keymap_item in keymap.keymap_items:
+                if keymap_item.idname == "view3d.view_persportho":
+                    found = True
+                    break
+
+        self.assertTrue(
+            found,
+            "Missing related Blender default keymap item: 3D View -> view3d.view_persportho"
+        )
 
     def test_all_required_operators_exist(self):
         missing = []

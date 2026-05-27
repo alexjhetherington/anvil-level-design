@@ -27,13 +27,6 @@ _version_warning_handle = None
 _uv_editor_warning_handle = None
 
 
-def _get_addon_preferences():
-    addon = bpy.context.preferences.addons.get(__package__)
-    if not addon:
-        return None
-    return addon.preferences
-
-
 def _draw_centered_line(font_id, text, center_x, y, max_width, font_size, color):
     size = font_size
     blf.size(font_id, size)
@@ -92,10 +85,6 @@ def _draw_version_warning():
 
 def _draw_uv_editor_warning():
     if not is_level_design_workspace():
-        return
-
-    preferences = _get_addon_preferences()
-    if preferences and not preferences.show_level_design_uv_editor_warning:
         return
 
     if not _is_current_area_uv_editor():
@@ -294,12 +283,6 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         default=True,
     )
 
-    show_level_design_uv_editor_warning: bpy.props.BoolProperty(
-        name="Show UV Editor Warning",
-        description="Show a warning over UV editors opened in the Level Design workspace",
-        default=True,
-    )
-
     def draw(self, context):
         layout = self.layout
 
@@ -312,11 +295,6 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.operator("leveldesign.create_hotspot_mapping_workspace")
         row.enabled = not workspace.hotspot_mapping_workspace_exists()
-
-        layout.separator()
-        layout.label(text="Workspace Warnings")
-        box = layout.box()
-        box.prop(self, "show_level_design_uv_editor_warning")
 
         # New File Defaults section
         layout.separator()
@@ -405,7 +383,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
 
         # Category definitions: order matters for display
         REMAPPED_CATEGORY = "Remapped Defaults"
-        CATEGORY_ORDER = [REMAPPED_CATEGORY, "Navigation", "Selection", "UV", "Tools", "Other"]
+        RELATED_DEFAULT_CATEGORY = "Related Blender Defaults"
+        CATEGORY_ORDER = [REMAPPED_CATEGORY, RELATED_DEFAULT_CATEGORY, "Navigation", "Selection", "UV", "Tools", "Other"]
         CATEGORY_MAP = {
             "leveldesign.walk_navigation_hold": "Navigation",
             "leveldesign.ortho_view": "Navigation",
@@ -580,6 +559,23 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             category = CATEGORY_MAP.get(kmi_addon.idname, "Other")
                         categorized_entries[category].append((display_name, km_addon, kmi_display))
 
+            related_default_kmi = None
+            for keyconfig in (kc_user, wm.keyconfigs.default):
+                if not keyconfig:
+                    continue
+                keymap = keyconfig.keymaps.get("3D View")
+                if not keymap:
+                    continue
+                for keymap_item in keymap.keymap_items:
+                    if keymap_item.idname == "view3d.view_persportho":
+                        related_default_kmi = keymap_item
+                        categorized_entries[RELATED_DEFAULT_CATEGORY].append(
+                            ("Toggle Perspective / Orthographic", keymap, keymap_item)
+                        )
+                        break
+                if related_default_kmi:
+                    break
+
             # Draw categorized entries
             for category in CATEGORY_ORDER:
                 entries = categorized_entries[category]
@@ -591,6 +587,8 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                 box.label(text=category)
                 if category == REMAPPED_CATEGORY:
                     box.label(text="Blender default hotkeys that have been remapped by this addon", icon='INFO')
+                if category == RELATED_DEFAULT_CATEGORY:
+                    box.label(text="Blender default hotkeys that Anvil does not change but are useful here", icon='INFO')
                 if category == "Navigation":
                     box.label(text="Walk navigation controls can be found in the Blender keymap menu at: 3D View -> View3D Walk Modal", icon='INFO')
                 for display_name, km, kmi in entries:
