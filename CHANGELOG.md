@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.6.13
+- Add a refresh images button to the Texture Preview panel
+
 # 1.6.12
 - Support Collection Exports
 - Export separate loose meshes does not affect shared meshes (e.g. linked duplicates)

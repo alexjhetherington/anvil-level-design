@@ -59,6 +59,8 @@ Anvil LD manages materials to prevent duplicates. Use the Cleanup Unused Materia
 
 The currently selected image is previewed in the side panel; here the texture transparency channel can be linked to the shader, and roughness can be adjusted. 
 
+The refresh button on this panel will refresh all images in memory; should you have made any edits outside of Blender.
+
 Default material settings for new textures could be adjusted on the Anvil (Settings) panel.
 
 Default default material settings for new .blend files could be adjusted in the Anvil addon preferences.

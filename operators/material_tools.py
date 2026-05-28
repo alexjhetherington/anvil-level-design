@@ -9,6 +9,7 @@ from ..core.materials import (
     is_vertex_colors_enabled,
     remove_unused_nodes,
 )
+from ..core.workspace_check import is_level_design_workspace
 from ..handlers import get_active_image
 
 
@@ -258,6 +259,65 @@ class LEVELDESIGN_OT_fix_alpha_bleed(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_reload_all_external_images(Operator):
+    """Reload all external file images from disk"""
+
+    bl_idname = "leveldesign.reload_all_external_images"
+    bl_label = "Reload All External Images"
+    bl_description = "Reload all unpacked, unchanged external image files from disk"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def execute(self, context):
+        reloaded_count = 0
+        dirty_count = 0
+        packed_count = 0
+        failed_count = 0
+
+        for image in bpy.data.images:
+            if not image.filepath:
+                continue
+            if image.packed_file:
+                packed_count += 1
+                continue
+            if image.is_dirty:
+                dirty_count += 1
+                continue
+
+            try:
+                image.reload()
+                reloaded_count += 1
+            except RuntimeError:
+                failed_count += 1
+
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type in {'VIEW_3D', 'IMAGE_EDITOR', 'NODE_EDITOR'}:
+                    area.tag_redraw()
+
+        if reloaded_count == 0 and failed_count == 0:
+            self.report({'INFO'}, "No external images to reload")
+        elif failed_count > 0:
+            self.report(
+                {'WARNING'},
+                f"Reloaded {reloaded_count} image(s), {failed_count} failed",
+            )
+        else:
+            self.report({'INFO'}, f"Reloaded {reloaded_count} image(s)")
+
+        if dirty_count > 0 or packed_count > 0:
+            print(
+                "Anvil Level Design: Skipped image reload for "
+                f"{dirty_count} dirty image(s), {packed_count} packed image(s)",
+                flush=True,
+            )
+
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_OT_set_default_interpolation(Operator):
     """Set the default interpolation mode for new materials"""
 
@@ -310,6 +370,7 @@ classes = (
     LEVELDESIGN_OT_toggle_texture_alpha,
     LEVELDESIGN_OT_toggle_vertex_colors,
     LEVELDESIGN_OT_fix_alpha_bleed,
+    LEVELDESIGN_OT_reload_all_external_images,
     LEVELDESIGN_OT_set_default_interpolation,
     LEVELDESIGN_OT_cleanup_unused_materials,
 )

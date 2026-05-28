@@ -575,6 +575,15 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
     def poll(cls, context):
         return is_level_design_workspace()
 
+    def draw_header_preset(self, context):
+        self.layout.operator(
+            "leveldesign.reload_all_external_images",
+            text="",
+            icon='FILE_REFRESH',
+            emboss=False,
+        )
+        self.layout.separator(factor=0.4)
+
     def draw(self, context):
         import bmesh
 
