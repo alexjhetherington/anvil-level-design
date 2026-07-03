@@ -13,11 +13,13 @@ LLM coding assistance is used in the development of Anvil.
 ## Links
 
 Discuss in Discord: https://discord.gg/hHFZbDzR57
+
 Become a Patron: https://patreon.com/FootnotesForTheFuture
 
 Documentation (Web): https://anvilleveldesign.com/docs/
 
 Anvil Website: https://anvilleveldesign.com/
+
 My Website: http://www.footnotesforthefuture.com/
 
 ### Installation
