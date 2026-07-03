@@ -28,4 +28,4 @@ See the documentation for instructions, including tutorial videos: https://anvil
 
 ## Quick Start
 
-See the documentation for instructions, including tutorial videos: [TODO](https://anvilleveldesign.com/docs/quick-start/)
+See the documentation for instructions, including tutorial videos: https://anvilleveldesign.com/docs/quick-start/
