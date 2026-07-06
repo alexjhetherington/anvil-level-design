@@ -18,6 +18,7 @@ from . import view_context
 
 # Minimum rectangle size (world units) to prevent degenerate geometry
 MIN_RECTANGLE_SIZE = 0.001
+ORTHO_DEPTH_CURSOR_WRAP_MARGIN = 24
 
 
 def _get_undo_redo_keys(context):
@@ -167,10 +168,17 @@ class ModalDrawBase:
         self._active_view_target = target
         return changed
 
+    def _can_follow_view_target(self):
+        if not hasattr(self, "_state"):
+            return True
+        return self._state == self.STATE_FIRST_VERTEX
+
     def _resolve_view_event(self, context, event):
-        target = view_context.view_target_under_mouse(
-            context.window, event.mouse_x, event.mouse_y
-        )
+        target = None
+        if self._can_follow_view_target():
+            target = view_context.view_target_under_mouse(
+                context.window, event.mouse_x, event.mouse_y
+            )
         if target is None:
             previous = getattr(self, "_active_view_target", None)
             if previous is not None and previous.is_live():
@@ -203,11 +211,65 @@ class ModalDrawBase:
             alt,
         )
 
+    def _depth_event_with_wrap_offset(self, event):
+        offset = getattr(self, "_depth_cursor_wrap_offset", 0)
+        if offset == 0:
+            return event
+
+        return view_context.ViewMouseEvent(
+            event.mouse_x,
+            event.mouse_y,
+            event.mouse_region_x + offset,
+            event.mouse_region_y,
+            event.ctrl,
+            event.shift,
+            event.alt,
+        )
+
+    def _maybe_wrap_depth_cursor(self, context, event):
+        if self._state != self.STATE_DEPTH or not self._is_2d_view:
+            return
+
+        try:
+            region = context.region
+            width = region.width
+            height = region.height
+        except (AttributeError, ReferenceError):
+            return
+
+        if width <= 4 or height <= 0:
+            return
+
+        margin = ORTHO_DEPTH_CURSOR_WRAP_MARGIN
+        if width <= margin * 2 + 2:
+            margin = max(1, int(width / 4))
+
+        target_region_x = None
+        if event.mouse_region_x >= width - margin:
+            target_region_x = margin
+        elif event.mouse_region_x <= margin:
+            target_region_x = width - margin - 1
+
+        if target_region_x is None:
+            return
+
+        try:
+            target_window_x = region.x + target_region_x
+            target_region_y = min(max(event.mouse_region_y, 0), height - 1)
+            target_window_y = region.y + target_region_y
+            context.window.cursor_warp(target_window_x, target_window_y)
+        except (AttributeError, ReferenceError, RuntimeError):
+            return
+
+        self._depth_cursor_wrap_offset += event.mouse_region_x - target_region_x
+        self._last_mouse_window_pos = (target_window_x, target_window_y)
+
     # --- Operator lifecycle ---
 
     def invoke(self, context, event):
         self._active_view_target = None
         self._last_mouse_window_pos = None
+        self._state = self.STATE_FIRST_VERTEX
         view_target, view_event, _view_changed = self._resolve_view_event(context, event)
         if view_target is None:
             self.report({'ERROR'}, "No 3D View available")
@@ -220,9 +282,6 @@ class ModalDrawBase:
             prev._cancelled = True
         ModalDrawBase._active_instance = self
         self._cancelled = False
-
-        # Initialize state
-        self._state = self.STATE_FIRST_VERTEX
 
         # First vertex data
         self._first_vertex = None
@@ -249,6 +308,7 @@ class ModalDrawBase:
         # Depth phase
         self._depth = 0.0
         self._depth_start_mouse_pos = (0, 0)  # (x, y) for geometric depth calc
+        self._depth_cursor_wrap_offset = 0
         self._invalid_message = None
 
         # Axis lock (Ctrl held during FIRST_VERTEX to extend face plane infinitely)
@@ -316,6 +376,7 @@ class ModalDrawBase:
                     view_event.mouse_region_x,
                     view_event.mouse_region_y,
                 )
+                self._depth_cursor_wrap_offset = 0
 
             # Check if grid size changed (user may have custom hotkeys for this)
             current_grid_size = utils.get_grid_size(context)
@@ -338,6 +399,7 @@ class ModalDrawBase:
             if event.type == 'MOUSEMOVE':
                 self._last_mouse_window_pos = (event.mouse_x, event.mouse_y)
                 self._handle_mouse_move(context, view_event)
+                self._maybe_wrap_depth_cursor(context, view_event)
                 utils.tag_redraw_all_3d_views()
                 return {'RUNNING_MODAL'}
 
@@ -514,8 +576,9 @@ class ModalDrawBase:
     def _update_depth_preview(self, context, event):
         """Update the depth/cuboid preview."""
         if self._is_2d_view:
+            depth_event = self._depth_event_with_wrap_offset(event)
             depth = self._calculate_depth_from_mouse_2d(
-                context, event, self._depth_start_mouse_pos[0]
+                context, depth_event, self._depth_start_mouse_pos[0]
             )
         else:
             depth = self._calculate_depth_from_mouse_3d(
@@ -714,6 +777,7 @@ class ModalDrawBase:
 
         # Store initial mouse position for depth calculation
         self._depth_start_mouse_pos = (event.mouse_region_x, event.mouse_region_y)
+        self._depth_cursor_wrap_offset = 0
         self._depth = 0.0
         self._preview.update_depth(0.0)
         self._set_invalid_message(self._get_depth_invalid_message(self._depth))

@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.7.1
+- Box builder in orthographic view now wraps cursor (box builder depth no longer limited)
 - Added box builder name suffix preference (handy for Godot to add -col suffix)
 
 # 1.7.0

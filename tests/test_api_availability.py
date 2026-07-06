@@ -145,6 +145,8 @@ class APIAvailabilityTest(AnvilTestCase):
         missing = []
         if not hasattr(bpy.context.window, "screen"):
             missing.append("Window.screen")
+        if not hasattr(bpy.context.window, "cursor_warp"):
+            missing.append("Window.cursor_warp")
         screen = bpy.context.window.screen
         if not any(hasattr(area, "ui_type") for area in screen.areas):
             missing.append("Area.ui_type")
