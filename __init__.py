@@ -490,6 +490,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.prefab_rotate_right": "Tools",
             "leveldesign.context_weld": "Tools",
             "leveldesign.toggle_grid_overlay": "Tools",
+            "leveldesign.toggle_edge_length_display": "Tools",
             "leveldesign.cursor_to_grid": "Tools",
             "leveldesign.uv_transform_modal": "UV",
             "leveldesign.snapping_mode_dispatch": "UV",

@@ -19,6 +19,7 @@ from . import weld
 from . import vertex_paint_color_picker
 from . import overlap_check
 from . import grid_overlay
+from . import viewport_measurements
 from . import fixed_hotspot_overlay
 from . import library_object_overlay
 from . import uv_transform_modal
@@ -50,6 +51,7 @@ def register():
     vertex_paint_color_picker.register()
     overlap_check.register()
     grid_overlay.register()
+    viewport_measurements.register()
     fixed_hotspot_overlay.register()
     library_object_overlay.register()
     uv_transform_modal.register()
@@ -67,6 +69,7 @@ def unregister():
     uv_transform_modal.unregister()
     library_object_overlay.unregister()
     fixed_hotspot_overlay.unregister()
+    viewport_measurements.unregister()
     grid_overlay.unregister()
     overlap_check.unregister()
     vertex_paint_color_picker.unregister()

@@ -3,6 +3,7 @@
 # 1.7.1
 - Box builder in orthographic view now wraps cursor (box builder depth no longer limited)
 - Added box builder name suffix preference (handy for Godot to add -col suffix)
+- Added hotkey to toggle view edge length for view currently under cursor (unbound, requires manual setup)
 
 # 1.7.0
 - Replaced the file browser with the TEXTURE BROWSER
