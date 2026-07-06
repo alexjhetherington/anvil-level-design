@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.7.1
+- Added box builder name suffix preference (handy for Godot to add -col suffix)
+
 # 1.7.0
 - Replaced the file browser with the TEXTURE BROWSER
     - MANUAL FIX REQUIRED FOR FILES CREATED WITH PREVIOUS VERSIONS Change the File Browser window in the Level Design Workspace to a preferences window

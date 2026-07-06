@@ -300,7 +300,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
         success, msg = execute_box_builder_object_mode(
             Vector((0, 0, 0)), Vector((1, 0, 1)), 1.0,
             Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 1, 0)),
-            ppm, Vector((0, -1, 0)),
+            ppm, Vector((0, -1, 0)), "",
         )
         self.assertTrue(success, msg)
 

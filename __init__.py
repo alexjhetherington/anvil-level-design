@@ -176,6 +176,13 @@ class LEVELDESIGN_OT_set_pref_interpolation(bpy.types.Operator):
 class LevelDesignPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
+    # === Global Settings ===
+    pref_box_builder_name_suffix: bpy.props.StringProperty(
+        name="Box Builder Name Suffix",
+        description="Suffix appended to object-mode Box Builder names after Blender numbering, e.g. Anvil.Box.001-col",
+        default="",
+    )
+
     # === New File Defaults ===
     pref_pixels_per_meter: bpy.props.IntProperty(
         name="Pixels per Meter",
@@ -355,6 +362,12 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.operator("leveldesign.create_hotspot_mapping_workspace")
         row.enabled = not workspace.hotspot_mapping_workspace_exists()
+
+        # Global Settings section
+        layout.separator()
+        layout.label(text="Global Settings")
+        box = layout.box()
+        box.prop(self, "pref_box_builder_name_suffix")
 
         # New File Defaults section
         layout.separator()

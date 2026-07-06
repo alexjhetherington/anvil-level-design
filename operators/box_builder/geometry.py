@@ -21,6 +21,43 @@ from ...core.uv_projection import face_aligned_project
 from ...core.uv_layers import get_render_active_uv_layer
 
 
+def _generated_name_index(name, base_name, suffix):
+    if suffix and name.endswith(suffix):
+        stem = name[:-len(suffix)]
+    else:
+        stem = name
+
+    if stem == base_name:
+        return 0
+
+    numeric_prefix = base_name + "."
+    if not stem.startswith(numeric_prefix):
+        return None
+
+    numeric_part = stem[len(numeric_prefix):]
+    if len(numeric_part) != 3 or not numeric_part.isdigit():
+        return None
+
+    return int(numeric_part)
+
+
+def _next_box_builder_datablock_name(base_name, suffix):
+    used_indices = set()
+    for data_blocks in (bpy.data.objects, bpy.data.meshes):
+        for data_block in data_blocks:
+            index = _generated_name_index(data_block.name, base_name, suffix)
+            if index is not None:
+                used_indices.add(index)
+
+    index = 0
+    while index in used_indices:
+        index += 1
+
+    if index == 0:
+        return base_name + suffix
+    return f"{base_name}.{index:03d}{suffix}"
+
+
 def _faces_coplanar_antiparallel(face_a, face_b):
     dot = face_a.normal.dot(face_b.normal)
     if dot > -0.99:
@@ -404,7 +441,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
 
 def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
                                     local_x, local_y, local_z,
-                                    ppm, view_forward):
+                                    ppm, view_forward, name_suffix):
     """Create a new object with box geometry in object mode.
 
     Object origin is placed at first_vertex; geometry is built relative to it.
@@ -418,6 +455,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         local_z: Rectangle's local Z axis (depth direction)
         ppm: Pixels per meter setting
         view_forward: Camera forward direction (world space), used for plane normal orientation
+        name_suffix: Suffix appended after the Blender-style numeric index
 
     Returns:
         tuple: (success: bool, message: str)
@@ -472,8 +510,10 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
     bm.normal_update()
 
     # Create new mesh data and object
-    me = bpy.data.meshes.new("Box")
-    obj = bpy.data.objects.new("Box", me)
+    base_name = "Anvil.Plane" if is_plane else "Anvil.Box"
+    data_block_name = _next_box_builder_datablock_name(base_name, name_suffix)
+    me = bpy.data.meshes.new(data_block_name)
+    obj = bpy.data.objects.new(data_block_name, me)
     obj.location = first_vertex
 
     # Link to active collection

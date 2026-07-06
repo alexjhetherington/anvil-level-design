@@ -72,6 +72,7 @@ def _create_box_builder_object_with_invert():
         Vector((0, 1, 0)),
         props.pixels_per_meter,
         Vector((0, -1, 0)),
+        "",
     )
     if not result[0]:
         raise AssertionError(result[1])

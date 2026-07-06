@@ -19,6 +19,9 @@ from ...core.workspace_check import is_level_design_workspace
 from ..weld import set_weld_from_box_builder, set_weld_from_box_builder_object_mode
 
 
+_ADDON_PACKAGE = __package__.split(".")[0]
+
+
 def _get_selected_vertex_world_coords(context):
     """Return world-space positions of selected vertices in the active mesh.
 
@@ -53,6 +56,7 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
     action_had_selection: BoolProperty()
     action_was_edit_mode: BoolProperty()
     action_object_name: StringProperty()
+    action_name_suffix: StringProperty()
     keep_anti_parallel_coplanar_faces: BoolProperty(
         name="Keep Overlap Faces",
         description="Keep box faces that overlap existing faces",
@@ -99,7 +103,7 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,
                         local_x, local_y, local_z, action_was_edit_mode,
-                        action_object_name):
+                        action_object_name, action_name_suffix):
         # The first clicked point becomes the box pivot.
         rv3d = context.region_data
         view_forward = rv3d.view_rotation @ Vector((0, 0, -1))
@@ -111,7 +115,7 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
             result = geometry.execute_box_builder_object_mode(
                 first_vertex, second_vertex, depth,
                 local_x, local_y, local_z,
-                ppm, view_forward
+                ppm, view_forward, action_name_suffix
             )
             is_box = result[0] and result[1] == "Box object created"
             if is_box:
@@ -162,6 +166,11 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
         self.action_was_edit_mode = context.mode == 'EDIT_MESH'
         active_object = context.active_object
         self.action_object_name = active_object.name if active_object is not None else ""
+        addon = context.preferences.addons.get(_ADDON_PACKAGE)
+        if addon is None:
+            self.action_name_suffix = ""
+        else:
+            self.action_name_suffix = addon.preferences.pref_box_builder_name_suffix
 
     def execute(self, context):
         self._had_selection = self.action_had_selection
@@ -174,7 +183,8 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
         result = self._execute_action(
             context, first_vertex, second_vertex, self.action_depth,
             local_x, local_y, local_z,
-            self.action_was_edit_mode, self.action_object_name
+            self.action_was_edit_mode, self.action_object_name,
+            self.action_name_suffix
         )
         self._last_action_result = result
 
