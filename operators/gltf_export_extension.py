@@ -804,6 +804,11 @@ def _apply_modifiers(scene, enabled):
     for obj in scene.objects:
         if obj.type != 'MESH' or not obj.modifiers:
             continue
+        if _has_armature_modifier(obj):
+            debug_log(
+                f"[glTF Anvil]   Skipping modifiers on {obj.name} because it has an armature modifier"
+            )
+            continue
 
         # Make this object active so modifier_apply works
         for o in scene.objects:
@@ -839,7 +844,7 @@ def _materialize_linked_prefab_meshes_for_export(
             original_names_by_pointer,
         )
         prefab_object_pointers.add(obj.as_pointer())
-        if apply_modifiers and obj.modifiers:
+        if apply_modifiers and obj.modifiers and not _has_armature_modifier(obj):
             _materialize_prefab_evaluated_mesh_for_export(
                 obj,
                 original_names_by_pointer,
@@ -915,6 +920,13 @@ def _is_linked_prefab_mesh_export_target(obj, prefab_library_paths):
     if _object_or_ancestor_is_prefab(obj):
         return True
     return _datablock_library_path(obj.data) in prefab_library_paths
+
+
+def _has_armature_modifier(obj):
+    for modifier in obj.modifiers:
+        if modifier.type == 'ARMATURE':
+            return True
+    return False
 
 
 def _scene_prefab_library_paths(scene):
