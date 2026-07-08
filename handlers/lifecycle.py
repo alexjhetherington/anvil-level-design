@@ -7,7 +7,13 @@ from bpy.app.handlers import persistent
 
 from ..core.logging import debug_log
 from ..core.face_id import get_face_id_layer
-from ..core.materials import reset_duplicate_material_consolidation
+from ..core.materials import (
+    apply_remembered_default_material_settings,
+    apply_remembered_pixels_per_meter,
+    remember_default_material_settings,
+    remember_pixels_per_meter,
+    reset_duplicate_material_consolidation,
+)
 from ..core.uv_layers import sync_uv_map_settings
 from ..workspace import setup_addon_workspaces, subscribe_splash_watcher, reset_specialized_template_flag
 
@@ -293,6 +299,8 @@ def on_save_pre(dummy):
 @persistent
 def on_save_post(dummy):
     """Handler called after saving a .blend file."""
+    _remember_scene_file_defaults()
+
     if get_was_first_save():
         set_was_first_save(False)
         print("Anvil Level Design: Making all paths relative (post save, for first save)", flush=True)
@@ -303,22 +311,23 @@ def on_save_post(dummy):
 
 
 def _apply_addon_defaults_to_scene():
-    """Copy addon preference defaults to the current scene's properties."""
-    prefs = bpy.context.preferences.addons.get(__package__.rsplit('.', 1)[0])
-    if not prefs:
+    """Apply addon-level new file defaults to the current scene's properties."""
+    scene = bpy.context.scene
+    if scene is None:
         return
-    pref = prefs.preferences
-    props = bpy.context.scene.level_design_props
+    props = scene.level_design_props
 
-    props.pixels_per_meter = pref.pref_pixels_per_meter
-    props.default_interpolation = pref.pref_default_interpolation
-    props.default_texture_as_alpha = pref.pref_default_texture_as_alpha
-    props.default_vertex_colors = pref.pref_default_vertex_colors
-    props.default_roughness = pref.pref_default_roughness
-    props.default_metallic = pref.pref_default_metallic
-    props.default_emission_strength = pref.pref_default_emission_strength
-    props.default_emission_color = pref.pref_default_emission_color[:]
-    props.default_specular = pref.pref_default_specular
+    apply_remembered_pixels_per_meter(props)
+    apply_remembered_default_material_settings(props)
+
+
+def _remember_scene_file_defaults():
+    scene = bpy.context.scene
+    if scene is None:
+        return
+    props = scene.level_design_props
+    remember_pixels_per_meter(props)
+    remember_default_material_settings(props)
 
 
 @persistent
@@ -339,7 +348,6 @@ def on_load_post(dummy):
     _file_loaded_into_edit_depsgraph = True
     reset_mode_tracking()
 
-    # Apply addon preferences as defaults for new (unsaved) files
     if not bpy.data.filepath:
         _apply_addon_defaults_to_scene()
 

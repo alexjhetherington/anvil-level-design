@@ -10,6 +10,64 @@ _UNASSIGNED_MATERIAL_NAME = "ANVIL_Unassigned"
 _last_material_count = 0
 
 
+def _addon_preferences():
+    package_name = __package__.split('.', 1)[0]
+    addon = bpy.context.preferences.addons.get(package_name)
+    if addon is None:
+        return None
+    return addon.preferences
+
+
+def remember_pixels_per_meter(props):
+    """Store the current file's pixels per meter in addon preferences."""
+    prefs = _addon_preferences()
+    if prefs is None:
+        return
+
+    prefs.pref_pixels_per_meter = props.pixels_per_meter
+
+
+def apply_remembered_pixels_per_meter(props):
+    """Apply the last remembered pixels per meter to file properties."""
+    prefs = _addon_preferences()
+    if prefs is None:
+        return
+
+    props.pixels_per_meter = prefs.pref_pixels_per_meter
+
+
+def remember_default_material_settings(props):
+    """Store the current file's default material settings in addon preferences."""
+    prefs = _addon_preferences()
+    if prefs is None:
+        return
+
+    prefs.pref_default_interpolation = props.default_interpolation
+    prefs.pref_default_texture_as_alpha = props.default_texture_as_alpha
+    prefs.pref_default_vertex_colors = props.default_vertex_colors
+    prefs.pref_default_roughness = props.default_roughness
+    prefs.pref_default_metallic = props.default_metallic
+    prefs.pref_default_emission_strength = props.default_emission_strength
+    prefs.pref_default_emission_color = props.default_emission_color[:]
+    prefs.pref_default_specular = props.default_specular
+
+
+def apply_remembered_default_material_settings(props):
+    """Apply the last remembered default material settings to file properties."""
+    prefs = _addon_preferences()
+    if prefs is None:
+        return
+
+    props.default_interpolation = prefs.pref_default_interpolation
+    props.default_texture_as_alpha = prefs.pref_default_texture_as_alpha
+    props.default_vertex_colors = prefs.pref_default_vertex_colors
+    props.default_roughness = prefs.pref_default_roughness
+    props.default_metallic = prefs.pref_default_metallic
+    props.default_emission_strength = prefs.pref_default_emission_strength
+    props.default_emission_color = prefs.pref_default_emission_color[:]
+    props.default_specular = prefs.pref_default_specular
+
+
 def reset_duplicate_material_consolidation():
     """Reset material dedupe state after file lifecycle changes."""
     global _last_material_count
