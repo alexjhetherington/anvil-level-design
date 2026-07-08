@@ -1432,6 +1432,16 @@ def image_grid_widget_unit(ui_scale, pixel_size):
     return int(math.floor(18.0 * ui_scale + 0.5)) + (2 * int(pixel_size))
 
 
+def image_grid_scaled_font_size(font_size, ui_scale):
+    try:
+        scale = float(ui_scale)
+    except (TypeError, ValueError):
+        scale = 1.0
+    if scale <= 0.0:
+        scale = 1.0
+    return max(1.0, float(font_size) * scale)
+
+
 def image_grid_cell_padding(widget_unit):
     return widget_unit
 
@@ -1540,6 +1550,8 @@ def _image_grid_canvas_metrics_with_reserved_width(
     viewport_height = max(1, grid_top - grid_bottom)
     max_scroll = max(0, content_height - viewport_height)
     return {
+        "ui_scale": ui_scale,
+        "pixel_size": pixel_size,
         "widget_unit": widget_unit,
         "region_width": region_width,
         "icon_size": icon_size,
