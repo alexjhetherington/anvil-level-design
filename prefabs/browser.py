@@ -10,7 +10,6 @@ from ..core.modal_image_grid import (
     draw_image_grid_rect,
     draw_image_grid_text,
     draw_image_grid_texture,
-    image_grid_scaled_font_size,
 )
 from ..core.workspace_check import is_level_design_workspace
 from .previews import (
@@ -220,9 +219,9 @@ def _draw_prefab_browser_cell(rect, metrics):
     icon_height = max(1, min(icon_space, int(y + height - padding - icon_y)))
     icon_x = x + (width - icon_space) / 2
     ui_scale = metrics["ui_scale"]
-    meta_font_size = image_grid_scaled_font_size(11, ui_scale)
-    no_preview_font_size = image_grid_scaled_font_size(12, ui_scale)
-    label_font_size = image_grid_scaled_font_size(13, ui_scale)
+    meta_font_size = 11 * ui_scale
+    no_preview_font_size = 12 * ui_scale
+    label_font_size = 13 * ui_scale
 
     gpu.state.blend_set('ALPHA')
     try:

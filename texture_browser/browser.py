@@ -12,7 +12,6 @@ from ..core.modal_image_grid import (
     draw_image_grid_rect,
     draw_image_grid_text,
     draw_image_grid_texture_display,
-    image_grid_scaled_font_size,
 )
 from ..core.logging import debug_log
 from ..core.workspace_check import (
@@ -685,10 +684,10 @@ def _draw_texture_browser_cell(rect, metrics):
     icon_height = max(1, min(icon_space, int(y + height - padding - icon_y)))
     icon_x = x + (width - icon_space) / 2
     ui_scale = metrics["ui_scale"]
-    meta_font_size = image_grid_scaled_font_size(11, ui_scale)
-    no_preview_font_size = image_grid_scaled_font_size(12, ui_scale)
-    label_font_size = image_grid_scaled_font_size(13, ui_scale)
-    action_font_size = image_grid_scaled_font_size(15, ui_scale)
+    meta_font_size = 11 * ui_scale
+    no_preview_font_size = 12 * ui_scale
+    label_font_size = 13 * ui_scale
+    action_font_size = 15 * ui_scale
 
     gpu.state.blend_set('ALPHA')
     try:

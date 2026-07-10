@@ -1432,16 +1432,6 @@ def image_grid_widget_unit(ui_scale, pixel_size):
     return int(math.floor(18.0 * ui_scale + 0.5)) + (2 * int(pixel_size))
 
 
-def image_grid_scaled_font_size(font_size, ui_scale):
-    try:
-        scale = float(ui_scale)
-    except (TypeError, ValueError):
-        scale = 1.0
-    if scale <= 0.0:
-        scale = 1.0
-    return max(1.0, float(font_size) * scale)
-
-
 def image_grid_cell_padding(widget_unit):
     return widget_unit
 
