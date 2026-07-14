@@ -1872,7 +1872,7 @@ def draw_image_grid_text(text, x, y, max_width, font_size, color, align):
     blf.draw(font_id, display_text)
 
 
-def _image_grid_texture_bounds(texture_info, x, y, width, height):
+def image_grid_texture_bounds(texture_info, x, y, width, height):
     texture, texture_width, texture_height = texture_info
     aspect = texture_width / texture_height
     draw_width = width
@@ -1917,7 +1917,7 @@ def draw_image_grid_texture(texture_info, x, y, width, height):
     import gpu
     from gpu_extras.batch import batch_for_shader
 
-    texture, draw_x, draw_y, draw_width, draw_height = _image_grid_texture_bounds(
+    texture, draw_x, draw_y, draw_width, draw_height = image_grid_texture_bounds(
         texture_info,
         x,
         y,
@@ -1947,7 +1947,7 @@ def draw_image_grid_texture_display(texture_info, x, y, width, height):
         draw_image_grid_texture(texture_info, x, y, width, height)
         return
 
-    texture, draw_x, draw_y, draw_width, draw_height = _image_grid_texture_bounds(
+    texture, draw_x, draw_y, draw_width, draw_height = image_grid_texture_bounds(
         texture_info,
         x,
         y,

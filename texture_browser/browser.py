@@ -1,6 +1,7 @@
 """Floating texture browser hosted inside a temporary Preferences window."""
 
 import os
+import time
 
 import bpy
 from bpy.props import EnumProperty, FloatProperty, IntProperty, StringProperty
@@ -13,6 +14,7 @@ from ..core.modal_image_grid import (
     draw_image_grid_rect,
     draw_image_grid_text,
     draw_image_grid_texture_display,
+    image_grid_texture_bounds,
 )
 from ..core.logging import debug_log
 from ..core.workspace_check import (
@@ -60,6 +62,11 @@ _folder_scan_cache = {}
 _collection_scan_cache = {}
 _folder_scan_generation = 0
 _popup_source_workspace_name = ""
+_texture_browser_locate_highlight_path = ""
+_texture_browser_locate_highlight_started = 0.0
+
+_TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS = 0.6
+_TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA = 1.0
 
 _TEXTURE_BROWSER_WORKSPACE_NAMES = {
     LEVEL_DESIGN_WORKSPACE_NAME,
@@ -136,6 +143,34 @@ def _folder_exists(path):
 
 def _file_exists(path):
     return bool(path) and os.path.isfile(_display_path(path))
+
+
+def _start_texture_browser_locate_highlight(filepath):
+    global _texture_browser_locate_highlight_path
+    global _texture_browser_locate_highlight_started
+    _texture_browser_locate_highlight_path = _normal_path(filepath)
+    _texture_browser_locate_highlight_started = time.perf_counter()
+
+
+def _texture_browser_locate_highlight_is_active():
+    global _texture_browser_locate_highlight_path
+    if not _texture_browser_locate_highlight_path:
+        return False
+    elapsed = time.perf_counter() - _texture_browser_locate_highlight_started
+    if elapsed >= _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS:
+        _texture_browser_locate_highlight_path = ""
+        return False
+    return True
+
+
+def _texture_browser_locate_highlight_alpha(filepath):
+    if not _texture_browser_locate_highlight_is_active():
+        return 0.0
+    if _normal_path(filepath) != _texture_browser_locate_highlight_path:
+        return 0.0
+    elapsed = time.perf_counter() - _texture_browser_locate_highlight_started
+    remaining = 1.0 - elapsed / _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS
+    return _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA * remaining
 
 
 def _blend_home_folder():
@@ -664,6 +699,33 @@ def _draw_texture_browser_folder_icon(icon_x, icon_y, icon_w, icon_h):
     )
 
 
+def _draw_texture_browser_locate_outline(
+        x,
+        y,
+        width,
+        height,
+        metrics,
+        alpha):
+    thickness = max(1, int(round(metrics["widget_unit"] * 0.07)))
+    color = (1.0, 1.0, 1.0, alpha)
+    draw_image_grid_rect(
+        x - thickness,
+        y - thickness,
+        width + thickness * 2,
+        thickness,
+        color,
+    )
+    draw_image_grid_rect(
+        x - thickness,
+        y + height,
+        width + thickness * 2,
+        thickness,
+        color,
+    )
+    draw_image_grid_rect(x - thickness, y, thickness, height, color)
+    draw_image_grid_rect(x + width, y, thickness, height, color)
+
+
 def _draw_texture_browser_cell(rect, metrics):
     import gpu
 
@@ -687,6 +749,7 @@ def _draw_texture_browser_cell(rect, metrics):
 
     gpu.state.blend_set('ALPHA')
     try:
+        texture_info = None
         if is_hovered:
             draw_image_grid_rect(x, y, width, height, (0.24, 0.34, 0.46, 0.42))
         else:
@@ -719,6 +782,35 @@ def _draw_texture_browser_cell(rect, metrics):
                 )
         else:
             _draw_texture_browser_file_icon(icon_x, icon_y, icon_space, icon_height, rect["suffix"])
+
+        highlight_alpha = _texture_browser_locate_highlight_alpha(rect["filepath"])
+        if highlight_alpha > 0.0:
+            highlight_x = icon_x
+            highlight_y = icon_y
+            highlight_width = icon_space
+            highlight_height = icon_height
+            if texture_info is not None:
+                (
+                    _texture,
+                    highlight_x,
+                    highlight_y,
+                    highlight_width,
+                    highlight_height,
+                ) = image_grid_texture_bounds(
+                    texture_info,
+                    icon_x,
+                    icon_y,
+                    icon_space,
+                    icon_height,
+                )
+            _draw_texture_browser_locate_outline(
+                highlight_x,
+                highlight_y,
+                highlight_width,
+                highlight_height,
+                metrics,
+                highlight_alpha,
+            )
 
         if not rect["is_folder"]:
             button_rect = _texture_browser_collection_button_rect(rect, metrics)
@@ -1224,6 +1316,76 @@ def _window_is_texture_browser_recovery_host(window):
     )
 
 
+def _open_texture_browser_region(window_manager):
+    interaction_window = texture_browser_modal.interaction["window"]
+    interaction_area = texture_browser_modal.interaction["area"]
+    if (
+            texture_browser_modal.is_window_live(
+                interaction_window,
+                window_manager.windows,
+            )
+            and texture_browser_modal.is_area_live(
+                interaction_area,
+                window_manager.windows,
+            )):
+        region = texture_browser_modal.region_for_area(interaction_area)
+        if region is not None:
+            return region
+
+    for window in window_manager.windows:
+        if not _window_is_texture_browser_recovery_host(window):
+            continue
+        area = texture_browser_modal.preferences_area_for_window(window)
+        if area is None:
+            continue
+        region = texture_browser_modal.region_for_area(area)
+        if region is not None:
+            return region
+    return None
+
+
+def _scroll_texture_browser_to_filepath(
+        scene,
+        window_manager,
+        preferences_system,
+        region,
+        filepath):
+    items = _texture_browser_display_items_for_filter(
+        scene,
+        window_manager.anvil_texture_browser_search,
+        _TEXTURE_BROWSER_FOLDER_VIEW,
+    )
+    target_path = _normal_path(filepath)
+    target_index = next(
+        (
+            index for index, item in enumerate(items)
+            if _normal_path(item["filepath"]) == target_path
+        ),
+        None,
+    )
+    if target_index is None:
+        return False
+
+    metrics, _rects = texture_browser_modal.layout_items(
+        items,
+        region.width,
+        region.height,
+        window_manager.anvil_texture_browser_preview_scale,
+        preferences_system.ui_scale,
+        preferences_system.pixel_size,
+        0,
+    )
+    target_row = target_index // metrics["columns"]
+    target_scroll = target_row * (metrics["cell_height"] + metrics["gap"])
+    target_scroll = min(target_scroll, metrics["max_scroll"])
+    texture_browser_modal.interaction["scroll_offset"] = target_scroll
+    texture_browser_modal.remember_scroll_offset(window_manager, target_scroll)
+    texture_browser_modal.interaction["warm_visible_items"] = True
+    _start_texture_browser_locate_highlight(filepath)
+    texture_browser_modal.tag_preferences_areas(window_manager.windows)
+    return True
+
+
 def _recover_texture_browser_active_section():
     try:
         window_manager = getattr(bpy.context, "window_manager", None)
@@ -1348,6 +1510,53 @@ class LEVELDESIGN_OT_texture_browser(Operator):
         )
 
 
+class LEVELDESIGN_OT_texture_browser_locate_file(Operator):
+    """Show this image in the open texture browser"""
+    bl_idname = "leveldesign.texture_browser_locate_file"
+    bl_label = "Locate Texture in Browser"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def execute(self, context):
+        filepath = _display_path(self.filepath)
+        if not _file_exists(filepath):
+            self.report({'ERROR'}, "Texture file was not found")
+            return {'CANCELLED'}
+
+        region = _open_texture_browser_region(context.window_manager)
+        if region is None:
+            self.report({'WARNING'}, "Open the Texture Browser first")
+            return {'CANCELLED'}
+
+        folder_path = os.path.dirname(filepath)
+        if not _set_folder(context.window_manager, folder_path):
+            self.report({'ERROR'}, "Texture folder was not found")
+            return {'CANCELLED'}
+        context.window_manager.anvil_texture_browser_search = ""
+        texture_browser_modal.settings_update(
+            context.window_manager,
+            context.window_manager.windows,
+            True,
+        )
+
+        located = _scroll_texture_browser_to_filepath(
+            context.scene,
+            context.window_manager,
+            context.preferences.system,
+            region,
+            filepath,
+        )
+        if not located:
+            self.report({'WARNING'}, "Texture is hidden by the browser filters")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
     """Apply the selected texture browser image to selected faces"""
     bl_idname = "leveldesign.texture_browser_apply_file"
@@ -1447,6 +1656,18 @@ class LEVELDESIGN_OT_texture_browser_interaction(Operator):
         )
 
     def modal(self, context, event):
+        timer_event = texture_browser_modal.event_is_timer(event)
+        workspace_allowed = (
+            _texture_browser_workspace_is_allowed()
+            or texture_browser_modal.is_popup_window(context.window)
+        )
+        if (
+                timer_event
+                and workspace_allowed
+                and _texture_browser_locate_highlight_is_active()):
+            area = texture_browser_modal.interaction["area"]
+            if area is not None:
+                texture_browser_modal.tag_area(area)
         return texture_browser_modal.modal(
             self,
             event,
@@ -1968,6 +2189,7 @@ class LEVELDESIGN_OT_texture_browser_restore_default_include_filters(Operator):
 
 classes = (
     LEVELDESIGN_OT_texture_browser,
+    LEVELDESIGN_OT_texture_browser_locate_file,
     LEVELDESIGN_OT_texture_browser_apply_file,
     LEVELDESIGN_OT_texture_browser_interaction,
     LEVELDESIGN_OT_texture_browser_close,

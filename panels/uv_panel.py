@@ -57,6 +57,27 @@ def _draw_image_collection_header(layout, image, label_enabled):
     add_op.filepath = image_filepath
 
 
+def _texture_preview_display_image(mode, mesh_select_mode, obj):
+    import bmesh
+
+    in_face_mode = mode == 'EDIT_MESH' and mesh_select_mode[2]
+    image = get_active_image() if in_face_mode else None
+    if get_multi_face_mode() and image is not None:
+        if obj is not None and obj.type == 'MESH' and mode == 'EDIT_MESH':
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()
+            shared, _shared_image = get_selected_faces_share_image(
+                obj,
+                bm,
+                obj.data,
+            )
+            if not shared:
+                return None
+    if image is not None:
+        return image
+    return get_previous_image()
+
+
 class LEVELDESIGN_PT_status_panel(Panel):
     """Status Panel"""
 
@@ -640,6 +661,21 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
         return is_level_design_workspace()
 
     def draw_header_preset(self, context):
+        image = _texture_preview_display_image(
+            context.mode,
+            context.tool_settings.mesh_select_mode,
+            context.object,
+        )
+        image_filepath = _image_collection_filepath(image)
+        locate_row = self.layout.row(align=True)
+        locate_row.enabled = bool(image_filepath)
+        locate_op = locate_row.operator(
+            "leveldesign.texture_browser_locate_file",
+            text="",
+            icon='VIEWZOOM',
+            emboss=False,
+        )
+        locate_op.filepath = image_filepath
         self.layout.operator(
             "leveldesign.reload_all_external_images",
             text="",
