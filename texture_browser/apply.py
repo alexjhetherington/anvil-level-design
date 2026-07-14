@@ -25,7 +25,7 @@ from ..handlers.face_cache import cache_single_face
 
 
 def apply_texture_path_to_selection(filepath, obj, mode, scene):
-    """Load an image path and apply it to the active mesh selection."""
+    """Apply an image in Edit Mode using the caller's original mode as scope."""
     from ..hotspot_mapping.json_storage import is_texture_hotspottable
     from ..operators.hotspot_apply import apply_hotspots_to_mesh
 
@@ -58,11 +58,7 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
     if in_object_mode and not obj.select_get():
         return image, False
 
-    if in_edit_mode:
-        bm = bmesh.from_edit_mesh(obj.data)
-    else:
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
+    bm = bmesh.from_edit_mesh(obj.data)
 
     uv_layer = get_render_active_uv_layer(bm, obj.data)
     if uv_layer is None:
@@ -166,12 +162,7 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
     else:
         _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, bm)
 
-    if in_edit_mode:
-        bmesh.update_edit_mesh(obj.data)
-    else:
-        bm.to_mesh(obj.data)
-        bm.free()
-        obj.data.update()
+    bmesh.update_edit_mesh(obj.data)
 
     return image, True
 

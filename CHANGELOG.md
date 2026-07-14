@@ -2,6 +2,7 @@
 
 # 1.7.2
 - REMOVED global default default file settings (ppm & default material settings) (too confusing! Anvil now initialises new file default material settings to those found in the last saved file)
+- Fix applying hotspot crashes object mode
 
 # 1.7.1
 - Export gltf apply modifiers skips applying armatures 

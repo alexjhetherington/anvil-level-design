@@ -6,6 +6,7 @@ import bpy
 from bpy.props import EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator
 
+from ..core.library import is_library_object
 from ..core.modal_image_grid import (
     ImageGridSpec,
     PreferencesImageGridModal,
@@ -1363,12 +1364,44 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
         set_active_image(None)
         set_active_image_just_set(False)
 
-        image, applied = apply_texture_path_to_selection(
-            self.filepath,
-            context.object,
-            context.mode,
-            context.scene,
+        obj = context.object
+        original_mode = context.mode
+        restore_object_mode = (
+            original_mode == 'OBJECT'
+            and obj is not None
+            and obj.type == 'MESH'
+            and obj.select_get()
+            and not is_library_object(obj)
         )
+        other_selected_objects = []
+
+        if restore_object_mode:
+            # Hotspot application uses Blender's edit-mode UV unwrap operator.
+            # Isolate the active object so other selected meshes are untouched.
+            other_selected_objects = [
+                selected_obj
+                for selected_obj in context.selected_objects
+                if selected_obj != obj
+            ]
+            for selected_obj in other_selected_objects:
+                selected_obj.select_set(False)
+
+        try:
+            if restore_object_mode:
+                bpy.ops.object.mode_set(mode='EDIT')
+
+            image, applied = apply_texture_path_to_selection(
+                self.filepath,
+                obj,
+                original_mode,
+                context.scene,
+            )
+        finally:
+            if restore_object_mode and context.mode == 'EDIT_MESH':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            for selected_obj in other_selected_objects:
+                selected_obj.select_set(True)
+
         if image is None:
             redraw_ui_panels(context)
             self.report({'ERROR'}, "Could not load image")
