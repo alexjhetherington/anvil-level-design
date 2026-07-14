@@ -62,11 +62,11 @@ _folder_scan_cache = {}
 _collection_scan_cache = {}
 _folder_scan_generation = 0
 _popup_source_workspace_name = ""
-_texture_browser_locate_highlight_path = ""
-_texture_browser_locate_highlight_started = 0.0
 
 _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS = 0.6
 _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA = 1.0
+_TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS = 1.6
+_TEXTURE_BROWSER_APPLIED_FEEDBACK_FADE_SECONDS = 0.35
 
 _TEXTURE_BROWSER_WORKSPACE_NAMES = {
     LEVEL_DESIGN_WORKSPACE_NAME,
@@ -145,32 +145,75 @@ def _file_exists(path):
     return bool(path) and os.path.isfile(_display_path(path))
 
 
-def _start_texture_browser_locate_highlight(filepath):
-    global _texture_browser_locate_highlight_path
-    global _texture_browser_locate_highlight_started
-    _texture_browser_locate_highlight_path = _normal_path(filepath)
-    _texture_browser_locate_highlight_started = time.perf_counter()
+class _TextureBrowserAnimations:
+    """Own transient visual feedback drawn inside the texture browser."""
+
+    def __init__(self):
+        self.locate_path = ""
+        self.locate_started = 0.0
+        self.applied_path = ""
+        self.applied_face_count = 0
+        self.applied_started = 0.0
+
+    def start_locate(self, filepath):
+        self.locate_path = _normal_path(filepath)
+        self.locate_started = time.perf_counter()
+
+    def start_applied(self, filepath, face_count):
+        self.applied_path = _normal_path(filepath)
+        self.applied_face_count = face_count
+        self.applied_started = time.perf_counter()
+
+    def locate_alpha(self, filepath):
+        if _normal_path(filepath) != self.locate_path:
+            return 0.0
+        elapsed = time.perf_counter() - self.locate_started
+        if elapsed >= _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS:
+            return 0.0
+        remaining = 1.0 - elapsed / _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS
+        return _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA * remaining
+
+    def applied_feedback(self, filepath):
+        if _normal_path(filepath) != self.applied_path:
+            return None
+        elapsed = time.perf_counter() - self.applied_started
+        if elapsed >= _TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS:
+            return None
+        fade_started = (
+            _TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS
+            - _TEXTURE_BROWSER_APPLIED_FEEDBACK_FADE_SECONDS
+        )
+        if elapsed <= fade_started:
+            alpha = 1.0
+        else:
+            alpha = (
+                _TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS - elapsed
+            ) / _TEXTURE_BROWSER_APPLIED_FEEDBACK_FADE_SECONDS
+        return self.applied_face_count, alpha
+
+    def tick(self):
+        now = time.perf_counter()
+        redraw = False
+        if self.locate_path:
+            redraw = True
+            if now - self.locate_started >= _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS:
+                self.locate_path = ""
+        if self.applied_path:
+            elapsed = now - self.applied_started
+            fade_started = (
+                _TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS
+                - _TEXTURE_BROWSER_APPLIED_FEEDBACK_FADE_SECONDS
+            )
+            if elapsed >= _TEXTURE_BROWSER_APPLIED_FEEDBACK_SECONDS:
+                self.applied_path = ""
+                self.applied_face_count = 0
+                redraw = True
+            elif elapsed >= fade_started:
+                redraw = True
+        return redraw
 
 
-def _texture_browser_locate_highlight_is_active():
-    global _texture_browser_locate_highlight_path
-    if not _texture_browser_locate_highlight_path:
-        return False
-    elapsed = time.perf_counter() - _texture_browser_locate_highlight_started
-    if elapsed >= _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS:
-        _texture_browser_locate_highlight_path = ""
-        return False
-    return True
-
-
-def _texture_browser_locate_highlight_alpha(filepath):
-    if not _texture_browser_locate_highlight_is_active():
-        return 0.0
-    if _normal_path(filepath) != _texture_browser_locate_highlight_path:
-        return 0.0
-    elapsed = time.perf_counter() - _texture_browser_locate_highlight_started
-    remaining = 1.0 - elapsed / _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS
-    return _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA * remaining
+_texture_browser_animations = _TextureBrowserAnimations()
 
 
 def _blend_home_folder():
@@ -726,6 +769,55 @@ def _draw_texture_browser_locate_outline(
     draw_image_grid_rect(x + width, y, thickness, height, color)
 
 
+def _draw_texture_browser_applied_feedback(
+        x,
+        y,
+        width,
+        height,
+        metrics,
+        face_count,
+        alpha):
+    inset = max(4, min(width, height) * 0.06)
+    badge_width = min(
+        width - inset * 2,
+        max(metrics["widget_unit"] * 3.2, width * 0.68),
+    )
+    badge_height = min(
+        height - inset * 2,
+        max(metrics["widget_unit"] * 1.55, height * 0.24),
+    )
+    badge_x = x + (width - badge_width) / 2
+    badge_y = y + (height - badge_height) / 2
+    draw_image_grid_rect(
+        badge_x,
+        badge_y,
+        badge_width,
+        badge_height,
+        (0.10, 0.10, 0.10, 0.90 * alpha),
+    )
+    count_font_size = max(11, int(round(badge_height * 0.43)))
+    draw_image_grid_text(
+        str(face_count),
+        badge_x,
+        badge_y + badge_height * 0.48,
+        badge_width,
+        count_font_size,
+        (0.96, 0.96, 0.96, alpha),
+        'CENTER',
+    )
+    face_label = "FACE TEXTURED" if face_count == 1 else "FACES TEXTURED"
+    label_font_size = max(7, int(round(badge_height * 0.23)))
+    draw_image_grid_text(
+        face_label,
+        badge_x,
+        badge_y + badge_height * 0.12,
+        badge_width,
+        label_font_size,
+        (0.72, 0.72, 0.72, alpha),
+        'CENTER',
+    )
+
+
 def _draw_texture_browser_cell(rect, metrics):
     import gpu
 
@@ -783,7 +875,7 @@ def _draw_texture_browser_cell(rect, metrics):
         else:
             _draw_texture_browser_file_icon(icon_x, icon_y, icon_space, icon_height, rect["suffix"])
 
-        highlight_alpha = _texture_browser_locate_highlight_alpha(rect["filepath"])
+        highlight_alpha = _texture_browser_animations.locate_alpha(rect["filepath"])
         if highlight_alpha > 0.0:
             highlight_x = icon_x
             highlight_y = icon_y
@@ -810,6 +902,19 @@ def _draw_texture_browser_cell(rect, metrics):
                 highlight_height,
                 metrics,
                 highlight_alpha,
+            )
+
+        applied_feedback = _texture_browser_animations.applied_feedback(rect["filepath"])
+        if applied_feedback is not None:
+            face_count, feedback_alpha = applied_feedback
+            _draw_texture_browser_applied_feedback(
+                icon_x,
+                icon_y,
+                icon_space,
+                icon_height,
+                metrics,
+                face_count,
+                feedback_alpha,
             )
 
         if not rect["is_folder"]:
@@ -1381,7 +1486,7 @@ def _scroll_texture_browser_to_filepath(
     texture_browser_modal.interaction["scroll_offset"] = target_scroll
     texture_browser_modal.remember_scroll_offset(window_manager, target_scroll)
     texture_browser_modal.interaction["warm_visible_items"] = True
-    _start_texture_browser_locate_highlight(filepath)
+    _texture_browser_animations.start_locate(filepath)
     texture_browser_modal.tag_preferences_areas(window_manager.windows)
     return True
 
@@ -1599,7 +1704,7 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
             if restore_object_mode:
                 bpy.ops.object.mode_set(mode='EDIT')
 
-            image, applied = apply_texture_path_to_selection(
+            image, applied_face_count = apply_texture_path_to_selection(
                 self.filepath,
                 obj,
                 original_mode,
@@ -1619,13 +1724,22 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
         from ..handlers.face_cache import update_ui_from_selection
 
         redraw_ui_panels(context)
-        if applied:
+        if applied_face_count > 0:
             update_ui_from_selection(context)
             set_active_image(image)
             set_active_image_just_set(True)
             redraw_ui_panels(context)
             bpy.ops.ed.undo_push(message="Apply Texture from Texture Browser")
-            self.report({'INFO'}, f"Applied: {image.name}")
+            _texture_browser_animations.start_applied(
+                self.filepath,
+                applied_face_count,
+            )
+            texture_browser_modal.tag_preferences_areas(context.window_manager.windows)
+            face_label = "face" if applied_face_count == 1 else "faces"
+            self.report(
+                {'INFO'},
+                f"Texture applied to {applied_face_count} {face_label}",
+            )
         return {'FINISHED'}
 
 
@@ -1664,7 +1778,7 @@ class LEVELDESIGN_OT_texture_browser_interaction(Operator):
         if (
                 timer_event
                 and workspace_allowed
-                and _texture_browser_locate_highlight_is_active()):
+                and _texture_browser_animations.tick()):
             area = texture_browser_modal.interaction["area"]
             if area is not None:
                 texture_browser_modal.tag_area(area)

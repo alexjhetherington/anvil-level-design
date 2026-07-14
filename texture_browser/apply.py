@@ -25,38 +25,38 @@ from ..handlers.face_cache import cache_single_face
 
 
 def apply_texture_path_to_selection(filepath, obj, mode, scene):
-    """Apply an image in Edit Mode using the caller's original mode as scope."""
+    """Apply an image and return it with the number of faces textured."""
     from ..hotspot_mapping.json_storage import is_texture_hotspottable
     from ..operators.hotspot_apply import apply_hotspots_to_mesh
 
     if not filepath:
-        return None, False
+        return None, 0
 
     if not os.path.isfile(filepath):
-        return None, False
+        return None, 0
 
     try:
         image = bpy.data.images.load(filepath, check_existing=True)
     except RuntimeError:
-        return None, False
+        return None, 0
 
     set_previous_image(image)
 
     if not obj or obj.type != 'MESH':
-        return image, False
+        return image, 0
 
     if is_library_object(obj):
         debug_log(f"[TextureBrowser] skipped library object: {obj.name}")
-        return image, False
+        return image, 0
 
     in_edit_mode = (mode == 'EDIT_MESH')
     in_object_mode = (mode == 'OBJECT')
 
     if not in_edit_mode and not in_object_mode:
-        return image, False
+        return image, 0
 
     if in_object_mode and not obj.select_get():
-        return image, False
+        return image, 0
 
     bm = bmesh.from_edit_mesh(obj.data)
 
@@ -69,10 +69,10 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
 
     if in_edit_mode:
         selected_faces = [f for f in bm.faces if f.select]
-        if not selected_faces:
-            return image, False
     else:
         selected_faces = list(bm.faces)
+    if not selected_faces:
+        return image, 0
 
     props = scene.level_design_props
     ppm = props.pixels_per_meter
@@ -164,7 +164,7 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
 
     bmesh.update_edit_mesh(obj.data)
 
-    return image, True
+    return image, len(selected_faces)
 
 
 def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm):
