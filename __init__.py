@@ -405,6 +405,13 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.cursor_to_grid": "Tools",
             "leveldesign.uv_transform_modal": "UV",
             "leveldesign.snapping_mode_dispatch": "UV",
+            "leveldesign.snapping_texture_edge_top": "UV",
+            "leveldesign.snapping_texture_edge_left": "UV",
+            "leveldesign.snapping_texture_edge_bottom": "UV",
+            "leveldesign.snapping_texture_edge_right": "UV",
+            "leveldesign.snapping_toggle_vertical_fit": "UV",
+            "leveldesign.snapping_toggle_horizontal_fit": "UV",
+            "leveldesign.snapping_reset_scale": "UV",
         }
 
         wm = context.window_manager
@@ -551,6 +558,20 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
                             display_name = "Select Invalid UVs"
                         elif kmi_addon.idname == "leveldesign.snapping_mode_dispatch":
                             display_name = "Face / Grid Snapping Mode"
+                        elif kmi_addon.idname == "leveldesign.snapping_texture_edge_top":
+                            display_name = "Face / Grid Snapping: Texture Edge Top"
+                        elif kmi_addon.idname == "leveldesign.snapping_texture_edge_left":
+                            display_name = "Face / Grid Snapping: Texture Edge Left"
+                        elif kmi_addon.idname == "leveldesign.snapping_texture_edge_bottom":
+                            display_name = "Face / Grid Snapping: Texture Edge Bottom"
+                        elif kmi_addon.idname == "leveldesign.snapping_texture_edge_right":
+                            display_name = "Face / Grid Snapping: Texture Edge Right"
+                        elif kmi_addon.idname == "leveldesign.snapping_toggle_vertical_fit":
+                            display_name = "Face / Grid Snapping: Toggle Vertical Fit"
+                        elif kmi_addon.idname == "leveldesign.snapping_toggle_horizontal_fit":
+                            display_name = "Face / Grid Snapping: Toggle Horizontal Fit"
+                        elif kmi_addon.idname == "leveldesign.snapping_reset_scale":
+                            display_name = "Face / Grid Snapping: Reset Scale"
                         elif is_vp_menu:
                             display_name = "Vertex Paint Color Menu"
                         else:

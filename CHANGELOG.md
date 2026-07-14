@@ -4,6 +4,8 @@
 - REMOVED global default default file settings (ppm & default material settings) (too confusing! Anvil now initialises new file default material settings to those found in the last saved file)
 - Added FIND IMAGE button to the Texture Preview panel
 - Added indicator in the texture browser counting number of affected faces (apply texture)
+- Added customisable hotkeys for T snapping mode
+- Improved tooltips for apply and pick texture
 - Fix applying hotspot crashes object mode
 
 # 1.7.1

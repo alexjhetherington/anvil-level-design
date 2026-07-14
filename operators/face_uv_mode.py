@@ -16,6 +16,13 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d
 
 from ..handlers import cache_face_data, cache_single_face
 from ..properties import set_updating_from_selection, sync_scale_tracking
+from .snapping_hotkeys import (
+    SNAPPING_HOTKEYS,
+    SNAPPING_TEXTURE_EDGES,
+    classes as snapping_hotkey_classes,
+    snapping_action_for_event,
+    snapping_shortcut_labels,
+)
 
 
 class LEVELDESIGN_OT_face_aligned_project(Operator):
@@ -370,13 +377,19 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
 
     def _update_status_text(self, context):
         """Update status bar text based on current fit mode."""
+        shortcut_labels = snapping_shortcut_labels(context.window_manager)
         fit_indicator = ""
         if self.fit_mode == 'vertical':
             fit_indicator = " [V-Fit]"
         elif self.fit_mode == 'horizontal':
             fit_indicator = " [H-Fit]"
         context.workspace.status_text_set(
-            f"W: Top    A: Left    S: Bottom    D: Right    Q: V-Fit    E: H-Fit    R: Reset Scale    LMB: Confirm    Esc: Cancel{fit_indicator}"
+            f"{shortcut_labels['TOP']}: Top    {shortcut_labels['LEFT']}: Left    "
+            f"{shortcut_labels['BOTTOM']}: Bottom    {shortcut_labels['RIGHT']}: Right    "
+            f"{shortcut_labels['VERTICAL_FIT']}: V-Fit    "
+            f"{shortcut_labels['HORIZONTAL_FIT']}: H-Fit    "
+            f"{shortcut_labels['RESET_SCALE']}: Reset Scale    "
+            f"LMB: Confirm    Esc: Cancel{fit_indicator}"
         )
 
     def _draw_vignette(self, context):
@@ -671,29 +684,13 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
 
         props = context.scene.level_design_props
 
-        # WASD to set texture edge
-        if event.type == 'W' and event.value == 'PRESS':
-            self.texture_edge = 'TOP'
+        snapping_action = snapping_action_for_event(context.window_manager, event)
+        if snapping_action in SNAPPING_TEXTURE_EDGES:
+            self.texture_edge = snapping_action
             self._apply_snap(context)
             return {'RUNNING_MODAL'}
 
-        if event.type == 'A' and event.value == 'PRESS':
-            self.texture_edge = 'LEFT'
-            self._apply_snap(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'S' and event.value == 'PRESS':
-            self.texture_edge = 'BOTTOM'
-            self._apply_snap(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'D' and event.value == 'PRESS':
-            self.texture_edge = 'RIGHT'
-            self._apply_snap(context)
-            return {'RUNNING_MODAL'}
-
-        # Q for vertical fit toggle
-        if event.type == 'Q' and event.value == 'PRESS':
+        if snapping_action == 'VERTICAL_FIT':
             if self.fit_mode == 'vertical':
                 # Disable fit mode
                 self.fit_mode = None
@@ -707,8 +704,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             self._apply_snap(context)
             return {'RUNNING_MODAL'}
 
-        # E for horizontal fit toggle
-        if event.type == 'E' and event.value == 'PRESS':
+        if snapping_action == 'HORIZONTAL_FIT':
             if self.fit_mode == 'horizontal':
                 # Disable fit mode
                 self.fit_mode = None
@@ -722,8 +718,7 @@ class LEVELDESIGN_OT_face_uv_mode(Operator):
             self._apply_snap(context)
             return {'RUNNING_MODAL'}
 
-        # R for reset scale to 1
-        if event.type == 'R' and event.value == 'PRESS':
+        if snapping_action == 'RESET_SCALE':
             # Disable any fit mode
             self.fit_mode = None
             # Set pre_fit scales to 1 so disabling fit returns to 1
@@ -809,6 +804,7 @@ class LEVELDESIGN_OT_snapping_mode_dispatch(Operator):
 
 
 classes = (
+    *snapping_hotkey_classes,
     LEVELDESIGN_OT_face_aligned_project,
     LEVELDESIGN_OT_align_uv,
     LEVELDESIGN_OT_fit_to_face,
@@ -834,6 +830,16 @@ def register():
             head=True
         )
         addon_keymaps.append((km, kmi))
+
+        # Marker operators expose modal controls in Blender's keymap editor.
+        # The running snapping operator reads these configured events directly.
+        for _action, operator_id, default_key in SNAPPING_HOTKEYS:
+            kmi = km.keymap_items.new(
+                operator_id,
+                default_key,
+                'PRESS',
+            )
+            addon_keymaps.append((km, kmi))
 
         # UV shortcut keymaps (unbound by default)
         kmi = km.keymap_items.new(

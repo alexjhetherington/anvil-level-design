@@ -563,24 +563,16 @@ def _invoke_apply_setup(op, context, event):
     (e.g. {'PASS_THROUGH'}) on failure.
     """
     obj = context.object
-    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-        debug_log("[ApplyImage] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
-        return {'PASS_THROUGH'}
-    if is_library_object(obj):
-        debug_log("[ApplyImage] PASS_THROUGH: active object is from a library")
-        return {'PASS_THROUGH'}
-
-    if not context.tool_settings.mesh_select_mode[2]:
-        debug_log("[ApplyImage] PASS_THROUGH: not in face select mode")
+    source_face_index, failure_reason = _get_apply_source_face_index(
+        obj, context.mode, context.tool_settings.mesh_select_mode[2]
+    )
+    if failure_reason is not None:
+        debug_log(f"[ApplyImage] PASS_THROUGH: {failure_reason}")
         return {'PASS_THROUGH'}
 
     bm_check = bmesh.from_edit_mesh(obj.data)
     bm_check.faces.ensure_lookup_table()
-    source_face, selected_count = _single_selected_face(bm_check)
-    if selected_count != 1:
-        debug_log(f"[ApplyImage] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
-        return {'PASS_THROUGH'}
-
+    source_face = bm_check.faces[source_face_index]
     active_face = bm_check.faces.active
     if active_face is not None and active_face.select:
         source_face = active_face
@@ -664,6 +656,38 @@ def _single_selected_face(bm):
             break
 
     return selected_face, selected_count
+
+
+def _get_apply_source_face_index(obj, mode, face_select_enabled):
+    """Return the sole selected source-face index used by left-click variants."""
+    if not obj or obj.type != 'MESH' or mode != 'EDIT_MESH':
+        return None, "no mesh object or not in EDIT_MESH mode"
+    if is_library_object(obj):
+        return None, "active object is from a library"
+    if not face_select_enabled:
+        return None, "not in face select mode"
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    source_face, selected_count = _single_selected_face(bm)
+    if selected_count != 1:
+        return None, f"need exactly 1 face selected, got {selected_count}"
+
+    return source_face.index, None
+
+
+def _get_pick_target_bmesh(obj, mode):
+    """Return the edit BMesh when right-click variants have selected targets."""
+    if not obj or obj.type != 'MESH' or mode != 'EDIT_MESH':
+        return None, "no mesh object or not in EDIT_MESH mode"
+    if is_library_object(obj):
+        return None, "active object is from a library"
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    if not any(face.select for face in bm.faces):
+        return None, "need at least 1 face selected"
+
+    return bm, None
 
 
 def _closest_target_world(paint_obj, paint_bvh, source_bm, source_materials,
@@ -895,24 +919,16 @@ def _invoke_uv_transform_setup(op, context, event):
     Returns None on success or a Blender result set on failure.
     """
     obj = context.object
-    if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-        debug_log("[UVTransform] PASS_THROUGH: no mesh object or not in EDIT_MESH mode")
-        return {'PASS_THROUGH'}
-    if is_library_object(obj):
-        debug_log("[UVTransform] PASS_THROUGH: active object is from a library")
-        return {'PASS_THROUGH'}
-
-    if not context.tool_settings.mesh_select_mode[2]:
-        debug_log("[UVTransform] PASS_THROUGH: not in face select mode")
+    source_face_index, failure_reason = _get_apply_source_face_index(
+        obj, context.mode, context.tool_settings.mesh_select_mode[2]
+    )
+    if failure_reason is not None:
+        debug_log(f"[UVTransform] PASS_THROUGH: {failure_reason}")
         return {'PASS_THROUGH'}
 
     bm_check = bmesh.from_edit_mesh(obj.data)
     bm_check.faces.ensure_lookup_table()
-    source_face, selected_count = _single_selected_face(bm_check)
-    if selected_count != 1:
-        debug_log(f"[UVTransform] PASS_THROUGH: need exactly 1 face selected, got {selected_count}")
-        return {'PASS_THROUGH'}
-
+    source_face = bm_check.faces[source_face_index]
     active_face = bm_check.faces.active
     if active_face is not None and active_face.select:
         source_face = active_face
@@ -1010,12 +1026,12 @@ def _pick_source_from_cursor(op, context, event):
     or sets op.report and returns None on failure.
     """
     edit_obj = context.object
-    if not edit_obj or edit_obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-        return None
-    if is_library_object(edit_obj):
+    bm_edit, failure_reason = _get_pick_target_bmesh(
+        edit_obj, context.mode
+    )
+    if failure_reason is not None:
         return None
 
-    bm_edit = bmesh.from_edit_mesh(edit_obj.data)
     # Ensure layers exist before collecting face references (creating layers invalidates refs)
     from ..core.face_id import get_face_id_layer
     from ..core.uv_layers import get_render_active_uv_layer
@@ -1024,9 +1040,7 @@ def _pick_source_from_cursor(op, context, event):
         bm_edit.loops.layers.uv.verify()
     get_face_id_layer(bm_edit)
     bm_edit.faces.ensure_lookup_table()
-    selected_faces = [f for f in bm_edit.faces if f.select]
-    if not selected_faces:
-        return None
+    selected_faces = [face for face in bm_edit.faces if face.select]
 
     region = context.region
     rv3d = context.region_data
@@ -1125,14 +1139,19 @@ def _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm, 
 # ---- Apply Image to Face (Alt+Left Click) ----
 
 class apply_image_to_face(ModalPaintBase, Operator):
-    """Apply active image to hovered face (drag to paint)"""
+    """Alt + Left Click: apply the active texture with the selected face's UV mapping to hovered faces (drag to paint)"""
     bl_idname = "leveldesign.apply_image_to_face"
-    bl_label = "Apply Image to Face"
+    bl_label = "Apply Texture + UV Mapping"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _source_face_index, failure_reason = _get_apply_source_face_index(
+            context.object, context.mode, context.tool_settings.mesh_select_mode[2]
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         result = _invoke_apply_setup(self, context, event)
@@ -1235,14 +1254,19 @@ class apply_image_to_face(ModalPaintBase, Operator):
 # ---- Stretch Apply Image to Face (Shift+Alt+Left Click) ----
 
 class stretch_apply_image_to_face(ModalPaintBase, Operator):
-    """Stretch-apply active image to hovered face (drag to paint)"""
+    """Shift + Alt + Left Click: apply the active texture and stretch the selected face's UV region to each hovered face (drag to paint)"""
     bl_idname = "leveldesign.stretch_apply_image_to_face"
-    bl_label = "Stretch Apply Image to Face"
+    bl_label = "Stretch Texture to Fit Face"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _source_face_index, failure_reason = _get_apply_source_face_index(
+            context.object, context.mode, context.tool_settings.mesh_select_mode[2]
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         result = _invoke_apply_setup(self, context, event)
@@ -1274,14 +1298,19 @@ class stretch_apply_image_to_face(ModalPaintBase, Operator):
 # ---- Pick Image from Face (Alt+Right Click) ----
 
 class pick_image_from_face(Operator):
-    """Pick texture from hovered face and apply to selected faces"""
+    """Alt + Right Click: pick the hovered face's texture and UV mapping and apply both to the selected faces"""
     bl_idname = "leveldesign.pick_image_from_face"
-    bl_label = "Pick and Apply Texture"
+    bl_label = "Pick + Apply Texture + UV Mapping"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _bm_edit, failure_reason = _get_pick_target_bmesh(
+            context.object, context.mode
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         from ..hotspot_mapping.json_storage import is_texture_hotspottable
@@ -1418,14 +1447,19 @@ class pick_image_from_face(Operator):
 # ---- Stretch Pick Image from Face (Shift+Alt+Right Click) ----
 
 class stretch_pick_image_from_face(Operator):
-    """Stretch-pick texture from hovered face and apply to selected faces"""
+    """Shift + Alt + Right Click: pick the hovered face's texture and stretch its UV region to the selected faces"""
     bl_idname = "leveldesign.stretch_pick_image_from_face"
-    bl_label = "Stretch Pick and Apply Texture"
+    bl_label = "Pick + Stretch Texture to Fit Faces"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _bm_edit, failure_reason = _get_pick_target_bmesh(
+            context.object, context.mode
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         pick_result = _pick_source_from_cursor(self, context, event)
@@ -1503,14 +1537,19 @@ class stretch_pick_image_from_face(Operator):
 # ---- Apply UV Transform to Face (Ctrl+Alt+Left Click) ----
 
 class apply_uv_transform_to_face(ModalPaintBase, Operator):
-    """Apply UV transform from selected face to hovered face without changing material (drag to paint)"""
+    """Ctrl + Alt + Left Click: apply only the selected face's UV transform to hovered faces, keeping their materials (drag to paint)"""
     bl_idname = "leveldesign.apply_uv_transform_to_face"
-    bl_label = "Apply UV Transform to Face"
+    bl_label = "Apply UV Transform Only (Keep Material)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _source_face_index, failure_reason = _get_apply_source_face_index(
+            context.object, context.mode, context.tool_settings.mesh_select_mode[2]
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         result = _invoke_uv_transform_setup(self, context, event)
@@ -1542,14 +1581,19 @@ class apply_uv_transform_to_face(ModalPaintBase, Operator):
 # ---- Pick UV Transform from Face (Ctrl+Alt+Right Click) ----
 
 class pick_uv_transform_from_face(Operator):
-    """Pick UV transform from hovered face and apply to selected faces without changing material"""
+    """Ctrl + Alt + Right Click: pick the hovered face's UV transform and apply it to the selected faces, keeping their materials"""
     bl_idname = "leveldesign.pick_uv_transform_from_face"
-    bl_label = "Pick and Apply UV Transform"
+    bl_label = "Pick + Apply UV Transform Only (Keep Material)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return is_level_design_workspace()
+        if not is_level_design_workspace():
+            return False
+        _bm_edit, failure_reason = _get_pick_target_bmesh(
+            context.object, context.mode
+        )
+        return failure_reason is None
 
     def invoke(self, context, event):
         pick_result = _pick_source_from_cursor(self, context, event)

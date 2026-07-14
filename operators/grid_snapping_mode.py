@@ -13,6 +13,11 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d
 
 from ..handlers import cache_single_face
 from .hotspot_apply import _bfs_propagate_grid_uvs
+from .snapping_hotkeys import (
+    SNAPPING_TEXTURE_EDGES,
+    snapping_action_for_event,
+    snapping_shortcut_labels,
+)
 
 
 def validate_quad_grid(faces, require_rectangular):
@@ -202,13 +207,19 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
 
     def _update_status_text(self, context):
         """Update status bar text based on current fit mode."""
+        shortcut_labels = snapping_shortcut_labels(context.window_manager)
         fit_indicator = ""
         if self.fit_mode == 'vertical':
             fit_indicator = " [V-Fit]"
         elif self.fit_mode == 'horizontal':
             fit_indicator = " [H-Fit]"
         context.workspace.status_text_set(
-            f"W: Top    A: Left    S: Bottom    D: Right    Q: V-Fit    E: H-Fit    R: Reset Scale    LMB: Confirm    Esc: Cancel{fit_indicator}"
+            f"{shortcut_labels['TOP']}: Top    {shortcut_labels['LEFT']}: Left    "
+            f"{shortcut_labels['BOTTOM']}: Bottom    {shortcut_labels['RIGHT']}: Right    "
+            f"{shortcut_labels['VERTICAL_FIT']}: V-Fit    "
+            f"{shortcut_labels['HORIZONTAL_FIT']}: H-Fit    "
+            f"{shortcut_labels['RESET_SCALE']}: Reset Scale    "
+            f"LMB: Confirm    Esc: Cancel{fit_indicator}"
         )
 
     def _draw_vignette(self, context):
@@ -580,29 +591,13 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
         self.mouse_x = event.mouse_region_x
         self.mouse_y = event.mouse_region_y
 
-        # WASD to set texture edge
-        if event.type == 'W' and event.value == 'PRESS':
-            self.texture_edge = 'TOP'
+        snapping_action = snapping_action_for_event(context.window_manager, event)
+        if snapping_action in SNAPPING_TEXTURE_EDGES:
+            self.texture_edge = snapping_action
             self._apply_grid_snap(context)
             return {'RUNNING_MODAL'}
 
-        if event.type == 'A' and event.value == 'PRESS':
-            self.texture_edge = 'LEFT'
-            self._apply_grid_snap(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'S' and event.value == 'PRESS':
-            self.texture_edge = 'BOTTOM'
-            self._apply_grid_snap(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'D' and event.value == 'PRESS':
-            self.texture_edge = 'RIGHT'
-            self._apply_grid_snap(context)
-            return {'RUNNING_MODAL'}
-
-        # Q for vertical fit toggle
-        if event.type == 'Q' and event.value == 'PRESS':
+        if snapping_action == 'VERTICAL_FIT':
             if self.fit_mode == 'vertical':
                 self.fit_mode = None
             else:
@@ -611,8 +606,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             self._apply_grid_snap(context)
             return {'RUNNING_MODAL'}
 
-        # E for horizontal fit toggle
-        if event.type == 'E' and event.value == 'PRESS':
+        if snapping_action == 'HORIZONTAL_FIT':
             if self.fit_mode == 'horizontal':
                 self.fit_mode = None
             else:
@@ -621,8 +615,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             self._apply_grid_snap(context)
             return {'RUNNING_MODAL'}
 
-        # R for reset scale (revert to default ppm-based sizing)
-        if event.type == 'R' and event.value == 'PRESS':
+        if snapping_action == 'RESET_SCALE':
             self.fit_mode = None
             self._update_status_text(context)
             self._apply_grid_snap(context)
@@ -633,7 +626,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             self._apply_grid_snap(context)
             return {'RUNNING_MODAL'}
 
-        # Confirm
+        # Left click - confirm and exit
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             self._capture_action_properties()
             self._remove_draw_handler()
@@ -641,7 +634,7 @@ class LEVELDESIGN_OT_grid_snapping_mode(Operator):
             context.area.tag_redraw()
             return {'FINISHED'}
 
-        # Cancel
+        # Escape - revert and exit
         if event.type == 'ESC':
             self._revert_uvs(context)
             self._remove_draw_handler()
