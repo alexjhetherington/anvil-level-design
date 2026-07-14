@@ -702,7 +702,7 @@ def _point_in_rect(rect, x, y):
     )
 
 
-def _draw_texture_browser_file_icon(icon_x, icon_y, icon_w, icon_h, suffix):
+def _draw_texture_browser_file_icon(icon_x, icon_y, icon_w, icon_h, suffix, font_size):
     body_w = icon_w * 0.58
     body_h = icon_h * 0.72
     body_x = icon_x + (icon_w - body_w) / 2
@@ -716,7 +716,7 @@ def _draw_texture_browser_file_icon(icon_x, icon_y, icon_w, icon_h, suffix):
         body_x + 3,
         body_y + body_h * 0.42,
         body_w - 6,
-        11,
+        font_size,
         (0.82, 0.86, 0.90, 0.95),
         'CENTER',
     )
@@ -838,6 +838,11 @@ def _draw_texture_browser_cell(rect, metrics):
     icon_y = label_y + metrics["line_height"] + 6
     icon_height = max(1, min(icon_space, int(y + height - padding - icon_y)))
     icon_x = x + (width - icon_space) / 2
+    ui_scale = metrics["ui_scale"]
+    meta_font_size = 11 * ui_scale
+    no_preview_font_size = 12 * ui_scale
+    label_font_size = 13 * ui_scale
+    action_font_size = 15 * ui_scale
 
     gpu.state.blend_set('ALPHA')
     try:
@@ -868,12 +873,19 @@ def _draw_texture_browser_cell(rect, metrics):
                     icon_x,
                     icon_y + icon_height / 2 - 6,
                     icon_space,
-                    12,
+                    no_preview_font_size,
                     (0.70, 0.70, 0.70, 0.90),
                     'CENTER',
                 )
         else:
-            _draw_texture_browser_file_icon(icon_x, icon_y, icon_space, icon_height, rect["suffix"])
+            _draw_texture_browser_file_icon(
+                icon_x,
+                icon_y,
+                icon_space,
+                icon_height,
+                rect["suffix"],
+                meta_font_size,
+            )
 
         highlight_alpha = _texture_browser_animations.locate_alpha(rect["filepath"])
         if highlight_alpha > 0.0:
@@ -931,7 +943,7 @@ def _draw_texture_browser_cell(rect, metrics):
                 button_rect["x"],
                 button_rect["y"] + 3,
                 button_rect["w"],
-                15,
+                action_font_size,
                 (0.95, 0.97, 1.0, 1.0),
                 'CENTER',
             )
@@ -941,7 +953,7 @@ def _draw_texture_browser_cell(rect, metrics):
             x + padding + 1,
             label_y - 1,
             width - padding * 2,
-            13,
+            label_font_size,
             (0.0, 0.0, 0.0, 0.75),
             'CENTER',
         )
@@ -950,7 +962,7 @@ def _draw_texture_browser_cell(rect, metrics):
             x + padding,
             label_y,
             width - padding * 2,
-            13,
+            label_font_size,
             (0.96, 0.96, 0.96, 1.0),
             'CENTER',
         )
@@ -959,7 +971,7 @@ def _draw_texture_browser_cell(rect, metrics):
             x + padding + 1,
             meta_y - 1,
             width - padding * 2,
-            11,
+            meta_font_size,
             (0.0, 0.0, 0.0, 0.70),
             'CENTER',
         )
@@ -968,7 +980,7 @@ def _draw_texture_browser_cell(rect, metrics):
             x + padding,
             meta_y,
             width - padding * 2,
-            11,
+            meta_font_size,
             (0.68, 0.70, 0.73, 1.0),
             'CENTER',
         )

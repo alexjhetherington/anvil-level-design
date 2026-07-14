@@ -1540,6 +1540,8 @@ def _image_grid_canvas_metrics_with_reserved_width(
     viewport_height = max(1, grid_top - grid_bottom)
     max_scroll = max(0, content_height - viewport_height)
     return {
+        "ui_scale": ui_scale,
+        "pixel_size": pixel_size,
         "widget_unit": widget_unit,
         "region_width": region_width,
         "icon_size": icon_size,

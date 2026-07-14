@@ -218,6 +218,10 @@ def _draw_prefab_browser_cell(rect, metrics):
     icon_y = label_y + metrics["line_height"] + 6
     icon_height = max(1, min(icon_space, int(y + height - padding - icon_y)))
     icon_x = x + (width - icon_space) / 2
+    ui_scale = metrics["ui_scale"]
+    meta_font_size = 11 * ui_scale
+    no_preview_font_size = 12 * ui_scale
+    label_font_size = 13 * ui_scale
 
     gpu.state.blend_set('ALPHA')
     try:
@@ -250,7 +254,7 @@ def _draw_prefab_browser_cell(rect, metrics):
                 icon_x,
                 icon_y + icon_height / 2 - 6,
                 icon_space,
-                12,
+                no_preview_font_size,
                 (0.70, 0.70, 0.70, 0.90),
                 'CENTER',
             )
@@ -259,7 +263,7 @@ def _draw_prefab_browser_cell(rect, metrics):
             x + padding + 1,
             label_y - 1,
             width - padding * 2,
-            13,
+            label_font_size,
             (0.0, 0.0, 0.0, 0.75),
             'CENTER',
         )
@@ -268,7 +272,7 @@ def _draw_prefab_browser_cell(rect, metrics):
             x + padding,
             label_y,
             width - padding * 2,
-            13,
+            label_font_size,
             (0.96, 0.96, 0.96, 1.0),
             'CENTER',
         )
@@ -277,7 +281,7 @@ def _draw_prefab_browser_cell(rect, metrics):
             x + padding + 1,
             meta_y - 1,
             width - padding * 2,
-            11,
+            meta_font_size,
             (0.0, 0.0, 0.0, 0.70),
             'CENTER',
         )
@@ -286,7 +290,7 @@ def _draw_prefab_browser_cell(rect, metrics):
             x + padding,
             meta_y,
             width - padding * 2,
-            11,
+            meta_font_size,
             (0.68, 0.70, 0.73, 1.0),
             'CENTER',
         )
