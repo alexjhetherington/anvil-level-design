@@ -7,6 +7,7 @@
 - Added customisable hotkeys for T snapping mode
 - Improved tooltips for apply and pick texture
 - Fix applying hotspot crashes object mode
+- Texture Browser scales with resolution scale (@zsoltfulop86)
 
 # 1.7.1
 - Export gltf apply modifiers skips applying armatures 
