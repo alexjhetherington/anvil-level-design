@@ -713,10 +713,32 @@ class MESH_OT_context_weld(bpy.types.Operator):
         if weld_mode == 'PREFAB':
             if props.weld_prefab_library_index < 0 or not props.weld_prefab_object_name:
                 return {'CANCELLED'}
+
+            last_prefab_properties = context.window_manager.operator_properties_last(
+                "leveldesign.prefab_instantiate"
+            )
+            if last_prefab_properties is None:
+                repeat_object_name = props.weld_prefab_object_name
+                repeat_name_suffix = ""
+                repeat_make_fully_local = False
+            else:
+                repeat_object_name = last_prefab_properties.object_name
+                repeat_name_suffix = last_prefab_properties.name_suffix
+                repeat_make_fully_local = last_prefab_properties.make_fully_local
+
+            active_object = context.active_object
+            repeat_source_object_name = ""
+            if (active_object is not None
+                    and _get_weld_mode_from_object_id(active_object) == 'PREFAB'):
+                repeat_source_object_name = active_object.name
             return bpy.ops.leveldesign.prefab_instantiate(
                 'INVOKE_DEFAULT',
                 library_index=props.weld_prefab_library_index,
-                object_name=props.weld_prefab_object_name,
+                source_object_name=props.weld_prefab_object_name,
+                repeat_source_object_name=repeat_source_object_name,
+                object_name=repeat_object_name,
+                name_suffix=repeat_name_suffix,
+                make_fully_local=repeat_make_fully_local,
                 asset_type=props.weld_prefab_asset_type,
                 placement_rotation=props.weld_prefab_rotation,
             )

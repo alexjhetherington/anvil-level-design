@@ -93,6 +93,23 @@ def link_prefab_object(abs_path, obj_name):
     return data_to.objects[0]
 
 
+def append_prefab_object(abs_path, obj_name):
+    """Append one fresh, fully local prefab without reusing earlier appended IDs."""
+    with bpy.data.libraries.load(
+            abs_path,
+            link=False,
+            recursive=True,
+            reuse_local_id=False,
+            assets_only=True,
+            clear_asset_data=True) as (data_from, data_to):
+        if obj_name not in data_from.objects:
+            return None
+        data_to.objects = [obj_name]
+    if not data_to.objects:
+        return None
+    return data_to.objects[0]
+
+
 def create_object_override(linked_asset):
     try:
         return linked_asset.override_create(remap_local_usages=True), ""

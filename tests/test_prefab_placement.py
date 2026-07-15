@@ -118,6 +118,7 @@ class PrefabPlacementUndoTest(AnvilTestCase):
             result = bpy.ops.leveldesign.prefab_instantiate(
                 'INVOKE_DEFAULT',
                 library_index=0,
+                source_object_name="EscRepeatPrefab",
                 object_name="EscRepeatPrefab",
                 asset_type='OBJECT',
             )
@@ -173,6 +174,7 @@ class PrefabPlacementUndoTest(AnvilTestCase):
 
         result = bpy.ops.leveldesign.prefab_instantiate(
             library_index=0,
+            source_object_name="RedoRepeatPrefab",
             object_name="RedoRepeatPrefab",
             asset_type='OBJECT',
             use_placement=True,

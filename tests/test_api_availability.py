@@ -284,12 +284,21 @@ class APIAvailabilityTest(AnvilTestCase):
                 for fn_name in ("asset_mark", "asset_clear", "preview_ensure"):
                     if not hasattr(data_block, fn_name):
                         missing.append(f"{data_name}.{fn_name}")
+            if not hasattr(obj, "make_local"):
+                missing.append("bpy.types.Object.make_local")
         finally:
             bpy.data.objects.remove(obj)
             bpy.data.meshes.remove(mesh)
             bpy.data.collections.remove(collection)
         try:
-            bpy.data.libraries.load("//anvil_missing_asset_api_check.blend", assets_only=True)
+            bpy.data.libraries.load(
+                "//anvil_missing_asset_api_check.blend",
+                link=False,
+                recursive=True,
+                reuse_local_id=False,
+                assets_only=True,
+                clear_asset_data=True,
+            )
         except TypeError:
             missing.append("bpy.data.libraries.load(..., assets_only=True)")
         if not hasattr(bpy.data.libraries, "write"):

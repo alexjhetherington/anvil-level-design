@@ -21,6 +21,7 @@ from ..operators.weld import (
 )
 from . import browser
 from .assets import (
+    append_prefab_object,
     clear_prefab_asset,
     create_object_override,
     find_existing_linked_object,
@@ -326,84 +327,200 @@ def _resolve_prefab_linked_asset(scene, library_index, object_name, asset_type):
     return linked_asset, abs_path, reused_linked_asset, ""
 
 
+def _generated_prefab_name_index(name, base_name, suffix):
+    if suffix and name.endswith(suffix):
+        stem = name[:-len(suffix)]
+    else:
+        stem = name
+
+    if stem == base_name:
+        return 0
+
+    numeric_prefix = base_name + "."
+    if not stem.startswith(numeric_prefix):
+        return None
+
+    numeric_part = stem[len(numeric_prefix):]
+    if len(numeric_part) != 3 or not numeric_part.isdigit():
+        return None
+
+    return int(numeric_part)
+
+
+def _next_prefab_object_name(base_name, suffix, placed_object):
+    used_indices = set()
+    for obj in bpy.data.objects:
+        if obj == placed_object or obj.library is not None:
+            continue
+        index = _generated_prefab_name_index(obj.name, base_name, suffix)
+        if index is not None:
+            used_indices.add(index)
+
+    index = 0
+    while index in used_indices:
+        index += 1
+
+    if index == 0:
+        return base_name + suffix
+    return f"{base_name}.{index:03d}{suffix}"
+
+
+def _find_repeat_prefab_object(object_name):
+    if not object_name:
+        return None, "No repeat prefab object supplied"
+
+    obj = bpy.data.objects.get(object_name)
+    if obj is None:
+        return None, f"Repeat prefab object '{object_name}' not found"
+    return obj, ""
+
+
+def _instantiate_repeated_prefab_object(
+        scene,
+        collection,
+        view_layer,
+        source_object,
+        object_name,
+        source_object_name,
+        placement_matrix,
+        name_suffix):
+    placed_object = source_object.copy()
+    target_collection = collection if collection is not None else scene.collection
+    target_collection.objects.link(placed_object)
+
+    base_name = object_name if object_name else source_object_name
+    placed_object.name = _next_prefab_object_name(
+        base_name,
+        name_suffix,
+        placed_object,
+    )
+    placed_object.matrix_basis = placement_matrix.copy()
+
+    for obj in view_layer.objects:
+        obj.select_set(False)
+    placed_object.select_set(True)
+    view_layer.objects.active = placed_object
+
+    debug_log(
+        f"[Prefabs] Repeated local object '{source_object.name}' "
+        f"as '{placed_object.name}'"
+    )
+    return placed_object, "Prefab placed"
+
+
 def _instantiate_prefab_object(
         scene,
         collection,
         view_layer,
         library_index,
+        source_object_name,
         object_name,
         asset_type,
-        placement_matrix):
+        placement_matrix,
+        name_suffix,
+        make_fully_local):
     linked_asset, abs_path, reused_linked_asset, error = _resolve_prefab_linked_asset(
-        scene, library_index, object_name, asset_type
+        scene, library_index, source_object_name, asset_type
     )
     if linked_asset is None:
         return None, error
 
-    debug_log(
-        "[Prefabs] Creating object override "
-        f"name='{object_name}' library='{abs_path}' "
-        f"linked_name='{linked_asset.name}' users={linked_asset.users}"
-    )
-    override, override_error = create_object_override(linked_asset)
-    if override is None and not override_error and reused_linked_asset:
+    placed_object = None
+    if make_fully_local:
         debug_log(
-            "[Prefabs] Re-linking stale object asset after override_create returned None "
-            f"name='{object_name}' linked_name='{linked_asset.name}' "
-            f"library='{getattr(linked_asset.library, 'filepath', None)}' "
-            f"users={linked_asset.users}"
+            "[Prefabs] Appending fully local object "
+            f"name='{source_object_name}' library='{abs_path}'"
         )
-        try:
-            bpy.data.objects.remove(linked_asset, do_unlink=True)
-        except RuntimeError as exc:
-            debug_log(
-                "[Prefabs] Could not remove stale linked object asset "
-                f"name='{object_name}' linked_name='{linked_asset.name}': {exc}"
-            )
-        linked_asset = link_prefab_object(abs_path, object_name)
-        if linked_asset is None:
-            return None, f"Object '{object_name}' not found in {abs_path}"
-        override, override_error = create_object_override(linked_asset)
+        placed_object = append_prefab_object(abs_path, source_object_name)
+        if placed_object is None:
+            return None, f"Object '{source_object_name}' not found in {abs_path}"
 
-    if override_error:
-        message = f"Could not override object prefab '{object_name}' from {abs_path}: {override_error}"
-        print(f"Anvil Level Design: {message}", flush=True)
+    if placed_object is None:
         debug_log(
-            "[Prefabs] override_create raised "
-            f"name='{object_name}' linked_name='{linked_asset.name}' "
-            f"library='{getattr(linked_asset.library, 'filepath', None)}' "
-            f"override_library={linked_asset.override_library is not None}"
+            "[Prefabs] Creating object override for localization "
+            f"name='{source_object_name}' library='{abs_path}' "
+            f"linked_name='{linked_asset.name}' users={linked_asset.users}"
         )
-        return None, message
-    if override is None:
-        message = (
-            f"Could not override object prefab '{object_name}' from {abs_path}. "
-            "Blender returned no override object."
+        override, override_error = create_object_override(linked_asset)
+        if override is None and not override_error and reused_linked_asset:
+            debug_log(
+                "[Prefabs] Re-linking stale object asset after override_create returned None "
+                f"name='{source_object_name}' linked_name='{linked_asset.name}' "
+                f"library='{getattr(linked_asset.library, 'filepath', None)}' "
+                f"users={linked_asset.users}"
+            )
+            try:
+                bpy.data.objects.remove(linked_asset, do_unlink=True)
+            except RuntimeError as exc:
+                debug_log(
+                    "[Prefabs] Could not remove stale linked object asset "
+                    f"name='{source_object_name}' linked_name='{linked_asset.name}': {exc}"
+                )
+            linked_asset = link_prefab_object(abs_path, source_object_name)
+            if linked_asset is None:
+                return None, f"Object '{source_object_name}' not found in {abs_path}"
+            override, override_error = create_object_override(linked_asset)
+
+        if override_error:
+            message = (
+                f"Could not prepare object prefab '{source_object_name}' "
+                f"from {abs_path}: {override_error}"
+            )
+            print(f"Anvil Level Design: {message}", flush=True)
+            debug_log(
+                "[Prefabs] override_create raised "
+                f"name='{source_object_name}' linked_name='{linked_asset.name}' "
+                f"library='{getattr(linked_asset.library, 'filepath', None)}' "
+                f"override_library={linked_asset.override_library is not None}"
+            )
+            return None, message
+        if override is None:
+            message = (
+                f"Could not prepare object prefab '{source_object_name}' from {abs_path}. "
+                "Blender returned no override object."
+            )
+            print(f"Anvil Level Design: {message}", flush=True)
+            debug_log(
+                "[Prefabs] override_create returned None "
+                f"name='{source_object_name}' linked_name='{linked_asset.name}' "
+                f"library='{getattr(linked_asset.library, 'filepath', None)}' "
+                f"override_library={linked_asset.override_library is not None}"
+            )
+            return None, message
+
+        placed_object = override.make_local(
+            clear_liboverride=True,
+            clear_asset_data=True,
         )
-        print(f"Anvil Level Design: {message}", flush=True)
-        debug_log(
-            "[Prefabs] override_create returned None "
-            f"name='{object_name}' linked_name='{linked_asset.name}' "
-            f"library='{getattr(linked_asset.library, 'filepath', None)}' "
-            f"override_library={linked_asset.override_library is not None}"
-        )
-        return None, message
+        if placed_object is None:
+            message = f"Could not make object prefab '{source_object_name}' local"
+            print(f"Anvil Level Design: {message}", flush=True)
+            return None, message
 
     target_collection = collection if collection is not None else scene.collection
     try:
-        target_collection.objects.link(override)
+        target_collection.objects.link(placed_object)
     except RuntimeError:
         pass
 
-    override.matrix_basis = placement_matrix.copy()
+    base_name = object_name if object_name else source_object_name
+    placed_object.name = _next_prefab_object_name(
+        base_name,
+        name_suffix,
+        placed_object,
+    )
+    placed_object.matrix_basis = placement_matrix.copy()
 
     for obj in view_layer.objects:
         obj.select_set(False)
-    override.select_set(True)
-    view_layer.objects.active = override
+    placed_object.select_set(True)
+    view_layer.objects.active = placed_object
 
-    debug_log(f"[Prefabs] Instantiated object '{object_name}' from {abs_path}")
-    return override, "Prefab placed"
+    debug_log(
+        f"[Prefabs] Instantiated object '{source_object_name}' "
+        f"as '{placed_object.name}' from {abs_path}"
+    )
+    return placed_object, "Prefab placed"
 
 
 class LEVELDESIGN_OT_prefab_rotate_left(Operator):
@@ -534,6 +651,7 @@ class LEVELDESIGN_OT_prefab_refresh_libraries(Operator):
             self.report({'WARNING'}, " | ".join(msgs))
         else:
             self.report({'INFO'}, "Prefab libraries refreshed")
+        browser.update_prefab_browser_availability(scene)
         return {'FINISHED'}
 
 
@@ -577,9 +695,36 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
     bl_label = "Instantiate Prefab"
     bl_options = {'REGISTER', 'UNDO'}
 
-    library_index: IntProperty()
-    object_name: StringProperty()
-    asset_type: StringProperty()
+    library_index: IntProperty(
+        name="Library Index",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    source_object_name: StringProperty(
+        name="Source Object",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    repeat_source_object_name: StringProperty(
+        name="Repeat Source Object",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    asset_type: StringProperty(
+        name="Asset Type",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+    object_name: StringProperty(
+        name="Object Name",
+        description="Name for the placed prefab object before its optional suffix",
+    )
+    name_suffix: StringProperty(
+        name="Suffix",
+        description="Suffix appended after Blender numbering, e.g. Tree.001-col",
+        default="",
+    )
+    make_fully_local: BoolProperty(
+        name="Make Local",
+        description="Make the prefab hierarchy and all of its data local to this file",
+        default=False,
+    )
     action_pivot: FloatVectorProperty(
         size=3,
         options={'HIDDEN', 'SKIP_SAVE'},
@@ -612,6 +757,15 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
     def poll(cls, context):
         return _poll_prefab_scene_mode(context)
 
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        settings = layout.column(align=True)
+        settings.prop(self, "object_name")
+        settings.prop(self, "name_suffix")
+        settings.prop(self, "make_fully_local")
+
     def _sample_random_transform_from_scene(self, scene):
         props = scene.level_design_props
         self._random_transform_settings_key = _prefab_random_settings_key(props)
@@ -633,13 +787,18 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
 
     def invoke(self, context, event):
         asset_type = self.asset_type or 'OBJECT'
-        linked_asset, _abs_path, _reused, error = _resolve_prefab_linked_asset(
-            context.scene,
-            self.library_index,
-            self.object_name,
-            asset_type,
-        )
-        if linked_asset is None:
+        if self.repeat_source_object_name:
+            placement_source, error = _find_repeat_prefab_object(
+                self.repeat_source_object_name,
+            )
+        else:
+            placement_source, _abs_path, _reused, error = _resolve_prefab_linked_asset(
+                context.scene,
+                self.library_index,
+                self.source_object_name,
+                asset_type,
+            )
+        if placement_source is None:
             self.report({'ERROR'}, error)
             return {'CANCELLED'}
 
@@ -650,12 +809,12 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
         self._rotation_drag_start_mouse_x = 0
         self._rotation_drag_start_rotation = self._placement_rotation
         self._inherit_normal = context.scene.level_design_props.prefab_inherit_normal
-        self._prefab_ghost = build_prefab_albedo_ghost(linked_asset)
-        self._ghost_base_matrix = linked_asset.matrix_basis.copy()
+        self._prefab_ghost = build_prefab_albedo_ghost(placement_source)
+        self._ghost_base_matrix = placement_source.matrix_basis.copy()
         set_repeat_prefab_override(
             context.scene,
             self.library_index,
-            self.object_name,
+            self.source_object_name,
             asset_type,
             self._placement_rotation,
         )
@@ -918,15 +1077,35 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
             random_scale,
             random_rotation,
         )
-        override, message = _instantiate_prefab_object(
-            context.scene,
-            context.collection,
-            context.view_layer,
-            self.library_index,
-            self.object_name,
-            asset_type,
-            placement_matrix,
-        )
+        if self.repeat_source_object_name:
+            repeat_source, error = _find_repeat_prefab_object(
+                self.repeat_source_object_name,
+            )
+            if repeat_source is None:
+                return (False, error)
+            override, message = _instantiate_repeated_prefab_object(
+                context.scene,
+                context.collection,
+                context.view_layer,
+                repeat_source,
+                self.object_name,
+                self.source_object_name,
+                placement_matrix,
+                self.name_suffix,
+            )
+        else:
+            override, message = _instantiate_prefab_object(
+                context.scene,
+                context.collection,
+                context.view_layer,
+                self.library_index,
+                self.source_object_name,
+                self.object_name,
+                asset_type,
+                placement_matrix,
+                self.name_suffix,
+                self.make_fully_local,
+            )
         if override is None:
             return (False, message)
 
@@ -934,7 +1113,7 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
             override,
             context.scene,
             self.library_index,
-            self.object_name,
+            self.source_object_name,
             asset_type,
             rotation,
         )
@@ -956,20 +1135,25 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
             )
 
         asset_type = self.asset_type or 'OBJECT'
-        linked_asset, _abs_path, _reused, error = _resolve_prefab_linked_asset(
-            context.scene,
-            self.library_index,
-            self.object_name,
-            asset_type,
-        )
-        if linked_asset is None:
+        if self.repeat_source_object_name:
+            placement_source, error = _find_repeat_prefab_object(
+                self.repeat_source_object_name,
+            )
+        else:
+            placement_source, _abs_path, _reused, error = _resolve_prefab_linked_asset(
+                context.scene,
+                self.library_index,
+                self.source_object_name,
+                asset_type,
+            )
+        if placement_source is None:
             self._last_action_result = (False, error)
             self.report({'ERROR'}, error)
             self._action_reported = True
             return {'CANCELLED'}
 
         self.asset_type = asset_type
-        self._ghost_base_matrix = linked_asset.matrix_basis.copy()
+        self._ghost_base_matrix = placement_source.matrix_basis.copy()
 
         result = self._instantiate_at_pivot(
             context,
@@ -1072,6 +1256,26 @@ class LEVELDESIGN_OT_prefab_make_free_objects_assets(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_prefab_top_level_modifier_warning(Operator):
+    """Explain why top-level prefab modifiers will not stay linked"""
+    bl_idname = "leveldesign.prefab_top_level_modifier_warning"
+    bl_label = "Top-Level Modifier Warning"
+    bl_description = (
+        "This prefab has a modifier on its top-level object. When placed, that object and its "
+        "modifiers become local and will not receive library updates. Put updateable modifiers "
+        "on a child object instead"
+    )
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_prefab_library_mode(context)
+
+    def execute(self, context):
+        self.report({'WARNING'}, self.bl_description)
+        return {'CANCELLED'}
+
+
 class LEVELDESIGN_OT_prefab_clear_asset(Operator):
     """Remove this object from prefab assets"""
     bl_idname = "leveldesign.prefab_clear_asset"
@@ -1149,6 +1353,7 @@ classes = (
     LEVELDESIGN_OT_prefab_instantiate,
     LEVELDESIGN_OT_set_prefab_mode,
     LEVELDESIGN_OT_prefab_make_free_objects_assets,
+    LEVELDESIGN_OT_prefab_top_level_modifier_warning,
     LEVELDESIGN_OT_prefab_clear_asset,
     LEVELDESIGN_OT_prefab_select_asset,
     LEVELDESIGN_OT_prefab_generate_previews,

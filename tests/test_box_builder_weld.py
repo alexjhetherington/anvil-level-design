@@ -327,12 +327,17 @@ class BoxBuilderWeldTest(AnvilTestCase):
 
     def test_box_builder_keep_overlap_faces_property_is_visible_for_action_panel(self):
         """Box builder Keep Overlap Faces property is visible for action panel."""
-        prop = bpy.ops.leveldesign.box_builder.get_rna_type().properties[
+        properties = bpy.ops.leveldesign.box_builder.get_rna_type().properties
+        prop = properties[
             "keep_anti_parallel_coplanar_faces"
         ]
         self.assertFalse(prop.is_hidden)
         self.assertEqual(prop.name, "Keep Overlap Faces")
         self.assertTrue(prop.default)
+        suffix_prop = properties["name_suffix"]
+        self.assertFalse(suffix_prop.is_hidden)
+        self.assertEqual(suffix_prop.name, "Suffix")
+        self.assertEqual(suffix_prop.default, "")
 
     def test_box_builder_modal_anti_parallel_action_props_remove_face_at_original_position(self):
         """Box builder modal anti-parallel action props remove face at original position."""
@@ -375,6 +380,7 @@ class BoxBuilderWeldTest(AnvilTestCase):
             "action_had_selection": action_props.action_had_selection,
             "action_was_edit_mode": action_props.action_was_edit_mode,
             "action_object_name": action_props.action_object_name,
+            "name_suffix": action_props.name_suffix,
             "keep_anti_parallel_coplanar_faces": False,
         }
 

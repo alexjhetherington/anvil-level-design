@@ -1,6 +1,12 @@
 # Anvil Level Design Changelog
 
 # 1.7.3
+- Prefabs are now instantiated with a *local* top level object (allows object renaming)
+- Added a warning to prefab library mode; top level modifiers will be *locally* copied (won't update once placed)
+- Added suffix option to prefab instantiation
+- Added make local option to prefab instantiation (entire prefab is copied in rather than linked)
+- Hid unecessary options from prefab instantiation
+- Moved box builder suffix option to the post tool box
 - Texture Browser favourite folders can be renamed
 - Fix applying textures across objects all within the same edit mode
 - Fix texture apply skipping material on first face in a specific scenario

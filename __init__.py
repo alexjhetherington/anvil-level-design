@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Anvil Level Design",
     "author": "Alex Hetherington",
-    "version": (1, 7, 2),
+    "version": (1, 7, 3),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Level Design",
     "description": "TrenchBroom-style UV tools, texture application, and grid controls for level design",
@@ -140,13 +140,6 @@ class LEVELDESIGN_OT_restore_default_keybindings(bpy.types.Operator):
 
 class LevelDesignPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
-
-    # === Global Settings ===
-    pref_box_builder_name_suffix: bpy.props.StringProperty(
-        name="Box Builder Name Suffix",
-        description="Suffix appended to object-mode Box Builder names after Blender numbering, e.g. Anvil.Box.001-col",
-        default="",
-    )
 
     # === Remembered Texture Settings ===
     # This identifier is kept from the old visible addon preference default so
@@ -336,12 +329,6 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.operator("leveldesign.create_hotspot_mapping_workspace")
         row.enabled = not workspace.hotspot_mapping_workspace_exists()
-
-        # Global Settings section
-        layout.separator()
-        layout.label(text="Global Settings")
-        box = layout.box()
-        box.prop(self, "pref_box_builder_name_suffix")
 
         # New File Defaults section
         layout.separator()

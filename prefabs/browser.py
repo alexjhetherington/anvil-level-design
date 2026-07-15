@@ -4,6 +4,7 @@ import bpy
 from bpy.props import IntProperty
 from bpy.types import Operator
 
+from ..core.logging import debug_log
 from ..core.modal_image_grid import (
     ImageGridSpec,
     PreferencesImageGridModal,
@@ -12,6 +13,7 @@ from ..core.modal_image_grid import (
     draw_image_grid_texture,
 )
 from ..core.workspace_check import is_level_design_workspace
+from .assets import scan_library_prefab_assets
 from .previews import (
     prefab_browser_cached_preview_texture,
     prefab_browser_preview_texture,
@@ -23,6 +25,7 @@ _PREFAB_BROWSER_SCREEN_KEY = "anvil_prefab_browser_screen"
 _PREFAB_BROWSER_POPUP_KEY = "anvil_prefab_browser_popup"
 _PREFAB_BROWSER_CONTENT_PANEL = "USERPREF_PT_addons"
 _PREFAB_BROWSER_GRID_SPEC = ImageGridSpec(5.0, 7.5, 2)
+_prefab_browser_unavailable_asset_keys = set()
 
 
 def _poll_scene(scene):
@@ -47,6 +50,44 @@ def _prefab_browser_library_object_count(lib_entry):
         item for item in lib_entry.objects
         if (item.asset_type or 'OBJECT') == 'OBJECT'
     ])
+
+
+def _prefab_browser_asset_key(library_index, asset_type, asset_name):
+    return f"{library_index}:{asset_type}:{asset_name}"
+
+
+def _scan_prefab_browser_library_assets(filepath):
+    try:
+        assets = scan_library_prefab_assets(filepath)
+    except (OSError, RuntimeError) as exc:
+        debug_log(
+            f"[Prefabs] Could not check prefab browser library '{filepath}': {exc}"
+        )
+        return None
+    if assets is None:
+        return None
+    return set(assets)
+
+
+def update_prefab_browser_availability(scene):
+    """Mark cached browser entries which no longer exist in their library file."""
+    unavailable_asset_keys = set()
+    for library_index, lib_entry in enumerate(scene.anvil_prefab_libraries):
+        available_assets = _scan_prefab_browser_library_assets(lib_entry.filepath)
+        for asset_item in lib_entry.objects:
+            asset_type = asset_item.asset_type or 'OBJECT'
+            if (available_assets is None
+                    or (asset_type, asset_item.name) not in available_assets):
+                unavailable_asset_keys.add(
+                    _prefab_browser_asset_key(
+                        library_index,
+                        asset_type,
+                        asset_item.name,
+                    )
+                )
+
+    global _prefab_browser_unavailable_asset_keys
+    _prefab_browser_unavailable_asset_keys = unavailable_asset_keys
 
 
 def _prefab_browser_display_items_for_filter(scene, search_text, library_filter):
@@ -94,6 +135,7 @@ def _set_prefab_browser_scroll_offset(window_manager, scroll_offset):
 
 def _prefab_browser_rect_for_item(item, x, y, width, height):
     lib_index, filepath, library_label, asset_type, asset_name = item
+    key = _prefab_browser_asset_key(lib_index, asset_type, asset_name)
     return {
         "x": x,
         "y": y,
@@ -104,7 +146,8 @@ def _prefab_browser_rect_for_item(item, x, y, width, height):
         "library_label": library_label,
         "asset_type": asset_type,
         "asset_name": asset_name,
-        "key": f"{lib_index}:{asset_type}:{asset_name}",
+        "key": key,
+        "available": key not in _prefab_browser_unavailable_asset_keys,
     }
 
 
@@ -210,7 +253,12 @@ def _draw_prefab_browser_cell(rect, metrics):
     y = rect["y"]
     width = rect["w"]
     height = rect["h"]
-    is_hovered = "hovered_key" in metrics and rect["key"] == metrics["hovered_key"]
+    is_available = rect["available"]
+    is_hovered = (
+        is_available
+        and "hovered_key" in metrics
+        and rect["key"] == metrics["hovered_key"]
+    )
     padding = max(8, int(round(metrics["widget_unit"] * 0.45)))
     icon_space = min(metrics["icon_size"], int(width - padding * 2))
     label_y = y + padding + metrics["line_height"] + 4
@@ -229,35 +277,64 @@ def _draw_prefab_browser_cell(rect, metrics):
             draw_image_grid_rect(x, y, width, height, (0.24, 0.34, 0.46, 0.42))
         else:
             draw_image_grid_rect(x, y, width, height, (0.08, 0.09, 0.10, 0.20))
-        texture_info = prefab_browser_cached_preview_texture(
-            rect["filepath"],
-            rect["asset_type"],
-            rect["asset_name"],
-        )
-        if texture_info is not None:
-            draw_image_grid_texture(texture_info, icon_x, icon_y, icon_space, icon_height)
-        elif prefab_browser_preview_texture_needs_load(
-                rect["filepath"],
-                rect["asset_type"],
-                rect["asset_name"]):
+        if not is_available:
             draw_image_grid_rect(
                 icon_x,
                 icon_y,
                 icon_space,
                 icon_height,
-                (0.10, 0.10, 0.10, 0.35),
+                (0.18, 0.08, 0.08, 0.55),
             )
-        else:
-            draw_image_grid_rect(icon_x, icon_y, icon_space, icon_height, (0.10, 0.10, 0.10, 0.35))
             draw_image_grid_text(
-                "No preview",
+                "Missing from library",
                 icon_x,
                 icon_y + icon_height / 2 - 6,
                 icon_space,
                 no_preview_font_size,
-                (0.70, 0.70, 0.70, 0.90),
+                (0.95, 0.50, 0.45, 1.0),
                 'CENTER',
             )
+        else:
+            texture_info = prefab_browser_cached_preview_texture(
+                rect["filepath"],
+                rect["asset_type"],
+                rect["asset_name"],
+            )
+            if texture_info is not None:
+                draw_image_grid_texture(texture_info, icon_x, icon_y, icon_space, icon_height)
+            elif prefab_browser_preview_texture_needs_load(
+                    rect["filepath"],
+                    rect["asset_type"],
+                    rect["asset_name"]):
+                draw_image_grid_rect(
+                    icon_x,
+                    icon_y,
+                    icon_space,
+                    icon_height,
+                    (0.10, 0.10, 0.10, 0.35),
+                )
+            else:
+                draw_image_grid_rect(
+                    icon_x,
+                    icon_y,
+                    icon_space,
+                    icon_height,
+                    (0.10, 0.10, 0.10, 0.35),
+                )
+                draw_image_grid_text(
+                    "No preview",
+                    icon_x,
+                    icon_y + icon_height / 2 - 6,
+                    icon_space,
+                    no_preview_font_size,
+                    (0.70, 0.70, 0.70, 0.90),
+                    'CENTER',
+                )
+        label_color = (
+            (0.72, 0.48, 0.46, 1.0)
+            if not is_available
+            else (0.96, 0.96, 0.96, 1.0)
+        )
         draw_image_grid_text(
             rect["asset_name"],
             x + padding + 1,
@@ -273,7 +350,7 @@ def _draw_prefab_browser_cell(rect, metrics):
             label_y,
             width - padding * 2,
             label_font_size,
-            (0.96, 0.96, 0.96, 1.0),
+            label_color,
             'CENTER',
         )
         draw_image_grid_text(
@@ -434,6 +511,31 @@ def _prefab_browser_close_popup_window(window):
 
 
 def _prefab_browser_activate_item(hit):
+    if not hit["available"]:
+        print(
+            f"Anvil Level Design: Prefab '{hit['asset_name']}' is missing from "
+            f"{hit['filepath']}. Refresh Libraries to update the browser.",
+            flush=True,
+        )
+        return {'CANCELLED'}
+
+    available_assets = _scan_prefab_browser_library_assets(hit["filepath"])
+    requested_asset = (hit["asset_type"], hit["asset_name"])
+    if available_assets is None or requested_asset not in available_assets:
+        _prefab_browser_unavailable_asset_keys.add(hit["key"])
+        window_manager = bpy.context.window_manager
+        prefab_browser_modal.settings_update(
+            window_manager,
+            window_manager.windows,
+            False,
+        )
+        print(
+            f"Anvil Level Design: Prefab '{hit['asset_name']}' is missing from "
+            f"{hit['filepath']}. Refresh Libraries to update the browser.",
+            flush=True,
+        )
+        return {'CANCELLED'}
+
     view_context = _prefab_browser_3d_view_context(bpy.context.window_manager.windows)
     if view_context is None:
         print("Anvil Level Design: No 3D View available for prefab placement", flush=True)
@@ -444,13 +546,17 @@ def _prefab_browser_activate_item(hit):
         return bpy.ops.leveldesign.prefab_instantiate(
             'INVOKE_DEFAULT',
             library_index=hit["library_index"],
+            source_object_name=hit["asset_name"],
             object_name=hit["asset_name"],
             asset_type=hit["asset_type"],
         )
 
 
 def _prefab_browser_warm_texture_item(item):
-    _lib_index, filepath, _library_label, asset_type, asset_name = item
+    lib_index, filepath, _library_label, asset_type, asset_name = item
+    key = _prefab_browser_asset_key(lib_index, asset_type, asset_name)
+    if key in _prefab_browser_unavailable_asset_keys:
+        return False
     if not prefab_browser_preview_texture_needs_load(filepath, asset_type, asset_name):
         return False
     prefab_browser_preview_texture(filepath, asset_type, asset_name)
@@ -506,6 +612,7 @@ class LEVELDESIGN_OT_prefab_browser(Operator):
         return _poll_scene_mode(context)
 
     def execute(self, context):
+        update_prefab_browser_availability(context.scene)
         return prefab_browser_modal.open_popup(
             context.preferences,
             context.window_manager,

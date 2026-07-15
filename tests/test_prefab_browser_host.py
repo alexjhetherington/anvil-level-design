@@ -161,6 +161,7 @@ class PrefabBrowserHostTest(AnvilTestCase):
             with bpy.context.temp_override(window=popup_window, area=area, region=region):
                 add_result = bpy.ops.leveldesign.prefab_instantiate(
                     library_index=0,
+                    source_object_name="PopupBox",
                     object_name="PopupBox",
                     asset_type='OBJECT',
                 )

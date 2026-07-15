@@ -169,6 +169,7 @@ def _add_prefab_library_entry(scene, filepath, object_name):
 def _instantiate_prefab_for_export(collection, library_index, object_name):
     result = bpy.ops.leveldesign.prefab_instantiate(
         library_index=library_index,
+        source_object_name=object_name,
         object_name=object_name,
         asset_type='OBJECT',
         use_placement=True,
@@ -510,15 +511,18 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
         _set_anvil_export_settings(scene, 2.0, True, True)
 
         self.assertEqual(modifier_obj.get(_ANVIL_WELD_MODE_PROP), 'PREFAB')
-        self.assertIsNotNone(modifier_obj.override_library)
+        self.assertIsNone(modifier_obj.library)
+        self.assertIsNone(modifier_obj.override_library)
         self.assertIsNotNone(modifier_obj.data.library)
         self.assertEqual(len(modifier_obj.modifiers), 1)
         self.assertNotEqual(plain_obj.get(_ANVIL_WELD_MODE_PROP), 'PREFAB')
-        self.assertIsNotNone(plain_obj.override_library)
+        self.assertIsNone(plain_obj.library)
+        self.assertIsNone(plain_obj.override_library)
         self.assertIsNotNone(plain_obj.data.library)
         self.assertEqual(len(plain_obj.modifiers), 0)
         self.assertNotEqual(plain_obj_2.get(_ANVIL_WELD_MODE_PROP), 'PREFAB')
-        self.assertIsNotNone(plain_obj_2.override_library)
+        self.assertIsNone(plain_obj_2.library)
+        self.assertIsNone(plain_obj_2.override_library)
         self.assertIsNotNone(plain_obj_2.data.library)
         self.assertEqual(len(plain_obj_2.modifiers), 0)
 

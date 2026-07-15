@@ -82,6 +82,8 @@ class LEVELDESIGN_PT_prefab_controls_panel(Panel):
             icon='FILE_REFRESH',
         )
 
+        layout.separator(factor=0.5)
+
         row = layout.row(align=True)
         row.prop(props, "prefab_inherit_normal", text="Inherit Normal", toggle=True)
 
@@ -257,7 +259,25 @@ class LEVELDESIGN_PT_prefab_library_prefabs_panel(Panel):
 
         list_box = layout.box()
         for asset_type, asset_name in assets:
+            asset_object = next(
+                (
+                    obj for obj in scene.collection.all_objects
+                    if obj.name == asset_name and obj.asset_data is not None
+                ),
+                None,
+            )
+            has_top_level_modifier = (
+                asset_object is not None and len(asset_object.modifiers) > 0
+            )
             row = list_box.row(align=True)
+            row.alert = has_top_level_modifier
+            if has_top_level_modifier:
+                row.operator(
+                    "leveldesign.prefab_top_level_modifier_warning",
+                    text="",
+                    icon='ERROR',
+                    emboss=False,
+                )
             select_op = row.operator(
                 "leveldesign.prefab_select_asset",
                 text=asset_name,
