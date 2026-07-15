@@ -7,6 +7,10 @@ from bpy.props import CollectionProperty, IntProperty, StringProperty
 class AnvilTextureBrowserFavoriteFolder(bpy.types.PropertyGroup):
     """A user-level favorite folder for the texture browser."""
 
+    name: StringProperty(
+        name="Name",
+        description="Favorite folder name",
+    )
     path: StringProperty(
         name="Folder",
         description="Absolute folder path",

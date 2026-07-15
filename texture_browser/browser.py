@@ -112,9 +112,26 @@ def _addon_preferences():
     return addon.preferences
 
 
+def _default_favorite_name(path):
+    folder_path = os.path.normpath(_display_path(path))
+    folder_names = []
+    while folder_path and len(folder_names) < 2:
+        folder_name = os.path.basename(folder_path)
+        if folder_name:
+            folder_names.append(folder_name)
+        parent_path = os.path.dirname(folder_path)
+        if parent_path == folder_path:
+            break
+        folder_path = parent_path
+    return f".../{'/'.join(reversed(folder_names))}/"
+
+
 def _ensure_texture_browser_preferences(prefs):
     if prefs is None:
         return
+    for favorite in prefs.texture_browser_favorites:
+        if not favorite.name.strip():
+            favorite.name = _default_favorite_name(favorite.path)
     if prefs.texture_browser_filters_initialized:
         return
     prefs.texture_browser_include_suffixes.clear()
@@ -529,11 +546,17 @@ def _current_collection(window_manager):
     return None
 
 
-def _favorite_label(path):
-    label = os.path.basename(os.path.normpath(path))
-    if label:
-        return label
-    return path
+def _current_favorite(window_manager):
+    if window_manager.anvil_texture_browser_collection_index != _TEXTURE_BROWSER_FOLDER_VIEW:
+        return None
+    prefs = _addon_preferences()
+    if prefs is None:
+        return None
+    current_path = _normal_path(window_manager.anvil_texture_browser_folder_path)
+    for favorite in prefs.texture_browser_favorites:
+        if _normal_path(favorite.path) == current_path:
+            return favorite
+    return None
 
 
 def _texture_browser_home_label():
@@ -565,11 +588,10 @@ def _draw_texture_browser_navigation(layout, scene, window_manager):
             disabled.enabled = False
             disabled.label(text="No favourites", icon='INFO')
         for index, favorite in enumerate(prefs.texture_browser_favorites):
-            path = _display_path(favorite.path)
             row = layout.row(align=True)
             op = row.operator(
                 "leveldesign.texture_browser_set_favorite",
-                text=_favorite_label(path),
+                text=favorite.name,
                 icon='FILE_FOLDER',
             )
             op.favorite_index = index
@@ -614,6 +636,7 @@ def _draw_texture_browser_header(
         preferences,
         active_section_is_compatible):
     collection = _current_collection(window_manager)
+    favorite = _current_favorite(window_manager)
 
     layout.row().template_header()
     row = layout.row(align=True)
@@ -643,6 +666,10 @@ def _draw_texture_browser_header(
         collection_row = row.row(align=True)
         collection_row.scale_x = 1.2
         collection_row.prop(collection, "name", text="", icon='OUTLINER_COLLECTION')
+    elif favorite is not None:
+        favorite_row = row.row(align=True)
+        favorite_row.scale_x = 1.2
+        favorite_row.prop(favorite, "name", text="", icon='FILE_FOLDER')
 
     row.separator(factor=0.5)
     row.prop(window_manager, "anvil_texture_browser_preview_scale", text="", slider=True)
@@ -1928,6 +1955,13 @@ class LEVELDESIGN_OT_texture_browser_set_favorite(Operator):
     favorite_index: IntProperty()
 
     @classmethod
+    def description(cls, context, properties):
+        prefs = _addon_preferences()
+        if prefs is not None and 0 <= properties.favorite_index < len(prefs.texture_browser_favorites):
+            return _display_path(prefs.texture_browser_favorites[properties.favorite_index].path)
+        return cls.bl_label
+
+    @classmethod
     def poll(cls, context):
         return _texture_browser_workspace_is_allowed() or texture_browser_modal.is_popup_window(context.window)
 
@@ -1968,6 +2002,7 @@ class LEVELDESIGN_OT_texture_browser_add_favorite(Operator):
                 return {'FINISHED'}
         item = prefs.texture_browser_favorites.add()
         item.path = os.path.abspath(folder)
+        _ensure_texture_browser_preferences(prefs)
         prefs.texture_browser_active_favorite_index = len(prefs.texture_browser_favorites) - 1
         return {'FINISHED'}
 

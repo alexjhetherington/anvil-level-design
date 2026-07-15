@@ -64,7 +64,10 @@ def _snapshot_texture_browser_preferences():
         "preview_scale": prefs.texture_browser_preview_scale,
         "filters_initialized": prefs.texture_browser_filters_initialized,
         "last_folder_path": prefs.texture_browser_last_folder_path,
-        "favorites": [favorite.path for favorite in prefs.texture_browser_favorites],
+        "favorites": [
+            (favorite.path, favorite.name)
+            for favorite in prefs.texture_browser_favorites
+        ],
         "active_favorite_index": prefs.texture_browser_active_favorite_index,
         "collections": collections,
         "active_collection_index": prefs.texture_browser_active_collection_index,
@@ -87,9 +90,10 @@ def _restore_texture_browser_preferences(snapshot):
     prefs.texture_browser_last_folder_path = snapshot["last_folder_path"]
 
     prefs.texture_browser_favorites.clear()
-    for path in snapshot["favorites"]:
+    for path, name in snapshot["favorites"]:
         item = prefs.texture_browser_favorites.add()
         item.path = path
+        item.name = name
     prefs.texture_browser_active_favorite_index = snapshot["active_favorite_index"]
 
     prefs.texture_browser_collections.clear()

@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.7.3
+- Texture Browser favourite folders can be renamed
 - Fix applying textures across objects all within the same edit mode
 - Fix texture apply skipping material on first face in a specific scenario
 - Fix exception during clean materials
