@@ -402,6 +402,12 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         default=False,
     )
 
+    performance_logging: BoolProperty(
+        name="Performance Logging",
+        description="Print grouped performance reports for important operations",
+        default=False,
+    )
+
     # === UV Tools Properties ===
     pixels_per_meter: IntProperty(
         name="Pixels per Meter",

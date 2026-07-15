@@ -9,6 +9,12 @@ from ..core.materials import (
     is_vertex_colors_enabled,
     remove_unused_nodes,
 )
+from ..core.logging import (
+    add_performance_detail,
+    begin_performance_operation_report,
+    finish_performance_operation_report,
+    performance_stage,
+)
 from ..core.workspace_check import is_level_design_workspace
 from ..handlers import get_active_image
 
@@ -288,27 +294,59 @@ class LEVELDESIGN_OT_reload_material_images(Operator):
         dirty_count = 0
         packed_count = 0
         failed_count = 0
+        no_filepath_count = 0
+        performance_report = begin_performance_operation_report(
+            "Reload Material Images",
+            "material image discovery, synchronous image reloads, and redraw tagging",
+        )
 
-        for image in get_material_images():
-            if not image.filepath:
-                continue
-            if image.packed_file:
-                packed_count += 1
-                continue
-            if image.is_dirty:
-                dirty_count += 1
-                continue
+        try:
+            with performance_stage(performance_report, "Discover material images"):
+                material_images = sorted(
+                    get_material_images(),
+                    key=lambda image: image.name.lower(),
+                )
 
-            try:
-                image.reload()
-                reloaded_count += 1
-            except RuntimeError:
-                failed_count += 1
+            add_performance_detail(
+                performance_report,
+                "Material images found",
+                len(material_images),
+            )
 
-        for window in context.window_manager.windows:
-            for area in window.screen.areas:
-                if area.type in {'VIEW_3D', 'IMAGE_EDITOR', 'NODE_EDITOR'}:
-                    area.tag_redraw()
+            with performance_stage(performance_report, "Reload material images"):
+                for image in material_images:
+                    if not image.filepath:
+                        no_filepath_count += 1
+                        continue
+                    if image.packed_file:
+                        packed_count += 1
+                        continue
+                    if image.is_dirty:
+                        dirty_count += 1
+                        continue
+
+                    try:
+                        image.reload()
+                        reloaded_count += 1
+                    except RuntimeError:
+                        failed_count += 1
+
+            with performance_stage(performance_report, "Tag editor redraws"):
+                for window in context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type in {'VIEW_3D', 'IMAGE_EDITOR', 'NODE_EDITOR'}:
+                            area.tag_redraw()
+        finally:
+            add_performance_detail(performance_report, "Images reloaded", reloaded_count)
+            add_performance_detail(performance_report, "Dirty images skipped", dirty_count)
+            add_performance_detail(performance_report, "Packed images skipped", packed_count)
+            add_performance_detail(
+                performance_report,
+                "Images without filepaths skipped",
+                no_filepath_count,
+            )
+            add_performance_detail(performance_report, "Failed reloads", failed_count)
+            finish_performance_operation_report(performance_report)
 
         if reloaded_count == 0 and failed_count == 0:
             self.report({'INFO'}, "No material images to reload")

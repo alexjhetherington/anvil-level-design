@@ -5,6 +5,7 @@
 - Fix texture apply skipping material on first face in a specific scenario
 - Fix exception during clean materials
 - Reload Material Images now only reloads material images (as opposed to all image datablocks). This should be a performance improvement in some cases.
+- Added performance logging mode
 
 # 1.7.2
 - REMOVED global default default file settings (ppm & default material settings) (too confusing! Anvil now initialises new file default material settings to those found in the last saved file)

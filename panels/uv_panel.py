@@ -1026,6 +1026,27 @@ class LEVELDESIGN_OT_toggle_debug_logging(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_toggle_performance_logging(Operator):
+    """Toggle grouped performance reports in the console"""
+
+    bl_idname = "leveldesign.toggle_performance_logging"
+    bl_label = "Toggle Performance Logging"
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def execute(self, context):
+        from ..core.logging import reset_performance_mode_tracking
+
+        props = context.scene.level_design_props
+        props.performance_logging = not props.performance_logging
+        reset_performance_mode_tracking(context.mode)
+        state = "enabled" if props.performance_logging else "disabled"
+        print(f"Anvil Level Design: Performance logging {state}", flush=True)
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_PT_debug_panel(Panel):
     """Debug options"""
 
@@ -1047,6 +1068,12 @@ class LEVELDESIGN_PT_debug_panel(Panel):
             text="Debug Logging",
             depress=context.scene.level_design_props.debug_logging,
             icon='CONSOLE',
+        )
+        layout.operator(
+            "leveldesign.toggle_performance_logging",
+            text="Performance Logging",
+            depress=context.scene.level_design_props.performance_logging,
+            icon='TIME',
         )
 
         in_object_mode = context.mode == 'OBJECT'
@@ -1096,6 +1123,7 @@ settings_and_export_classes = (
     LEVELDESIGN_PT_default_material_settings_panel,
     LEVELDESIGN_PT_export_panel,
     LEVELDESIGN_OT_toggle_debug_logging,
+    LEVELDESIGN_OT_toggle_performance_logging,
     LEVELDESIGN_PT_debug_panel,
 )
 

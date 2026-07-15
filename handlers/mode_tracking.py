@@ -4,7 +4,11 @@ import ctypes
 
 import bpy
 
-from ..core.logging import debug_log
+from ..core.logging import (
+    debug_log,
+    observe_performance_mode,
+    reset_performance_mode_tracking,
+)
 from ..core.workspace_check import is_level_design_workspace
 
 
@@ -64,6 +68,7 @@ def _on_object_mode_changed():
         if not is_level_design_workspace():
             return
         current_mode = bpy.context.mode
+        observe_performance_mode(current_mode)
         if current_mode == _last_tracked_mode:
             return
         was_in = _last_tracked_mode in _FACE_ORIENTATION_MODES if _last_tracked_mode else False
@@ -197,3 +202,4 @@ def reset_mode_tracking():
         _last_tracked_mode = bpy.context.mode
     else:
         _last_tracked_mode = None
+    reset_performance_mode_tracking(bpy.context.mode)
