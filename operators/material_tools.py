@@ -36,13 +36,25 @@ def cleanup_unused_material_slots(obj):
     for i in range(len(obj.material_slots) - 1, -1, -1):
         if i not in used_indices:
             obj.active_material_index = i
-            with bpy.context.temp_override(object=obj):
+            with bpy.context.temp_override(object=obj, active_object=obj):
                 bpy.ops.object.material_slot_remove()
             # Recalculate used indices after removal (they shift down)
             used_indices = get_used_material_indices(obj)
             removed += 1
 
     return removed
+
+
+def get_material_images():
+    """Return images referenced by image texture nodes in materials."""
+    images = set()
+    for material in bpy.data.materials:
+        if not material.use_nodes or not material.node_tree:
+            continue
+        for node in material.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image is not None:
+                images.add(node.image)
+    return images
 
 
 class LEVELDESIGN_OT_set_interpolation_closest(Operator):
@@ -259,12 +271,12 @@ class LEVELDESIGN_OT_fix_alpha_bleed(Operator):
         return {'FINISHED'}
 
 
-class LEVELDESIGN_OT_reload_all_external_images(Operator):
-    """Reload all external file images from disk"""
+class LEVELDESIGN_OT_reload_material_images(Operator):
+    """Reload external images referenced by materials"""
 
-    bl_idname = "leveldesign.reload_all_external_images"
-    bl_label = "Reload All External Images"
-    bl_description = "Reload all unpacked, unchanged external image files from disk"
+    bl_idname = "leveldesign.reload_material_images"
+    bl_label = "Reload Material Images"
+    bl_description = "Reload unpacked, unchanged external images referenced by materials"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -277,7 +289,7 @@ class LEVELDESIGN_OT_reload_all_external_images(Operator):
         packed_count = 0
         failed_count = 0
 
-        for image in bpy.data.images:
+        for image in get_material_images():
             if not image.filepath:
                 continue
             if image.packed_file:
@@ -299,7 +311,7 @@ class LEVELDESIGN_OT_reload_all_external_images(Operator):
                     area.tag_redraw()
 
         if reloaded_count == 0 and failed_count == 0:
-            self.report({'INFO'}, "No external images to reload")
+            self.report({'INFO'}, "No material images to reload")
         elif failed_count > 0:
             self.report(
                 {'WARNING'},
@@ -310,7 +322,7 @@ class LEVELDESIGN_OT_reload_all_external_images(Operator):
 
         if dirty_count > 0 or packed_count > 0:
             print(
-                "Anvil Level Design: Skipped image reload for "
+                "Anvil Level Design: Skipped material image reload for "
                 f"{dirty_count} dirty image(s), {packed_count} packed image(s)",
                 flush=True,
             )
@@ -370,7 +382,7 @@ classes = (
     LEVELDESIGN_OT_toggle_texture_alpha,
     LEVELDESIGN_OT_toggle_vertex_colors,
     LEVELDESIGN_OT_fix_alpha_bleed,
-    LEVELDESIGN_OT_reload_all_external_images,
+    LEVELDESIGN_OT_reload_material_images,
     LEVELDESIGN_OT_set_default_interpolation,
     LEVELDESIGN_OT_cleanup_unused_materials,
 )

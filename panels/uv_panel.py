@@ -677,7 +677,7 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
         )
         locate_op.filepath = image_filepath
         self.layout.operator(
-            "leveldesign.reload_all_external_images",
+            "leveldesign.reload_material_images",
             text="",
             icon='FILE_REFRESH',
             emboss=False,
