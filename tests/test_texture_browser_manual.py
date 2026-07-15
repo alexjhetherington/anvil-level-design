@@ -19,6 +19,7 @@ from .test_texture_browser_host import (
 )
 from ..core.modal_image_grid import image_grid_hit_test
 from ..texture_browser import browser as texture_browser
+from ..texture_browser import persistence as texture_browser_persistence
 
 
 VISUAL_TEXTURE_FILE_COUNT = 3000
@@ -414,11 +415,18 @@ def _close_texture_browser_popups():
 class TextureBrowserManualVisualTest(AnvilTestCase):
 
     def setUp(self):
+        self._texture_browser_saves_were_suspended = (
+            texture_browser_persistence.texture_browser_saves_suspended()
+        )
+        texture_browser_persistence.set_texture_browser_saves_suspended(True)
         self._preferences_snapshot = _snapshot_texture_browser_preferences()
 
     def tearDown(self):
         _close_texture_browser_popups()
         _restore_texture_browser_preferences(self._preferences_snapshot)
+        texture_browser_persistence.set_texture_browser_saves_suspended(
+            self._texture_browser_saves_were_suspended
+        )
         texture_browser._folder_scan_cache.clear()
         texture_browser._collection_scan_cache.clear()
         if not base_test.save_outputs:

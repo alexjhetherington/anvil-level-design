@@ -27,6 +27,7 @@ from ..handlers.active_image import (
     redraw_ui_panels,
     set_active_image,
 )
+from . import persistence
 from .apply import apply_texture_path_to_selection
 from .previews import (
     cleanup_texture_browser_preview_cache,
@@ -1974,6 +1975,7 @@ class LEVELDESIGN_OT_texture_browser_set_favorite(Operator):
             self.report({'ERROR'}, "Favorite folder not found")
             return {'CANCELLED'}
         prefs.texture_browser_active_favorite_index = self.favorite_index
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -1999,11 +2001,13 @@ class LEVELDESIGN_OT_texture_browser_add_favorite(Operator):
         for index, favorite in enumerate(prefs.texture_browser_favorites):
             if _normal_path(favorite.path) == normal:
                 prefs.texture_browser_active_favorite_index = index
+                persistence.save_texture_browser_data()
                 return {'FINISHED'}
         item = prefs.texture_browser_favorites.add()
         item.path = os.path.abspath(folder)
-        _ensure_texture_browser_preferences(prefs)
+        item.name = _default_favorite_name(item.path)
         prefs.texture_browser_active_favorite_index = len(prefs.texture_browser_favorites) - 1
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2028,6 +2032,7 @@ class LEVELDESIGN_OT_texture_browser_remove_favorite(Operator):
             self.favorite_index,
             max(0, len(prefs.texture_browser_favorites) - 1),
         )
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2053,6 +2058,7 @@ class LEVELDESIGN_OT_texture_browser_remove_active_favorite(Operator):
             index,
             max(0, len(prefs.texture_browser_favorites) - 1),
         )
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2074,6 +2080,7 @@ class LEVELDESIGN_OT_texture_browser_set_collection(Operator):
             return {'CANCELLED'}
         prefs.texture_browser_active_collection_index = self.collection_index
         context.window_manager.anvil_texture_browser_collection_index = self.collection_index
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2095,6 +2102,7 @@ class LEVELDESIGN_OT_texture_browser_add_collection(Operator):
         collection.name = _unique_collection_name(prefs)
         prefs.texture_browser_active_collection_index = len(prefs.texture_browser_collections) - 1
         context.window_manager.anvil_texture_browser_collection_index = prefs.texture_browser_active_collection_index
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2123,6 +2131,7 @@ class LEVELDESIGN_OT_texture_browser_remove_collection(Operator):
             context.window_manager.anvil_texture_browser_collection_index = _TEXTURE_BROWSER_FOLDER_VIEW
         elif context.window_manager.anvil_texture_browser_collection_index > self.collection_index:
             context.window_manager.anvil_texture_browser_collection_index -= 1
+        persistence.save_texture_browser_data()
         return {'FINISHED'}
 
 
@@ -2171,6 +2180,7 @@ class LEVELDESIGN_OT_texture_browser_add_file_to_collection(Operator):
             collection = prefs.texture_browser_collections.add()
             collection.name = _unique_collection_name(prefs)
             prefs.texture_browser_active_collection_index = 0
+            persistence.save_texture_browser_data()
         active_index = prefs.texture_browser_active_collection_index
         if not (0 <= active_index < len(prefs.texture_browser_collections)):
             active_index = 0
@@ -2197,6 +2207,7 @@ class LEVELDESIGN_OT_texture_browser_add_file_to_collection(Operator):
             self.report({'INFO'}, f"Added to {collection.name}")
         else:
             self.report({'INFO'}, f"Already in {collection.name}")
+        persistence.save_texture_browser_data()
         _tag_texture_browser_changed(context.window_manager, False)
         return {'FINISHED'}
 
@@ -2432,6 +2443,7 @@ def register():
     )
 
     wm = bpy.context.window_manager
+    persistence.load_texture_browser_data()
     _load_texture_browser_persistent_settings(wm)
     texture_browser_modal.persistent_draw_overrides = True
     texture_browser_modal.persistent_draw_handler = True
@@ -2451,6 +2463,7 @@ def register():
 
 
 def unregister():
+    persistence.save_texture_browser_data()
     if bpy.app.timers.is_registered(_recover_texture_browser_active_section):
         bpy.app.timers.unregister(_recover_texture_browser_active_section)
     texture_browser_modal.persistent_draw_overrides = False

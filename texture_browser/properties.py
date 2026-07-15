@@ -4,12 +4,19 @@ import bpy
 from bpy.props import CollectionProperty, IntProperty, StringProperty
 
 
+def texture_browser_user_data_update(self, context):
+    from .persistence import save_texture_browser_data
+
+    save_texture_browser_data()
+
+
 class AnvilTextureBrowserFavoriteFolder(bpy.types.PropertyGroup):
     """A user-level favorite folder for the texture browser."""
 
     name: StringProperty(
         name="Name",
         description="Favorite folder name",
+        update=texture_browser_user_data_update,
     )
     path: StringProperty(
         name="Folder",
@@ -50,6 +57,7 @@ class AnvilTextureBrowserCollection(bpy.types.PropertyGroup):
     name: StringProperty(
         name="Name",
         description="Collection name",
+        update=texture_browser_user_data_update,
     )
     files: CollectionProperty(type=AnvilTextureBrowserCollectionItem)
     active_file_index: IntProperty(

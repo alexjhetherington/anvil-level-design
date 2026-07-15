@@ -7,6 +7,7 @@ from .helpers import TEXTURE_PATH, create_vertical_plane
 from ..core.materials import get_image_from_material
 from ..handlers import get_active_image
 from ..texture_browser import browser as texture_browser
+from ..texture_browser import persistence as texture_browser_persistence
 
 
 HOST_TEXTURE_BROWSER_OUTPUT_DIR = os.path.abspath(
@@ -140,6 +141,10 @@ def _remove_output_files():
 class TextureBrowserHostTest(AnvilTestCase):
 
     def setUp(self):
+        self._texture_browser_saves_were_suspended = (
+            texture_browser_persistence.texture_browser_saves_suspended()
+        )
+        texture_browser_persistence.set_texture_browser_saves_suspended(True)
         self._preferences_snapshot = _snapshot_texture_browser_preferences()
         prefs = texture_browser._addon_preferences()
         texture_browser._ensure_texture_browser_preferences(prefs)
@@ -149,6 +154,9 @@ class TextureBrowserHostTest(AnvilTestCase):
     def tearDown(self):
         _close_texture_browser_popups()
         _restore_texture_browser_preferences(self._preferences_snapshot)
+        texture_browser_persistence.set_texture_browser_saves_suspended(
+            self._texture_browser_saves_were_suspended
+        )
         texture_browser._folder_scan_cache.clear()
         texture_browser._collection_scan_cache.clear()
         _remove_output_files()

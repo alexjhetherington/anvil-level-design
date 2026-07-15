@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.7.4
+- Improve saving of Texture Browser settings
+
 # 1.7.3
 - Prefabs are now instantiated with a *local* top level object (allows object renaming)
 - Added a warning to prefab library mode; top level modifiers will be *locally* copied (won't update once placed)

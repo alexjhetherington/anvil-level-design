@@ -192,6 +192,8 @@ class APIAvailabilityTest(AnvilTestCase):
             missing.append("bpy.utils.units")
         elif not hasattr(bpy.utils.units, "to_string"):
             missing.append("bpy.utils.units.to_string")
+        if not hasattr(bpy.utils, "user_resource"):
+            missing.append("bpy.utils.user_resource")
         if not hasattr(bpy.types, "UILayout"):
             missing.append("bpy.types.UILayout")
         elif "operator_context" not in bpy.types.UILayout.bl_rna.properties:
