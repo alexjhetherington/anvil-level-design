@@ -1,4 +1,6 @@
 import math
+import os
+from unittest.mock import patch
 
 import bmesh
 import bpy
@@ -15,6 +17,7 @@ from ..operators.texture_apply import (
     _closest_target_world, _apply_to_other_obj, _dispatch_set_uv_from_other_face,
     _flush_other_bmeshes,
 )
+from ..operators import texture_apply as texture_apply_module
 from ..core.face_id import get_face_id_layer
 from mathutils.bvhtree import BVHTree
 
@@ -624,6 +627,360 @@ def _get_second_material():
     links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
     links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
     return mat
+
+
+class CrossObjectEditModeAltClickTest(AnvilTestCase):
+    """Test cross-object Alt-click behavior and undo."""
+
+    def test_alt_right_pick_when_other_object_is_not_in_edit_mode_applies_texture_and_undo_restores_target(self):
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        source_mat = _get_material()
+        target_image = bpy.data.images.load(
+            os.path.join(os.path.dirname(__file__), "dev_grey_floor.png"),
+            check_existing=True,
+        )
+        target_mat = find_material_with_image(target_image)
+        if target_mat is None:
+            target_mat = create_material_with_image(target_image)
+
+        source_mesh = bpy.data.meshes.new("alt_click_source_mesh")
+        source_mesh.materials.append(source_mat)
+        source_bm = bmesh.new()
+        source_face = _make_vertical_face(source_bm, 0)
+        source_bm.normal_update()
+        source_uv = source_bm.loops.layers.uv.verify()
+        source_face.material_index = 0
+        apply_uv_to_face(
+            source_face, source_uv, 2.5, 1.5, 45.0, 0.3, 0.7,
+            source_mat, ppm, source_mesh,
+        )
+        source_bm.to_mesh(source_mesh)
+        source_bm.free()
+
+        source_obj = bpy.data.objects.new("alt_click_source_obj", source_mesh)
+        bpy.context.collection.objects.link(source_obj)
+
+        target_mesh = bpy.data.meshes.new("alt_click_target_mesh")
+        target_mesh.materials.append(target_mat)
+        target_bm = bmesh.new()
+        target_face = _make_vertical_face(target_bm, 0)
+        target_bm.normal_update()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face.material_index = 0
+        apply_uv_to_face(
+            target_face, target_uv, 1.0, 1.0, 0.0, 0.0, 0.0,
+            target_mat, ppm, target_mesh,
+        )
+        target_bm.to_mesh(target_mesh)
+        target_bm.free()
+
+        target_obj = bpy.data.objects.new("alt_click_target_obj", target_mesh)
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.y = 2.0
+        bpy.context.view_layer.update()
+
+        source_obj.select_set(False)
+        target_obj.select_set(True)
+        bpy.context.view_layer.objects.active = target_obj
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        self.assertEqual(source_obj.mode, 'OBJECT')
+        self.assertEqual(target_obj.mode, 'EDIT')
+
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_bm.faces[0].select = True
+        target_uv = target_bm.loops.layers.uv.verify()
+        self.assertEqual(
+            target_mesh.materials[target_bm.faces[0].material_index], target_mat
+        )
+        before_uvs = [loop[target_uv].uv.copy() for loop in target_bm.faces[0].loops]
+        bmesh.update_edit_mesh(target_mesh)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before Alt-right pick")
+
+        source_image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+        pick_result = (
+            source_obj, 0, source_image, [target_bm.faces[0]], target_bm
+        )
+        with patch.object(
+                texture_apply_module, '_pick_source_from_cursor',
+                return_value=pick_result):
+            with bpy.context.temp_override(**self._get_3d_view_context()):
+                result = bpy.ops.leveldesign.pick_image_from_face(
+                    'INVOKE_DEFAULT'
+                )
+        self.assertEqual(result, {'FINISHED'})
+
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        target_transform = derive_transform_from_uvs(
+            target_face, target_uv, ppm, target_mesh
+        )
+        self.assertAlmostEqual(target_transform['scale_u'], 2.5, places=3)
+        self.assertEqual(
+            target_mesh.materials[target_face.material_index], source_mat
+        )
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        target_obj = bpy.data.objects["alt_click_target_obj"]
+        target_mesh = target_obj.data
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        self.assertEqual(target_face.material_index, 0)
+        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        for before_uv, loop in zip(before_uvs, target_face.loops):
+            self.assertEqual(loop[target_uv].uv, before_uv)
+
+    def test_alt_left_apply_when_both_objects_are_in_edit_mode_applies_texture_and_undo_restores_target(self):
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        source_mat = _get_material()
+        target_image = bpy.data.images.load(
+            os.path.join(os.path.dirname(__file__), "dev_grey_floor.png"),
+            check_existing=True,
+        )
+        target_mat = find_material_with_image(target_image)
+        if target_mat is None:
+            target_mat = create_material_with_image(target_image)
+
+        source_mesh = bpy.data.meshes.new("alt_click_source_mesh")
+        source_mesh.materials.append(source_mat)
+        source_bm = bmesh.new()
+        source_face = _make_vertical_face(source_bm, 0)
+        source_bm.normal_update()
+        source_uv = source_bm.loops.layers.uv.verify()
+        source_face.material_index = 0
+        apply_uv_to_face(
+            source_face, source_uv, 2.5, 1.5, 45.0, 0.3, 0.7,
+            source_mat, ppm, source_mesh,
+        )
+        source_bm.to_mesh(source_mesh)
+        source_bm.free()
+
+        source_obj = bpy.data.objects.new("alt_click_source_obj", source_mesh)
+        bpy.context.collection.objects.link(source_obj)
+
+        target_mesh = bpy.data.meshes.new("alt_click_target_mesh")
+        target_mesh.materials.append(target_mat)
+        target_bm = bmesh.new()
+        target_face = _make_vertical_face(target_bm, 0)
+        target_bm.normal_update()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face.material_index = 0
+        apply_uv_to_face(
+            target_face, target_uv, 1.0, 1.0, 0.0, 0.0, 0.0,
+            target_mat, ppm, target_mesh,
+        )
+        target_bm.to_mesh(target_mesh)
+        target_bm.free()
+
+        target_obj = bpy.data.objects.new("alt_click_target_obj", target_mesh)
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.y = 2.0
+        bpy.context.view_layer.update()
+
+        source_obj.select_set(True)
+        target_obj.select_set(True)
+        bpy.context.view_layer.objects.active = source_obj
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        self.assertEqual(source_obj.mode, 'EDIT')
+        self.assertEqual(target_obj.mode, 'EDIT')
+
+        source_bm = bmesh.from_edit_mesh(source_mesh)
+        source_bm.faces.ensure_lookup_table()
+        source_bm.faces[0].select = True
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_bm.faces[0].select = False
+        target_uv = target_bm.loops.layers.uv.verify()
+        self.assertEqual(
+            target_mesh.materials[target_bm.faces[0].material_index], target_mat
+        )
+        before_uvs = [loop[target_uv].uv.copy() for loop in target_bm.faces[0].loops]
+        bmesh.update_edit_mesh(source_mesh)
+        bmesh.update_edit_mesh(target_mesh)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before Alt-left apply")
+
+        class _FakeOp:
+            pass
+
+        op = _FakeOp()
+        op._paint_obj = source_obj
+        op._source_face_index = 0
+        op._mat = source_mat
+        op._ppm = ppm
+        op._other_bmeshes = {}
+        op._paint_visited_other = set()
+        op._cross_object_undo_transaction_id = None
+
+        processed = _apply_to_other_obj(
+            op, source_bm, source_mesh, target_obj, 0,
+            _dispatch_set_uv_from_other_face,
+        )
+        self.assertTrue(processed)
+        _flush_other_bmeshes(op)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="After Alt-left apply")
+
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        target_transform = derive_transform_from_uvs(
+            target_face, target_uv, ppm, target_mesh
+        )
+        self.assertAlmostEqual(target_transform['scale_u'], 2.5, places=3)
+        self.assertEqual(
+            target_mesh.materials[target_face.material_index], source_mat
+        )
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        target_obj = bpy.data.objects["alt_click_target_obj"]
+        target_mesh = target_obj.data
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        self.assertEqual(target_face.material_index, 0)
+        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        for before_uv, loop in zip(before_uvs, target_face.loops):
+            self.assertEqual(loop[target_uv].uv, before_uv)
+
+    def test_alt_right_pick_when_both_objects_are_in_edit_mode_applies_texture_and_undo_restores_target(self):
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        source_mat = _get_material()
+        target_image = bpy.data.images.load(
+            os.path.join(os.path.dirname(__file__), "dev_grey_floor.png"),
+            check_existing=True,
+        )
+        target_mat = find_material_with_image(target_image)
+        if target_mat is None:
+            target_mat = create_material_with_image(target_image)
+
+        source_mesh = bpy.data.meshes.new("alt_click_source_mesh")
+        source_mesh.materials.append(source_mat)
+        source_bm = bmesh.new()
+        source_face = _make_vertical_face(source_bm, 0)
+        source_bm.normal_update()
+        source_uv = source_bm.loops.layers.uv.verify()
+        source_face.material_index = 0
+        apply_uv_to_face(
+            source_face, source_uv, 2.5, 1.5, 45.0, 0.3, 0.7,
+            source_mat, ppm, source_mesh,
+        )
+        source_bm.to_mesh(source_mesh)
+        source_bm.free()
+
+        source_obj = bpy.data.objects.new("alt_click_source_obj", source_mesh)
+        bpy.context.collection.objects.link(source_obj)
+
+        target_mesh = bpy.data.meshes.new("alt_click_target_mesh")
+        target_mesh.materials.append(target_mat)
+        target_bm = bmesh.new()
+        target_face = _make_vertical_face(target_bm, 0)
+        target_bm.normal_update()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face.material_index = 0
+        apply_uv_to_face(
+            target_face, target_uv, 1.0, 1.0, 0.0, 0.0, 0.0,
+            target_mat, ppm, target_mesh,
+        )
+        target_bm.to_mesh(target_mesh)
+        target_bm.free()
+
+        target_obj = bpy.data.objects.new("alt_click_target_obj", target_mesh)
+        bpy.context.collection.objects.link(target_obj)
+        target_obj.location.y = 2.0
+        bpy.context.view_layer.update()
+
+        source_obj.select_set(True)
+        target_obj.select_set(True)
+        bpy.context.view_layer.objects.active = target_obj
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+
+        ctx = _get_context_override()
+        undo_ctx = _get_undo_context()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        self.assertEqual(source_obj.mode, 'EDIT')
+        self.assertEqual(target_obj.mode, 'EDIT')
+
+        source_bm = bmesh.from_edit_mesh(source_mesh)
+        source_bm.faces.ensure_lookup_table()
+        source_bm.faces[0].select = False
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_bm.faces[0].select = True
+        target_uv = target_bm.loops.layers.uv.verify()
+        self.assertEqual(
+            target_mesh.materials[target_bm.faces[0].material_index], target_mat
+        )
+        before_uvs = [loop[target_uv].uv.copy() for loop in target_bm.faces[0].loops]
+        bmesh.update_edit_mesh(source_mesh)
+        bmesh.update_edit_mesh(target_mesh)
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo_push(message="Before Alt-right pick")
+
+        source_image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+        pick_result = (
+            source_obj, 0, source_image, [target_bm.faces[0]], target_bm
+        )
+        with patch.object(
+                texture_apply_module, '_pick_source_from_cursor',
+                return_value=pick_result):
+            with bpy.context.temp_override(**self._get_3d_view_context()):
+                result = bpy.ops.leveldesign.pick_image_from_face(
+                    'INVOKE_DEFAULT'
+                )
+        self.assertEqual(result, {'FINISHED'})
+
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        target_transform = derive_transform_from_uvs(
+            target_face, target_uv, ppm, target_mesh
+        )
+        self.assertAlmostEqual(target_transform['scale_u'], 2.5, places=3)
+        self.assertEqual(
+            target_mesh.materials[target_face.material_index], source_mat
+        )
+
+        with bpy.context.temp_override(**undo_ctx):
+            bpy.ops.ed.undo()
+
+        target_obj = bpy.data.objects["alt_click_target_obj"]
+        target_mesh = target_obj.data
+        target_bm = bmesh.from_edit_mesh(target_mesh)
+        target_bm.faces.ensure_lookup_table()
+        target_uv = target_bm.loops.layers.uv.verify()
+        target_face = target_bm.faces[0]
+        self.assertEqual(target_face.material_index, 0)
+        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        for before_uv, loop in zip(before_uvs, target_face.loops):
+            self.assertEqual(loop[target_uv].uv, before_uv)
 
 
 def _create_two_face_two_material_plane(name, source_scale_u, source_scale_v,

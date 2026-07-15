@@ -13,7 +13,7 @@ from ..core.workspace_check import is_level_design_workspace
 from .face_cache import (
     face_data_cache, cache_face_data, update_ui_from_selection,
     check_selection_changed, snapshot_selection,
-    get_last_edit_object_name, set_last_edit_object_name,
+    get_last_edit_mesh_names, set_last_edit_mesh_names,
 )
 from .active_image import update_active_image_from_face
 from .auto_hotspot import apply_auto_hotspots, set_force_auto_hotspot
@@ -127,12 +127,25 @@ def on_depsgraph_update(scene, depsgraph):
 
         props = scene.level_design_props
 
-        if context.mode != 'EDIT_MESH' and get_last_edit_object_name() is not None:
-            set_last_edit_object_name(None)
+        if context.mode != 'EDIT_MESH' and get_last_edit_mesh_names():
+            set_last_edit_mesh_names(())
 
         if context.mode != 'EDIT_MESH':
             from ..operators.weld import sync_weld_props
             sync_weld_props(context, None)
+
+        edit_objects = []
+        seen_edit_meshes = set()
+        if context.mode == 'EDIT_MESH':
+            for edit_obj in context.view_layer.objects:
+                if edit_obj.type != 'MESH' or edit_obj.data is None or not edit_obj.data.is_editmode:
+                    continue
+                if edit_obj.data.name in seen_edit_meshes:
+                    continue
+                seen_edit_meshes.add(edit_obj.data.name)
+                edit_objects.append(edit_obj)
+
+        edit_mesh_names = tuple(edit_obj.data.name for edit_obj in edit_objects)
 
         for update in depsgraph.updates:
             if isinstance(update.id, bpy.types.Object):
@@ -178,36 +191,51 @@ def on_depsgraph_update(scene, depsgraph):
                             _cleanup_spin_degenerate_faces(bm, me)
                             _last_cleaned_spin_fingerprint = fp
 
-                    from .face_cache import last_face_count, last_vertex_count
-                    current_face_count = len(bm.faces)
-                    current_vertex_count = len(bm.verts)
+                    current_face_count = 0
+                    current_vertex_count = 0
+                    edit_bmeshes = []
+                    for edit_obj in edit_objects:
+                        try:
+                            edit_bm = bmesh.from_edit_mesh(edit_obj.data)
+                        except (ReferenceError, RuntimeError):
+                            continue
+                        if not edit_bm.is_valid:
+                            continue
+                        edit_bmeshes.append(edit_bm)
+                        current_face_count += len(edit_bm.faces)
+                        current_vertex_count += len(edit_bm.verts)
 
-                    is_fresh_start = (obj.name != get_last_edit_object_name())
-                    set_last_edit_object_name(obj.name)
+                    is_fresh_start = edit_mesh_names != get_last_edit_mesh_names()
+                    set_last_edit_mesh_names(edit_mesh_names)
 
                     if is_fresh_start:
-                        debug_log(f"[Depsgraph] Fresh edit session for '{obj.name}'")
-                        sync_uv_map_settings(obj)
+                        debug_log(f"[Depsgraph] Fresh edit session for {edit_mesh_names}")
+                        for edit_obj in edit_objects:
+                            sync_uv_map_settings(edit_obj)
                         cache_face_data(context)
                         from .face_cache import set_last_selected_face_indices, set_last_active_face_index
                         set_last_selected_face_indices(set())
                         set_last_active_face_index(-1)
-                        debug_log(f"[Depsgraph] Cache rebuilt for new object ({len(face_data_cache)} faces)")
+                        debug_log(f"[Depsgraph] Cache rebuilt for Edit Mode meshes ({len(face_data_cache)} faces)")
 
                     allow_active_image_update = not is_fresh_start or get_file_loaded_into_edit_depsgraph()
 
+                    from .face_cache import last_face_count, last_vertex_count
                     topology_changed = current_face_count != last_face_count or current_vertex_count != last_vertex_count
 
                     if not topology_changed and not is_fresh_start:
-                        id_layer_check = get_face_id_layer(bm)
                         seen_ids = set()
-                        for face in bm.faces:
-                            fid = face[id_layer_check]
-                            if fid in seen_ids:
-                                topology_changed = True
-                                debug_log("[Depsgraph] Duplicate face IDs detected (modal restore/re-apply)")
+                        for edit_bm in edit_bmeshes:
+                            id_layer_check = get_face_id_layer(edit_bm)
+                            for face in edit_bm.faces:
+                                fid = face[id_layer_check]
+                                if fid in seen_ids:
+                                    topology_changed = True
+                                    debug_log("[Depsgraph] Duplicate face IDs detected (modal restore/re-apply)")
+                                    break
+                                seen_ids.add(fid)
+                            if topology_changed:
                                 break
-                            seen_ids.add(fid)
 
                     if topology_changed:
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")

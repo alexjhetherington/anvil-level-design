@@ -27,8 +27,8 @@ _any_selected_fixed_hotspot = False
 # Cache for detecting selection changes
 _last_selected_face_indices = set()
 _last_active_face_index = -1
-# Track which object we're editing to detect fresh edit sessions
-_last_edit_object_name = None
+# Track the meshes in Edit Mode to detect fresh edit sessions
+_last_edit_mesh_names = ()
 
 
 def get_all_selected_hotspot():
@@ -74,13 +74,13 @@ def mark_multi_face_set_offset():
     _multi_face_unset_offset = False
 
 
-def get_last_edit_object_name():
-    return _last_edit_object_name
+def get_last_edit_mesh_names():
+    return _last_edit_mesh_names
 
 
-def set_last_edit_object_name(name):
-    global _last_edit_object_name
-    _last_edit_object_name = name
+def set_last_edit_mesh_names(names):
+    global _last_edit_mesh_names
+    _last_edit_mesh_names = names
 
 
 def get_last_selected_face_indices():
@@ -186,42 +186,56 @@ def get_cached_layer_data(face_id, layer_name):
 
 
 def cache_face_data(context):
-    """Cache vertex positions and UVs for all faces in the mesh.
+    """Cache vertex positions and UVs for all current Edit Mode meshes.
 
     Clears and rebuilds the entire face_data_cache. Used when UV lock is toggled
-    or when the mesh topology changes. Assigns managed face IDs to any faces
-    that don't have one yet.
+    or when mesh topology changes. Face IDs are unique across the complete
+    Edit Mode mesh set.
     """
     global last_face_count, last_vertex_count
 
     if context.mode != 'EDIT_MESH':
         return
 
-    obj = context.object
-    if not obj or obj.type != 'MESH':
-        return
-
     # Safety check for properties
     if not hasattr(context.scene, 'level_design_props'):
         return
 
-    me = obj.data
-    bm = bmesh.from_edit_mesh(me)
+    edit_objects = []
+    seen_meshes = set()
+    for obj in context.view_layer.objects:
+        if obj.type != 'MESH' or obj.data is None or not obj.data.is_editmode:
+            continue
+        if obj.data.name in seen_meshes:
+            continue
+        seen_meshes.add(obj.data.name)
+        edit_objects.append(obj)
+
+    if not edit_objects:
+        return
 
     ppm = context.scene.level_design_props.pixels_per_meter
 
     face_data_cache.clear()
 
-    # Assign fresh unique IDs to all faces before caching.
-    # This guarantees no duplicates from BMesh operations that copy custom data.
-    id_layer = get_face_id_layer(bm)
-    reindex_face_ids(bm, id_layer)
+    next_face_id = 1
+    last_face_count = 0
+    last_vertex_count = 0
 
-    for face in bm.faces:
-        cache_single_face(face, bm, ppm, me)
+    for obj in edit_objects:
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
 
-    last_face_count = len(bm.faces)
-    last_vertex_count = len(bm.verts)
+        # Assign fresh unique IDs before caching. This guarantees no duplicates
+        # from BMesh operations that copy custom data.
+        id_layer = get_face_id_layer(bm)
+        next_face_id = reindex_face_ids(bm, id_layer, next_face_id)
+
+        for face in bm.faces:
+            cache_single_face(face, bm, ppm, me)
+
+        last_face_count += len(bm.faces)
+        last_vertex_count += len(bm.verts)
 
 
 def _check_multi_face_consistency(selected_faces, uv_layer, ppm, me, first_transform):
@@ -387,7 +401,7 @@ def snapshot_selection(bm):
 def reset():
     """Reset all face cache state."""
     global last_face_count, last_vertex_count, _last_selected_face_indices, _last_active_face_index
-    global _last_edit_object_name, _multi_face_mode, _multi_face_unset_scale
+    global _last_edit_mesh_names, _multi_face_mode, _multi_face_unset_scale
     global _multi_face_unset_rotation, _multi_face_unset_offset
     global _all_selected_hotspot, _any_selected_hotspot, _any_selected_fixed_hotspot
 
@@ -396,7 +410,7 @@ def reset():
     last_vertex_count = 0
     _last_selected_face_indices = set()
     _last_active_face_index = -1
-    _last_edit_object_name = None
+    _last_edit_mesh_names = ()
     _multi_face_mode = False
     _multi_face_unset_scale = False
     _multi_face_unset_rotation = False

@@ -1,5 +1,9 @@
 # Anvil Level Design Changelog
 
+# 1.7.3
+- Fix applying textures across objects all within the same edit mode
+- Fix texture apply skipping material on first face in a specific scenario
+
 # 1.7.2
 - REMOVED global default default file settings (ppm & default material settings) (too confusing! Anvil now initialises new file default material settings to those found in the last saved file)
 - Added FIND IMAGE button to the Texture Preview panel

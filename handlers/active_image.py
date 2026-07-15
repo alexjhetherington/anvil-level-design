@@ -14,10 +14,6 @@ _active_image = None
 # The filepath allows re-loading the image if undo removes it from bpy.data.images.
 _previous_image_name = None
 _previous_image_filepath = None
-# Specifically for the case where faces start as selected e.g. initial cube on file creation.
-# Guard flag: when True, depsgraph should not overwrite _active_image
-# immediately after an explicit texture selection.
-_active_image_just_set = False
 
 
 def get_active_image():
@@ -79,27 +75,12 @@ def set_previous_image(image):
         _previous_image_filepath = None
 
 
-def get_active_image_just_set():
-    """Check if active image was just set (guard for depsgraph)."""
-    return _active_image_just_set
-
-
-def set_active_image_just_set(value):
-    """Set the active-image-just-set guard flag."""
-    global _active_image_just_set
-    _active_image_just_set = value
-
-
 def update_active_image_from_face(context):
     """Update the active image based on the active face's material.
 
     Clears the active image if not in edit mode, no faces are selected,
     or the active face has no image material.
     """
-    global _active_image_just_set
-    if _active_image_just_set:
-        _active_image_just_set = False
-        return
     try:
         import bmesh
 
@@ -189,8 +170,7 @@ def restore_previous_image_state(name, filepath):
 
 def reset():
     """Reset all active image state."""
-    global _active_image, _active_image_just_set, _previous_image_name, _previous_image_filepath
+    global _active_image, _previous_image_name, _previous_image_filepath
     _active_image = None
-    _active_image_just_set = False
     _previous_image_name = None
     _previous_image_filepath = None

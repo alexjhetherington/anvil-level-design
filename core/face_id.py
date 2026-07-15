@@ -85,8 +85,8 @@ def find_face_by_id(bm, face_id, id_layer):
     return None
 
 
-def reindex_face_ids(bm, id_layer):
-    """Assign fresh unique sequential IDs to ALL faces.
+def reindex_face_ids(bm, id_layer, first_face_id):
+    """Assign fresh sequential IDs to all faces, starting at first_face_id.
 
     Called after processing (UV projection, caching) to guarantee every face
     has a unique ID.  Since we only compare between consecutive depsgraph
@@ -95,12 +95,17 @@ def reindex_face_ids(bm, id_layer):
     Args:
         bm: BMesh instance
         id_layer: The face ID int layer from get_face_id_layer()
+        first_face_id: First ID to assign
+
+    Returns:
+        The next unused face ID
     """
     global _next_face_id
-    _next_face_id = 1
+    _next_face_id = first_face_id
     for face in bm.faces:
         face[id_layer] = _next_face_id
         _next_face_id += 1
+    return _next_face_id
 
 
 def save_face_selection(bm, id_layer):

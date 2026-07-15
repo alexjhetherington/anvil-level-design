@@ -25,10 +25,8 @@ from .face_cache import (  # noqa: F401
 )
 from .active_image import (  # noqa: F401
     get_active_image,
-    get_active_image_just_set,
     get_previous_image,
     set_active_image,
-    set_active_image_just_set,
     set_previous_image,
     update_active_image_from_face,
     get_selected_faces_share_image,

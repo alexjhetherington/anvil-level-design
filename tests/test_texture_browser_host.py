@@ -5,7 +5,7 @@ import bpy
 from .base_test import AnvilTestCase
 from .helpers import TEXTURE_PATH, create_vertical_plane
 from ..core.materials import get_image_from_material
-from ..handlers import get_active_image_just_set
+from ..handlers import get_active_image
 from ..texture_browser import browser as texture_browser
 
 
@@ -240,7 +240,7 @@ class TextureBrowserHostTest(AnvilTestCase):
         self.assertFalse(items[0]["is_image"])
         self.assertEqual(items[0]["suffix"], ".txt")
 
-    def test_texture_browser_apply_file_operator_applies_image_and_preserves_active_image_guard(self):
+    def test_texture_browser_apply_file_operator_applies_image_and_sets_active_image(self):
         obj = create_vertical_plane("TextureBrowserApplyPlane")
         bpy.context.view_layer.objects.active = obj
         obj.select_set(True)
@@ -257,4 +257,4 @@ class TextureBrowserHostTest(AnvilTestCase):
             _normal_path(bpy.path.abspath(image.filepath)),
             _normal_path(HOTSPOT_TEXTURE_PATH),
         )
-        self.assertTrue(get_active_image_just_set())
+        self.assertEqual(get_active_image(), image)

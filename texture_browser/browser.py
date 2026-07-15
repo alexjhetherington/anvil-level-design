@@ -26,7 +26,6 @@ from ..core.workspace_check import (
 from ..handlers.active_image import (
     redraw_ui_panels,
     set_active_image,
-    set_active_image_just_set,
 )
 from .apply import apply_texture_path_to_selection
 from .previews import (
@@ -1688,7 +1687,6 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
 
     def execute(self, context):
         set_active_image(None)
-        set_active_image_just_set(False)
 
         obj = context.object
         original_mode = context.mode
@@ -1739,7 +1737,6 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
         if applied_face_count > 0:
             update_ui_from_selection(context)
             set_active_image(image)
-            set_active_image_just_set(True)
             redraw_ui_panels(context)
             bpy.ops.ed.undo_push(message="Apply Texture from Texture Browser")
             _texture_browser_animations.start_applied(

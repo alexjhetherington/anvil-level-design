@@ -555,6 +555,39 @@ def stretch_uv_from_other_face(source_face, target_face, uv_layer, ppm, me, obj_
 
 # ---- Shared helpers for apply/stretch-apply paint operators ----
 
+def _build_other_object_raycast_info(other_obj):
+    """Build raycast data from the current mesh state of another object."""
+    other_me = other_obj.data
+    if other_me is None:
+        return None
+
+    if other_me.is_editmode:
+        other_bm = bmesh.from_edit_mesh(other_me)
+        other_bm.faces.ensure_lookup_table()
+        if len(other_bm.faces) == 0:
+            return None
+        return {
+            'obj': other_obj,
+            'bvh': BVHTree.FromBMesh(other_bm),
+            'bm': other_bm,
+            'polygons': None,
+            'materials': other_me.materials,
+        }
+
+    if len(other_me.polygons) == 0:
+        return None
+    return {
+        'obj': other_obj,
+        'bvh': BVHTree.FromPolygons(
+            [v.co for v in other_me.vertices],
+            [p.vertices for p in other_me.polygons]
+        ),
+        'bm': None,
+        'polygons': other_me.polygons,
+        'materials': other_me.materials,
+    }
+
+
 def _invoke_apply_setup(op, context, event):
     """Common invoke setup for apply paint operators.
 
@@ -624,19 +657,9 @@ def _invoke_apply_setup(op, context, event):
     for other_obj in context.view_layer.objects:
         if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
             continue
-        other_me = other_obj.data
-        if other_me is None or len(other_me.polygons) == 0:
-            continue
-        bvh = BVHTree.FromPolygons(
-            [v.co for v in other_me.vertices],
-            [p.vertices for p in other_me.polygons]
-        )
-        op._other_objects_info.append({
-            'obj': other_obj,
-            'bvh': bvh,
-            'polygons': other_me.polygons,
-            'materials': other_me.materials,
-        })
+        raycast_info = _build_other_object_raycast_info(other_obj)
+        if raycast_info is not None:
+            op._other_objects_info.append(raycast_info)
 
     image_name = image.name if image is not None else "<unassigned>"
     debug_log(f"[ApplyImage] invoke OK: source_face={op._source_face_index}, image={image_name}, mat={mat.name}")
@@ -728,10 +751,16 @@ def _closest_target_world(paint_obj, paint_bvh, source_bm, source_materials,
         origin_other = oi_matrix_inv @ ray_origin
         dir_other = (oi_matrix_inv.to_3x3() @ view_vector).normalized()
 
-        loc, _, fidx, _ = raycast_bvh_skip_backfaces_polys(
-            info['bvh'], origin_other, dir_other,
-            info['polygons'], info['materials'], max_iterations=64,
-        )
+        if info.get('bm') is not None:
+            loc, _, fidx, _ = raycast_bvh_skip_backfaces(
+                info['bvh'], origin_other, dir_other,
+                info['bm'], info['materials'], max_iterations=64,
+            )
+        else:
+            loc, _, fidx, _ = raycast_bvh_skip_backfaces_polys(
+                info['bvh'], origin_other, dir_other,
+                info['polygons'], info['materials'], max_iterations=64,
+            )
 
         if fidx is not None:
             world_dist = (other_obj.matrix_world @ loc - ray_origin).length
@@ -770,11 +799,17 @@ def _apply_to_other_obj(op, source_bm, source_me, hit_obj, hit_face_index, uv_fu
     obj_id = id(hit_obj)
 
     if obj_id not in op._other_bmeshes:
-        other_bm = bmesh.new()
-        other_bm.from_mesh(other_me)
+        if other_me.is_editmode:
+            other_bm = bmesh.from_edit_mesh(other_me)
+            owned = False
+        else:
+            other_bm = bmesh.new()
+            other_bm.from_mesh(other_me)
+            owned = True
         op._other_bmeshes[obj_id] = {
             'bm': other_bm,
             'obj': hit_obj,
+            'owned': owned,
         }
     other_data = op._other_bmeshes[obj_id]
     other_bm = other_data['bm']
@@ -883,10 +918,13 @@ def _paint_sample_impl(op, context, mouse_2d, region, rv3d, uv_func):
 
 
 def _flush_other_bmeshes(op):
-    """Write back and free all cross-object bmeshes."""
+    """Flush cross-object edits and free temporary Object Mode BMeshes."""
     for data in op._other_bmeshes.values():
-        data['bm'].to_mesh(data['obj'].data)
-        data['bm'].free()
+        if data['owned']:
+            data['bm'].to_mesh(data['obj'].data)
+            data['bm'].free()
+        else:
+            bmesh.update_edit_mesh(data['obj'].data)
     op._other_bmeshes.clear()
 
     transaction_id = getattr(op, '_cross_object_undo_transaction_id', None)
@@ -899,9 +937,10 @@ def _flush_other_bmeshes(op):
 
 
 def _discard_other_bmeshes(op):
-    """Free all cross-object bmeshes without writing back."""
+    """Free temporary Object Mode BMeshes without writing them back."""
     for data in op._other_bmeshes.values():
-        data['bm'].free()
+        if data['owned']:
+            data['bm'].free()
     op._other_bmeshes.clear()
     transaction_id = getattr(op, '_cross_object_undo_transaction_id', None)
     if transaction_id is not None:
@@ -949,19 +988,9 @@ def _invoke_uv_transform_setup(op, context, event):
     for other_obj in context.view_layer.objects:
         if other_obj == obj or other_obj.type != 'MESH' or not other_obj.visible_get():
             continue
-        other_me = other_obj.data
-        if other_me is None or len(other_me.polygons) == 0:
-            continue
-        bvh = BVHTree.FromPolygons(
-            [v.co for v in other_me.vertices],
-            [p.vertices for p in other_me.polygons]
-        )
-        op._other_objects_info.append({
-            'obj': other_obj,
-            'bvh': bvh,
-            'polygons': other_me.polygons,
-            'materials': other_me.materials,
-        })
+        raycast_info = _build_other_object_raycast_info(other_obj)
+        if raycast_info is not None:
+            op._other_objects_info.append(raycast_info)
 
     debug_log(f"[UVTransform] invoke OK: source_face={op._source_face_index}")
     return None
@@ -1065,18 +1094,20 @@ def _pick_source_from_cursor(op, context, event):
         ray_origin_local = matrix_inv @ ray_origin
         ray_direction_local = (matrix_inv.to_3x3() @ view_vector).normalized()
 
-        if obj.mode == 'EDIT' and obj == context.object:
+        if me.is_editmode:
             bm = bmesh.from_edit_mesh(me)
             bm.faces.ensure_lookup_table()
             bvh = BVHTree.FromBMesh(bm)
 
-            location, normal, face_index, distance = raycast_bvh_skip_backfaces(
+            location, _, face_index, _ = raycast_bvh_skip_backfaces(
                 bvh, ray_origin_local, ray_direction_local,
                 bm, me.materials, max_iterations=64
             )
 
-            if face_index is not None and distance < closest_distance:
-                closest_distance = distance
+            if face_index is not None:
+                world_distance = (obj.matrix_world @ location - ray_origin).length
+            if face_index is not None and world_distance < closest_distance:
+                closest_distance = world_distance
                 hit_obj = obj
                 hit_mat_index = bm.faces[face_index].material_index
                 hit_face_index = face_index
@@ -1094,13 +1125,15 @@ def _pick_source_from_cursor(op, context, event):
                 [p.vertices for p in me_eval.polygons]
             )
 
-            location, normal, face_index, distance = raycast_bvh_skip_backfaces_polys(
+            location, _, face_index, _ = raycast_bvh_skip_backfaces_polys(
                 bvh, ray_origin_local, ray_direction_local,
                 me_eval.polygons, me_eval.materials, max_iterations=64
             )
 
-            if face_index is not None and distance < closest_distance:
-                closest_distance = distance
+            if face_index is not None:
+                world_distance = (obj.matrix_world @ location - ray_origin).length
+            if face_index is not None and world_distance < closest_distance:
+                closest_distance = world_distance
                 hit_obj = obj
                 hit_mat_index = me_eval.polygons[face_index].material_index
                 hit_face_index = face_index
@@ -1121,6 +1154,23 @@ def _pick_source_from_cursor(op, context, event):
     image = get_image_from_material(hit_mat)
 
     return hit_obj, hit_face_index, image, selected_faces, bm_edit
+
+
+def _get_cross_object_pick_source(hit_obj, hit_face_index):
+    """Return the hovered source face from its current mesh state."""
+    source_me = hit_obj.data
+    if source_me.is_editmode:
+        source_bm = bmesh.from_edit_mesh(source_me)
+        owned = False
+    else:
+        source_bm = bmesh.new()
+        source_bm.from_mesh(source_me)
+        owned = True
+
+    source_bm.faces.ensure_lookup_table()
+    source_face = source_bm.faces[hit_face_index]
+    source_uv = source_bm.loops.layers.uv.verify()
+    return source_bm, source_face, source_uv, source_me, owned
 
 
 def _assign_unassigned_material_to_faces(selected_faces, me):
@@ -1359,18 +1409,17 @@ class pick_image_from_face(Operator):
 
         is_same_object = (hit_obj == edit_obj)
         _source_bm = None
+        _source_bm_owned = False
         if is_same_object:
             _source_face = bm_edit.faces[hit_face_index]
             _source_uv = uv_layer
             _source_me = me
             _source_to_target = None
         else:
-            _source_bm = bmesh.new()
-            _source_bm.from_mesh(hit_obj.data)
-            _source_bm.faces.ensure_lookup_table()
-            _source_face = _source_bm.faces[hit_face_index]
-            _source_uv = _source_bm.loops.layers.uv.verify()
-            _source_me = hit_obj.data
+            (_source_bm, _source_face, _source_uv, _source_me,
+             _source_bm_owned) = _get_cross_object_pick_source(
+                hit_obj, hit_face_index
+            )
             _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
 
         new_is_hotspottable = is_texture_hotspottable(image.name)
@@ -1430,7 +1479,7 @@ class pick_image_from_face(Operator):
                     source_to_target=_source_to_target,
                 )
 
-        if _source_bm is not None:
+        if _source_bm_owned:
             _source_bm.free()
 
         bmesh.update_edit_mesh(me)
@@ -1496,18 +1545,17 @@ class stretch_pick_image_from_face(Operator):
 
         is_same_object = (hit_obj == edit_obj)
         _source_bm = None
+        _source_bm_owned = False
         if is_same_object:
             _source_face = bm_edit.faces[hit_face_index]
             _source_uv = uv_layer
             _source_me = me
             _source_to_target = None
         else:
-            _source_bm = bmesh.new()
-            _source_bm.from_mesh(hit_obj.data)
-            _source_bm.faces.ensure_lookup_table()
-            _source_face = _source_bm.faces[hit_face_index]
-            _source_uv = _source_bm.loops.layers.uv.verify()
-            _source_me = hit_obj.data
+            (_source_bm, _source_face, _source_uv, _source_me,
+             _source_bm_owned) = _get_cross_object_pick_source(
+                hit_obj, hit_face_index
+            )
             _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
 
         for target_face in selected_faces:
@@ -1520,7 +1568,7 @@ class stretch_pick_image_from_face(Operator):
                 source_to_target=_source_to_target,
             )
 
-        if _source_bm is not None:
+        if _source_bm_owned:
             _source_bm.free()
 
         bmesh.update_edit_mesh(me)
@@ -1614,18 +1662,17 @@ class pick_uv_transform_from_face(Operator):
 
         is_same_object = (hit_obj == edit_obj)
         _source_bm = None
+        _source_bm_owned = False
         if is_same_object:
             _source_face = bm_edit.faces[hit_face_index]
             _source_uv = uv_layer
             _source_me = me
             _source_to_target = None
         else:
-            _source_bm = bmesh.new()
-            _source_bm.from_mesh(hit_obj.data)
-            _source_bm.faces.ensure_lookup_table()
-            _source_face = _source_bm.faces[hit_face_index]
-            _source_uv = _source_bm.loops.layers.uv.verify()
-            _source_me = hit_obj.data
+            (_source_bm, _source_face, _source_uv, _source_me,
+             _source_bm_owned) = _get_cross_object_pick_source(
+                hit_obj, hit_face_index
+            )
             _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
 
         for target_face in selected_faces:
@@ -1638,7 +1685,7 @@ class pick_uv_transform_from_face(Operator):
                 source_to_target=_source_to_target,
             )
 
-        if _source_bm is not None:
+        if _source_bm_owned:
             _source_bm.free()
 
         bmesh.update_edit_mesh(me)
