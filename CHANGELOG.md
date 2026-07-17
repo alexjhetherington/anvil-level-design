@@ -10,6 +10,7 @@
 - Added a button to create simple images in the Texture Browser (intended for placeholder materials)
 - Added a button to reset Anvil managed materials to the default node graph
 - New materials for images with transparency default to support transparency
+- Improved prefab overlay performance (I hope)
 
 # 1.7.4
 - Improve saving of Texture Browser settings

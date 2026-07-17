@@ -121,9 +121,24 @@ def _ensure_screen_stripe_shader():
     return _screen_stripe_shader
 
 
-def draw_screen_striped_tris(tris, light_color, dark_color, stripe_width):
-    """Draw world-space triangles with screen-space diagonal stripes."""
+def build_screen_striped_batch(tris):
+    """Build a reusable GPU batch for screen-striped world-space triangles."""
     if not tris:
+        return None
+
+    shader = _ensure_screen_stripe_shader()
+    if shader is None:
+        return None
+
+    try:
+        return batch_for_shader(shader, 'TRIS', {"pos": tris})
+    except Exception:
+        return None
+
+
+def draw_screen_striped_batches(batches, light_color, dark_color, stripe_width):
+    """Draw reusable GPU batches with screen-space diagonal stripes."""
+    if not batches:
         return
 
     shader = _ensure_screen_stripe_shader()
@@ -135,7 +150,6 @@ def draw_screen_striped_tris(tris, light_color, dark_color, stripe_width):
     gpu.state.depth_mask_set(False)
 
     try:
-        batch = batch_for_shader(shader, 'TRIS', {"pos": tris})
         shader.bind()
         shader.uniform_float(
             "viewProjectionMatrix",
@@ -144,10 +158,25 @@ def draw_screen_striped_tris(tris, light_color, dark_color, stripe_width):
         shader.uniform_float("light_color", light_color)
         shader.uniform_float("dark_color", dark_color)
         shader.uniform_float("stripe_width", stripe_width)
-        batch.draw(shader)
+        for batch in batches:
+            if batch is not None:
+                batch.draw(shader)
     except Exception:
         pass
     finally:
         gpu.state.blend_set('NONE')
         gpu.state.depth_test_set('NONE')
         gpu.state.depth_mask_set(True)
+
+
+def draw_screen_striped_tris(tris, light_color, dark_color, stripe_width):
+    """Draw world-space triangles with screen-space diagonal stripes."""
+    batch = build_screen_striped_batch(tris)
+    if batch is None:
+        return
+    draw_screen_striped_batches(
+        (batch,),
+        light_color,
+        dark_color,
+        stripe_width,
+    )

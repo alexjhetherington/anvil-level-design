@@ -348,6 +348,8 @@ def on_load_post(dummy):
     reset_duplicate_material_consolidation()
     _restore_texture_browser_settings()
     cross_object_undo.reset()
+    from ..operators.library_object_overlay import invalidate_overlay as _invalidate_library_overlay
+    _invalidate_library_overlay()
     _file_loaded_into_edit_depsgraph = True
     reset_mode_tracking()
 

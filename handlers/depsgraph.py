@@ -97,11 +97,16 @@ def _cleanup_spin_degenerate_faces(bm, me):
         bmesh.update_edit_mesh(me)
 
 
-def _invalidate_view_overlays():
+def _invalidate_view_overlays(obj):
     from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
-    from ..operators.library_object_overlay import invalidate_overlay as _invalidate_library_overlay
+    from ..operators.library_object_overlay import invalidate_overlay_object as _invalidate_library_object_overlay
     _invalidate_fixed_overlay()
-    _invalidate_library_overlay()
+    _invalidate_library_object_overlay(obj)
+
+
+def _invalidate_library_mesh_overlay(mesh):
+    from ..operators.library_object_overlay import invalidate_overlay_mesh
+    invalidate_overlay_mesh(mesh)
 
 
 @persistent
@@ -191,16 +196,21 @@ def on_depsgraph_update(scene, depsgraph):
 
         edit_mesh_names = tuple(edit_obj.data.name for edit_obj in edit_objects)
 
-        with performance_stage(performance_report, "Object Mode overlay invalidation"):
+        with performance_stage(performance_report, "Object/data overlay invalidation"):
             for update in depsgraph.updates:
-                if isinstance(update.id, bpy.types.Object):
-                    obj = update.id
-                    if obj.type == 'MESH' and obj.mode != 'EDIT':
-                        is_transform = getattr(update, 'is_updated_transform', False)
-                        is_geometry = getattr(update, 'is_updated_geometry', False)
-                        if is_transform or is_geometry:
-                            _invalidate_view_overlays()
-                            break
+                updated_id = update.id
+                if isinstance(updated_id, bpy.types.Mesh):
+                    if getattr(update, 'is_updated_geometry', False):
+                        _invalidate_library_mesh_overlay(updated_id)
+                    continue
+                if not isinstance(updated_id, bpy.types.Object):
+                    continue
+                obj = updated_id
+                if obj.type == 'MESH' and obj.mode != 'EDIT':
+                    is_transform = getattr(update, 'is_updated_transform', False)
+                    is_geometry = getattr(update, 'is_updated_geometry', False)
+                    if is_transform or is_geometry:
+                        _invalidate_view_overlays(obj)
 
         for update in depsgraph.updates:
             if isinstance(update.id, bpy.types.Object):
@@ -298,7 +308,7 @@ def on_depsgraph_update(scene, depsgraph):
                         debug_log(f"[Depsgraph] Topology changed: faces {last_face_count}->{current_face_count} verts {last_vertex_count}->{current_vertex_count}")
 
                         with performance_stage(performance_report, "Topology overlay invalidation"):
-                            _invalidate_view_overlays()
+                            _invalidate_view_overlays(obj)
 
                         if not is_fresh_start:
                             with performance_stage(performance_report, "Project new faces"):
@@ -354,7 +364,7 @@ def on_depsgraph_update(scene, depsgraph):
 
                     if is_geometry_update or is_transform_update:
                         with performance_stage(performance_report, "Edit Mode overlay invalidation"):
-                            _invalidate_view_overlays()
+                            _invalidate_view_overlays(obj)
 
                     debug_log(f"[Depsgraph] Applying world-scale UVs (cache size={len(face_data_cache)})")
                     with performance_stage(performance_report, "Apply world-scale UVs"):
