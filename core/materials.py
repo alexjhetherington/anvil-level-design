@@ -1,13 +1,26 @@
+import os
 import re
 
 import bpy
 
 from .logging import debug_log
+from .material_shader import (
+    build_canonical_material_shader,
+    image_has_transparency,
+    infer_primary_shader_image,
+    validate_material_shader,
+)
 
 
 _BLENDER_SUFFIX = re.compile(r'\.\d{3,}$')
 _UNASSIGNED_MATERIAL_NAME = "ANVIL_Unassigned"
+MATERIAL_SCHEMA_VERSION = 1
+DEFAULT_MATERIAL_NAME_PATTERN = "{relativePath}{filename}{extension}"
 _last_material_count = 0
+
+
+class MaterialMappingConflictError(RuntimeError):
+    pass
 
 
 def _addon_preferences():
@@ -50,6 +63,7 @@ def remember_default_material_settings(props):
     prefs.pref_default_emission_strength = props.default_emission_strength
     prefs.pref_default_emission_color = props.default_emission_color[:]
     prefs.pref_default_specular = props.default_specular
+    prefs.pref_default_material_name_pattern = props.default_material_name_pattern
 
 
 def apply_remembered_default_material_settings(props):
@@ -66,6 +80,67 @@ def apply_remembered_default_material_settings(props):
     props.default_emission_strength = prefs.pref_default_emission_strength
     props.default_emission_color = prefs.pref_default_emission_color[:]
     props.default_specular = prefs.pref_default_specular
+    props.default_material_name_pattern = prefs.pref_default_material_name_pattern
+
+
+def _material_has_current_mapping(material):
+    try:
+        return (
+            material is not None
+            and material.library is None
+            and getattr(material, "anvil_material_schema_version", 0)
+            == MATERIAL_SCHEMA_VERSION
+            and getattr(material, "anvil_primary_image", None) is not None
+        )
+    except ReferenceError:
+        return False
+
+
+def materials_mapped_to_image(image):
+    if image is None:
+        return []
+    return [
+        material for material in bpy.data.materials
+        if _material_has_current_mapping(material)
+        and material.anvil_primary_image == image
+    ]
+
+
+def get_primary_image_from_material(material):
+    if not _material_has_current_mapping(material):
+        return None
+    try:
+        return material.anvil_primary_image
+    except ReferenceError:
+        return None
+
+
+def clear_material_mapping(material):
+    if material is None or material.library is not None:
+        return
+    material.anvil_primary_image = None
+    material.anvil_material_schema_version = 0
+
+
+def set_material_primary_image(material, image):
+    if material is None or material.library is not None:
+        raise ValueError("Only local materials can be mapped")
+    if image is None:
+        clear_material_mapping(material)
+        return
+
+    conflicts = [
+        mapped for mapped in materials_mapped_to_image(image)
+        if mapped != material
+    ]
+    if conflicts:
+        names = ", ".join(mapped.name for mapped in conflicts)
+        raise MaterialMappingConflictError(
+            f"Image {image.name!r} is already mapped to {names}"
+        )
+
+    material.anvil_primary_image = image
+    material.anvil_material_schema_version = MATERIAL_SCHEMA_VERSION
 
 
 def reset_duplicate_material_consolidation():
@@ -117,6 +192,14 @@ def consolidate_duplicate_materials():
         canonical = bpy.data.materials[base_name]
         for suffix_num, mat in duplicates:
             if mat != canonical:
+                # Explicit mappings are never a license to rewrite scene slots.
+                # Fix Material Mappings resolves mapping conflicts without
+                # merging distinct material datablocks.
+                if (
+                    _material_has_current_mapping(canonical)
+                    or _material_has_current_mapping(mat)
+                ):
+                    continue
                 replacements[mat] = canonical
 
     if not replacements:
@@ -139,24 +222,13 @@ def consolidate_duplicate_materials():
 
 
 def get_image_from_material(mat):
-    """Return the image plugged into the Base Color of the Principled BSDF, or None.
+    """Return a material's explicit Anvil primary image, or None."""
+    return get_primary_image_from_material(mat)
 
-    Falls back to the first TEX_IMAGE node if no Principled BSDF is found.
-    """
-    if not mat or not mat.use_nodes or not mat.node_tree:
-        return None
-    for node in mat.node_tree.nodes:
-        if node.type == 'BSDF_PRINCIPLED':
-            base_color = node.inputs.get('Base Color')
-            if base_color and base_color.links:
-                linked_node = base_color.links[0].from_node
-                if linked_node.type == 'TEX_IMAGE' and linked_node.image:
-                    return linked_node.image
-            break
-    for node in mat.node_tree.nodes:
-        if node.type == 'TEX_IMAGE' and node.image:
-            return node.image
-    return None
+
+def infer_primary_image_from_shader(mat):
+    """Return an unambiguous image suggestion for Fix Material Mappings."""
+    return infer_primary_shader_image(mat)
 
 
 def get_texture_dimensions_from_material(mat, ppm, default_size=128):
@@ -180,19 +252,71 @@ def get_texture_dimensions_from_material(mat, ppm, default_size=128):
     return (tex_width / ppm, tex_height / ppm)
 
 
-def find_local_material_named(material_name):
-    """Return the local material with this exact name, or None."""
-    for mat in bpy.data.materials:
-        if mat.name == material_name and mat.library is None:
-            return mat
-    return None
+def _normalized_material_path(path):
+    return path.replace('\\', '/')
+
+
+def _material_relative_path(image_folder, blend_filepath):
+    if not blend_filepath:
+        return ""
+
+    blend_folder = os.path.dirname(os.path.abspath(blend_filepath))
+    try:
+        relative_path = os.path.relpath(image_folder, blend_folder)
+    except ValueError:
+        return ""
+
+    if relative_path == '.':
+        return ""
+    if relative_path:
+        return _normalized_material_path(relative_path).rstrip('/') + '/'
+    return ""
+
+
+def _image_name_parts(image):
+    filepath = ""
+    try:
+        filepath = image.filepath_from_user()
+    except RuntimeError:
+        filepath = image.filepath
+
+    absolute_path = ""
+    if filepath:
+        absolute_path = os.path.abspath(bpy.path.abspath(filepath))
+
+    if absolute_path:
+        basename = os.path.basename(absolute_path)
+        filename, extension = os.path.splitext(basename)
+        image_folder = os.path.dirname(absolute_path)
+        relative_path = _material_relative_path(
+            image_folder,
+            bpy.data.filepath,
+        )
+        return relative_path, filename, extension
+
+    image_name = _BLENDER_SUFFIX.sub('', image.name)
+    filename, extension = os.path.splitext(image_name)
+    return "", filename, extension
+
+
+def material_name_for_image(image, pattern):
+    relative_path, filename, extension = _image_name_parts(image)
+    return (
+        pattern
+        .replace("{relativePath}", relative_path)
+        .replace("{filename}", filename)
+        .replace("{extension}", extension)
+    )
 
 
 def _material_name_for_image(image):
-    # Blender may suffix the image datablock name after conflicts or undo/redo.
-    # The material name should stay canonical, e.g. foo.png.001 -> IMG_foo.png.
-    image_name = _BLENDER_SUFFIX.sub('', image.name)
-    return f"IMG_{image_name}"
+    props = getattr(getattr(bpy.context, "scene", None), "level_design_props", None)
+    pattern = (
+        props.default_material_name_pattern
+        if props is not None
+        else DEFAULT_MATERIAL_NAME_PATTERN
+    )
+    return material_name_for_image(image, pattern)
 
 
 def ensure_material_slot(mesh, mat):
@@ -206,22 +330,39 @@ def ensure_material_slot(mesh, mat):
 
 
 def find_material_with_image(image):
-    """Return the existing local material named for this image, or None."""
+    """Return the one local material explicitly mapped to this image, or None."""
     if image is None:
         return None
 
-    material_name = _material_name_for_image(image)
-    mat = find_local_material_named(material_name)
-    if mat:
+    materials = materials_mapped_to_image(image)
+    if len(materials) == 1:
+        mat = materials[0]
         debug_log(
             f"[FindMaterial] image={image.name!r} -> local material {mat.name!r}"
         )
         return mat
 
+    if len(materials) > 1:
+        names = ", ".join(material.name for material in materials)
+        debug_log(
+            f"[FindMaterial] image={image.name!r} has conflicting mappings: {names}"
+        )
+        raise MaterialMappingConflictError(
+            f"Image {image.name!r} is mapped to multiple materials: {names}"
+        )
+
     debug_log(
-        f"[FindMaterial] image={image.name!r} -> no local material named {material_name!r}"
+        f"[FindMaterial] image={image.name!r} -> no mapped local material"
     )
     return None
+
+
+def resolve_material_for_image(image):
+    """Return the unique mapped material, creating one only when none exists."""
+    material = find_material_with_image(image)
+    if material is not None:
+        return material
+    return create_material_with_image(image)
 
 
 def get_unassigned_material():
@@ -235,10 +376,17 @@ def get_unassigned_material():
     return mat
 
 
+def is_unassigned_material(material):
+    return material is not None and material.name == _UNASSIGNED_MATERIAL_NAME
+
+
 def get_principled_bsdf_from_material(mat):
     """Return the Principled BSDF node from a material, or None"""
     if not mat or not mat.use_nodes or not mat.node_tree:
         return None
+    validation = validate_material_shader(mat, get_primary_image_from_material(mat))
+    if validation.bsdf_node is not None:
+        return validation.bsdf_node
     for node in mat.node_tree.nodes:
         if node.type == 'BSDF_PRINCIPLED':
             return node
@@ -246,9 +394,12 @@ def get_principled_bsdf_from_material(mat):
 
 
 def get_texture_node_from_material(mat):
-    """Return the first TEX_IMAGE node from a material, or None"""
+    """Return the mapped/canonical texture node from a material, or None."""
     if not mat or not mat.use_nodes or not mat.node_tree:
         return None
+    validation = validate_material_shader(mat, get_primary_image_from_material(mat))
+    if validation.texture_node is not None:
+        return validation.texture_node
     for node in mat.node_tree.nodes:
         if node.type == 'TEX_IMAGE':
             return node
@@ -319,69 +470,77 @@ def get_default_material_settings():
         'emission_strength': props.default_emission_strength,
         'emission_color': tuple(props.default_emission_color),
         'specular': props.default_specular,
+        'name_pattern': props.default_material_name_pattern,
     }
 
 
 def create_material_with_image(image):
     """Create a new material using the given image texture with scene default settings"""
+    mapped_materials = materials_mapped_to_image(image)
+    if mapped_materials:
+        names = ", ".join(material.name for material in mapped_materials)
+        raise MaterialMappingConflictError(
+            f"Cannot create a material: {image.name!r} is already mapped to {names}"
+        )
+
     material_name = _material_name_for_image(image)
     debug_log(f"[CreateMaterial] creating {material_name} for image={image.name!r}")
     defaults = get_default_material_settings()
+    settings = dict(defaults)
+    settings['texture_as_alpha'] = (
+        settings['texture_as_alpha'] or image_has_transparency(image)
+    )
 
     mat = bpy.data.materials.new(name=material_name)
-    mat.use_nodes = True
-    mat.use_backface_culling = True
-
-    nt = mat.node_tree
-    nt.nodes.clear()
-
-    output = nt.nodes.new("ShaderNodeOutputMaterial")
-    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tex = nt.nodes.new("ShaderNodeTexImage")
-
-    tex.image = image
-    tex.interpolation = defaults['interpolation']
-
-    bsdf.inputs["Roughness"].default_value = defaults['roughness']
-    bsdf.inputs["Metallic"].default_value = defaults['metallic']
-    bsdf.inputs["Emission Strength"].default_value = defaults['emission_strength']
-    bsdf.inputs["Emission Color"].default_value = defaults['emission_color']
-    bsdf.inputs["Specular IOR Level"].default_value = defaults['specular']
-
-    tex.location = (-400, 0)
-    bsdf.location = (-200, 0)
-    output.location = (0, 0)
-
-    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
-    nt.links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
-
-    if defaults['texture_as_alpha']:
-        nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
-        mat.blend_method = 'CLIP'
-
-    if defaults['vertex_colors']:
-        mix = nt.nodes.new("ShaderNodeMix")
-        mix.data_type = 'RGBA'
-        mix.blend_type = 'MULTIPLY'
-        mix.clamp_result = True
-        mix.inputs["Factor"].default_value = 1.0
-        mix.location = (-200, 200)
-
-        vc = nt.nodes.new("ShaderNodeVertexColor")
-        vc.location = (-400, -200)
-
-        # Remove existing tex Color -> BSDF Base Color link
-        for link in list(nt.links):
-            if (
-                link.from_node == tex
-                and link.from_socket.name == "Color"
-                and link.to_node == bsdf
-                and link.to_socket.name == "Base Color"
-            ):
-                nt.links.remove(link)
-
-        nt.links.new(tex.outputs["Color"], mix.inputs[6])
-        nt.links.new(vc.outputs["Color"], mix.inputs[7])
-        nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
-
+    try:
+        build_canonical_material_shader(mat, image, settings)
+        set_material_primary_image(mat, image)
+    except Exception:
+        if mat.users == 0:
+            bpy.data.materials.remove(mat)
+        raise
     return mat
+
+
+def _socket_value(bsdf, socket_name, fallback):
+    if bsdf is None:
+        return fallback
+    socket = bsdf.inputs.get(socket_name)
+    if socket is None:
+        return fallback
+    value = socket.default_value
+    try:
+        return tuple(value)
+    except TypeError:
+        return value
+
+
+def repair_material_shader(material):
+    """Rebuild a mapped material's shader while retaining supported values."""
+    image = get_primary_image_from_material(material)
+    if image is None:
+        raise ValueError("Material has no primary image")
+
+    defaults = get_default_material_settings()
+    validation = validate_material_shader(material, image)
+    texture = validation.texture_node or get_texture_node_from_material(material)
+    bsdf = validation.bsdf_node or get_principled_bsdf_from_material(material)
+    settings = {
+        'interpolation': (
+            texture.interpolation if texture is not None else defaults['interpolation']
+        ),
+        'texture_as_alpha': (
+            is_texture_alpha_connected(material) or image_has_transparency(image)
+        ),
+        'vertex_colors': is_vertex_colors_enabled(material),
+        'roughness': _socket_value(bsdf, "Roughness", defaults['roughness']),
+        'metallic': _socket_value(bsdf, "Metallic", defaults['metallic']),
+        'emission_strength': _socket_value(
+            bsdf, "Emission Strength", defaults['emission_strength']
+        ),
+        'emission_color': _socket_value(
+            bsdf, "Emission Color", defaults['emission_color']
+        ),
+        'specular': _socket_value(bsdf, "Specular IOR Level", defaults['specular']),
+    }
+    return build_canonical_material_shader(material, image, settings)

@@ -78,6 +78,15 @@ def _purge_all():
     props.gltf_anvil_separate_loose = True
     props.gltf_anvil_always_combine_materials = True
     props.gltf_anvil_debug = False
+    props.default_interpolation = 'Linear'
+    props.default_texture_as_alpha = False
+    props.default_vertex_colors = False
+    props.default_roughness = 0.5
+    props.default_metallic = 0.0
+    props.default_emission_strength = 0.0
+    props.default_emission_color = (1.0, 1.0, 1.0, 1.0)
+    props.default_specular = 0.5
+    props.default_material_name_pattern = "{relativePath}{filename}{extension}"
     prefab_libraries = getattr(bpy.context.scene, "anvil_prefab_libraries", None)
     if prefab_libraries is not None:
         prefab_libraries.clear()

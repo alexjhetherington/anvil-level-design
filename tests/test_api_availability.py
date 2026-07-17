@@ -1,5 +1,7 @@
+import blf
 import bpy
 import gpu
+import imbuf
 from mathutils.bvhtree import BVHTree
 from .base_test import AnvilTestCase
 
@@ -123,6 +125,34 @@ class APIAvailabilityTest(AnvilTestCase):
             f"Missing GPU API symbols: {', '.join(missing)}"
         )
 
+    def test_all_required_image_buffer_text_apis_exist(self):
+        missing = []
+        for function_name in (
+                "bind_imbuf",
+                "color",
+                "dimensions",
+                "draw_buffer",
+                "position",
+                "size",
+        ):
+            if not hasattr(blf, function_name):
+                missing.append(f"blf.{function_name}")
+        for function_name in ("load", "new", "write"):
+            if not hasattr(imbuf, function_name):
+                missing.append(f"imbuf.{function_name}")
+
+        self.assertEqual(
+            missing, [],
+            f"Missing image buffer text API symbols: {', '.join(missing)}"
+        )
+
+    def test_create_texture_dialog_custom_confirmation_label_api_is_available(self):
+        invoke_props_dialog = bpy.types.WindowManager.bl_rna.functions.get(
+            "invoke_props_dialog"
+        )
+        self.assertIsNotNone(invoke_props_dialog)
+        self.assertIsNotNone(invoke_props_dialog.parameters.get("confirm_text"))
+
     def test_all_required_mathutils_bvh_apis_exist(self):
         missing = []
         if not hasattr(BVHTree, "FromPolygons"):
@@ -208,9 +238,9 @@ class APIAvailabilityTest(AnvilTestCase):
                 missing.append("bpy.types.SpacePreferences.draw_handler_add")
             if not hasattr(bpy.types.SpacePreferences, "draw_handler_remove"):
                 missing.append("bpy.types.SpacePreferences.draw_handler_remove")
-
         mesh = bpy.data.meshes.new("api_availability_mesh")
         material = bpy.data.materials.new("api_availability_material")
+        image = bpy.data.images.new("api_availability_image", width=1, height=1, alpha=True)
         obj = bpy.data.objects.new("api_availability_object", mesh)
         collection = bpy.data.collections.new("api_availability_collection")
         try:
@@ -251,6 +281,16 @@ class APIAvailabilityTest(AnvilTestCase):
                 missing.append("BlendDataCollections.remove")
             if not hasattr(bpy.data.materials, "remove"):
                 missing.append("BlendDataMaterials.remove")
+            if not hasattr(bpy.data.images, "new"):
+                missing.append("BlendDataImages.new")
+            if not hasattr(image, "filepath_raw"):
+                missing.append("Image.filepath_raw")
+            if not hasattr(image, "generated_color"):
+                missing.append("Image.generated_color")
+            if not hasattr(image, "source"):
+                missing.append("Image.source")
+            if not hasattr(image, "scale"):
+                missing.append("Image.scale")
             if not hasattr(bpy.data.objects, "remove"):
                 missing.append("BlendDataObjects.remove")
             if not hasattr(bpy.data.meshes, "remove"):
@@ -267,6 +307,7 @@ class APIAvailabilityTest(AnvilTestCase):
             bpy.data.objects.remove(obj)
             bpy.data.meshes.remove(mesh)
             bpy.data.materials.remove(material)
+            bpy.data.images.remove(image)
             bpy.data.collections.remove(collection)
 
         self.assertEqual(

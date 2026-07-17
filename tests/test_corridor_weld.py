@@ -8,6 +8,7 @@ from ..core.materials import (
     create_material_with_image,
     ensure_material_slot,
     find_material_with_image,
+    get_primary_image_from_material,
 )
 from ..core.uv_projection import derive_transform_from_uvs
 from ..core.uv_projection import apply_uv_to_face
@@ -117,7 +118,8 @@ def _set_grey_floor_faces_scale(obj):
         if face.material_index >= len(obj.data.materials):
             continue
         mat = obj.data.materials[face.material_index]
-        if mat.name != "IMG_dev_grey_floor.png":
+        image = get_primary_image_from_material(mat)
+        if image is None or image.name != "dev_grey_floor.png":
             continue
         apply_uv_to_face(face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
                          mat, ppm, obj.data)
@@ -206,8 +208,11 @@ class CorridorWeldVerticalTest(AnvilTestCase):
         self.assertEqual(len(end_gap_faces), 1,
                          "Should have one corridor end gap face")
         end_gap_mat = obj.data.materials[end_gap_faces[0].material_index]
-        self.assertEqual(end_gap_mat.name, "IMG_dev_orange_wall.png",
-                         "Corridor end gap should use the wall texture")
+        self.assertEqual(
+            get_primary_image_from_material(end_gap_mat).name,
+            "dev_orange_wall.png",
+            "Corridor end gap should use the wall texture",
+        )
 
         self.assertEqual(len(bm.verts), 14)
         self.assertEqual(len(bm.faces), 11)

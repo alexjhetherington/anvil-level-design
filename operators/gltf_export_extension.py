@@ -5,6 +5,7 @@ import bpy
 
 from ..core.materials import (
     get_image_from_material,
+    infer_primary_image_from_shader,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
@@ -351,7 +352,10 @@ def _material_export_key(material, always_combine_materials):
 
 
 def _material_image_export_key(material):
-    image = get_image_from_material(material)
+    image = (
+        get_image_from_material(material)
+        or infer_primary_image_from_shader(material)
+    )
     if image is None:
         return ""
 

@@ -3,24 +3,27 @@ from bpy.types import Panel, Operator
 
 from ..core.face_id import get_selected_face_count
 from ..core.materials import (
+    MaterialMappingConflictError,
+    get_image_from_material,
     get_texture_node_from_material,
     find_material_with_image,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
 )
+from ..core.material_shader import validate_material_shader
 from ..core.library import is_library_object
 from ..core.workspace_check import is_level_design_workspace
 from ..core.hotspot_queries import object_has_hotspot_material
 from ..operators.grid_tools import get_unit_label, get_snap_mode_icon
 from ..handlers import (
-    get_active_image,
     get_previous_image,
+    get_active_face_material,
     get_multi_face_mode,
     is_multi_face_unset_scale,
     is_multi_face_unset_rotation,
     is_multi_face_unset_offset,
-    get_selected_faces_share_image,
+    get_selected_faces_share_material,
     get_all_selected_hotspot,
     get_any_selected_hotspot,
     get_any_selected_fixed_hotspot,
@@ -57,25 +60,39 @@ def _draw_image_collection_header(layout, image, label_enabled):
     add_op.filepath = image_filepath
 
 
-def _texture_preview_display_image(mode, mesh_select_mode, obj):
+def _draw_texture_preview_placeholder(layout, text, icon):
+    box = layout.box()
+    for row_index in range(8):
+        row = box.row()
+        if row_index == 3:
+            row.alignment = 'CENTER'
+            row.label(text=text, icon=icon)
+        else:
+            row.label(text="")
+
+
+def _texture_preview_state(mode, mesh_select_mode, obj):
     import bmesh
 
     in_face_mode = mode == 'EDIT_MESH' and mesh_select_mode[2]
-    image = get_active_image() if in_face_mode else None
-    if get_multi_face_mode() and image is not None:
-        if obj is not None and obj.type == 'MESH' and mode == 'EDIT_MESH':
+    material = get_active_face_material(obj, mode, mesh_select_mode[2])
+    if in_face_mode and get_multi_face_mode():
+        if obj is not None and obj.type == 'MESH':
             bm = bmesh.from_edit_mesh(obj.data)
             bm.faces.ensure_lookup_table()
-            shared, _shared_image = get_selected_faces_share_image(
-                obj,
-                bm,
-                obj.data,
-            )
+            shared, material = get_selected_faces_share_material(bm, obj.data)
             if not shared:
-                return None
-    if image is not None:
-        return image
-    return get_previous_image()
+                return None, None, True
+    if material is not None:
+        return get_image_from_material(material), material, False
+    return get_previous_image(), None, False
+
+
+def _preview_material_for_image(image):
+    try:
+        return find_material_with_image(image)
+    except MaterialMappingConflictError:
+        return None
 
 
 class LEVELDESIGN_PT_status_panel(Panel):
@@ -661,12 +678,35 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
         return is_level_design_workspace()
 
     def draw_header_preset(self, context):
-        image = _texture_preview_display_image(
+        image, selected_material, _mixed = _texture_preview_state(
             context.mode,
             context.tool_settings.mesh_select_mode,
             context.object,
         )
         image_filepath = _image_collection_filepath(image)
+        material = (
+            selected_material
+            if selected_material is not None
+            else _preview_material_for_image(image)
+        )
+        validation = (
+            validate_material_shader(material, image)
+            if material is not None and image is not None
+            else None
+        )
+        repair_available = validation is not None and (
+            not validation.is_canonical
+            or (validation.has_shader_images and not validation.primary_image_in_shader)
+        )
+        repair_row = self.layout.row(align=True)
+        repair_row.enabled = repair_available
+        repair = repair_row.operator(
+            "leveldesign.repair_material_shader",
+            text="",
+            icon='TOOL_SETTINGS',
+            emboss=False,
+        )
+        repair.material_name = material.name if material is not None else ""
         locate_row = self.layout.row(align=True)
         locate_row.enabled = bool(image_filepath)
         locate_op = locate_row.operator(
@@ -685,34 +725,43 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
         self.layout.separator(factor=0.4)
 
     def draw(self, context):
-        import bmesh
-
         layout = self.layout
+        image, selected_material, mixed_materials = _texture_preview_state(
+            context.mode,
+            context.tool_settings.mesh_select_mode,
+            context.object,
+        )
 
-        in_face_mode = (context.mode == 'EDIT_MESH' and
-                        context.tool_settings.mesh_select_mode[2])
-        image = get_active_image() if in_face_mode else None
-        multi_face = in_face_mode and get_multi_face_mode()
-
-        # In multi-face mode, check if all selected faces share the same image
-        show_multi_texture_placeholder = False
-        if multi_face and image is not None:
-            obj = context.object
-            if obj and obj.type == 'MESH' and context.mode == 'EDIT_MESH':
-                bm = bmesh.from_edit_mesh(obj.data)
-                bm.faces.ensure_lookup_table()
-                shared, shared_image = get_selected_faces_share_image(obj, bm, obj.data)
-                if not shared:
-                    show_multi_texture_placeholder = True
-                    image = None  # Don't show preview for mixed textures
-
-        if show_multi_texture_placeholder:
+        if mixed_materials:
             layout.label(text="Multiple textures")
             box = layout.box()
             box.scale_y = 8.0
             box.label(text="")
-        elif image:
+        elif selected_material is not None and image is None:
+            layout.label(text=selected_material.name, icon='MATERIAL')
+            _draw_texture_preview_placeholder(
+                layout,
+                "Unmanaged Material",
+                'INFO',
+            )
+        elif image is not None and selected_material is not None:
+            mat = selected_material
+            validation = (
+                validate_material_shader(mat, image)
+                if mat is not None
+                else None
+            )
             _draw_image_collection_header(layout, image, True)
+
+            if validation is not None and (
+                    validation.has_shader_images
+                    and not validation.primary_image_in_shader):
+                warning = layout.row(align=True)
+                warning.operator(
+                    "leveldesign.material_primary_image_warning",
+                    text="Primary image is not used by shader",
+                    emboss=False,
+                )
 
             if image.preview:
                 icon_id = image.preview.icon_id
@@ -730,7 +779,6 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
                 box.label(text="")
 
             # Material settings
-            mat = find_material_with_image(image)
             tex = get_texture_node_from_material(mat)
             bsdf = get_principled_bsdf_from_material(mat) if mat else None
 
@@ -843,22 +891,21 @@ class LEVELDESIGN_PT_texture_preview_panel(Panel):
                 "leveldesign.fix_alpha_bleed", icon='IMAGE_RGB_ALPHA'
             )
         else:
-            prev_image = get_previous_image()
-            if prev_image:
-                _draw_image_collection_header(layout, prev_image, False)
+            if image is not None:
+                _draw_image_collection_header(layout, image, False)
                 preview_layout = layout.column()
                 preview_layout.enabled = False
-                if prev_image.preview:
-                    icon_id = prev_image.preview.icon_id
+                if image.preview:
+                    icon_id = image.preview.icon_id
                     if icon_id:
                         preview_layout.template_icon(icon_value=icon_id, scale=8.0)
                     else:
-                        prev_image.preview_ensure()
+                        image.preview_ensure()
                         box = preview_layout.box()
                         box.scale_y = 8.0
                         box.label(text="")
                 else:
-                    prev_image.preview_ensure()
+                    image.preview_ensure()
                     box = preview_layout.box()
                     box.scale_y = 8.0
                     box.label(text="")
@@ -919,6 +966,9 @@ class LEVELDESIGN_PT_default_material_settings_panel(Panel):
     def draw(self, context):
         layout = self.layout
         props = context.scene.level_design_props
+
+        layout.prop(props, "default_material_name_pattern")
+        layout.separator()
 
         # Interpolation toggle
         row = layout.row(align=True)

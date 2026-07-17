@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Anvil Level Design",
     "author": "Alex Hetherington",
-    "version": (1, 7, 4),
+    "version": (1, 8, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Level Design",
     "description": "TrenchBroom-style UV tools, texture application, and grid controls for level design",
@@ -232,6 +232,13 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
         options={'HIDDEN'},
     )
 
+    pref_default_material_name_pattern: bpy.props.StringProperty(
+        name="Remembered Material Name Pattern",
+        description="Last saved file's material naming pattern, used to initialise new unsaved files",
+        default="{relativePath}{filename}{extension}",
+        options={'HIDDEN'},
+    )
+
     # === Viewport Defaults (applied on load, override startup.blend) ===
     pref_default_unit_system: bpy.props.EnumProperty(
         name="Unit System",
@@ -384,6 +391,7 @@ class LevelDesignPreferences(bpy.types.AddonPreferences):
             "leveldesign.cube_cut": "Tools",
             "leveldesign.prefab_browser": "Tools",
             "leveldesign.texture_browser": "Tools",
+            "leveldesign.fix_material_mappings": "Tools",
             "leveldesign.prefab_rotate_left": "Tools",
             "leveldesign.prefab_rotate_right": "Tools",
             "leveldesign.context_weld": "Tools",

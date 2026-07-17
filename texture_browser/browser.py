@@ -4,10 +4,16 @@ import os
 import time
 
 import bpy
-from bpy.props import EnumProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import (
+    EnumProperty,
+    FloatProperty,
+    IntProperty,
+    StringProperty,
+)
 from bpy.types import Operator
 
 from ..core.library import is_library_object
+from ..core.materials import MaterialMappingConflictError
 from ..core.modal_image_grid import (
     ImageGridSpec,
     PreferencesImageGridModal,
@@ -62,6 +68,8 @@ _folder_scan_cache = {}
 _collection_scan_cache = {}
 _folder_scan_generation = 0
 _popup_source_workspace_name = ""
+_mapping_selection_material_name = ""
+_mapping_selection_open_pending = False
 
 _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_SECONDS = 0.6
 _TEXTURE_BROWSER_LOCATE_HIGHLIGHT_ALPHA = 1.0
@@ -89,6 +97,22 @@ def _current_workspace_name():
 def _set_popup_source_workspace_name(workspace_name):
     global _popup_source_workspace_name
     _popup_source_workspace_name = workspace_name
+
+
+def begin_material_mapping_image_selection(material_name):
+    global _mapping_selection_material_name, _mapping_selection_open_pending
+    _mapping_selection_material_name = material_name
+    _mapping_selection_open_pending = True
+
+
+def cancel_material_mapping_image_selection():
+    _reset_mapping_selection()
+
+
+def _reset_mapping_selection():
+    global _mapping_selection_material_name, _mapping_selection_open_pending
+    _mapping_selection_material_name = ""
+    _mapping_selection_open_pending = False
 
 
 def _texture_browser_activation_workspace_name():
@@ -677,6 +701,20 @@ def _draw_texture_browser_header(
     actions_row = row.row(align=True)
     actions_row.operator("leveldesign.texture_browser_refresh", text="", icon='FILE_REFRESH')
     actions_row.operator("leveldesign.texture_browser_edit_filters", text="", icon='FILTER')
+    actions_row.separator(factor=0.75)
+    create_row = actions_row.row(align=True)
+    create_row.enabled = (
+        window_manager.anvil_texture_browser_collection_index
+        == _TEXTURE_BROWSER_FOLDER_VIEW
+    )
+    create_image = create_row.operator(
+        "leveldesign.texture_browser_create_image",
+        text="",
+        icon='IMAGE_DATA',
+    )
+    create_image.directory = _display_path(
+        window_manager.anvil_texture_browser_folder_path
+    )
     if not active_section_is_compatible:
         sub = row.row(align=True)
         sub.alert = True
@@ -1286,6 +1324,23 @@ def _texture_browser_open_image_in_editor(filepath):
     return {'RUNNING_MODAL'}
 
 
+def _texture_browser_choose_mapping_image(filepath):
+    image = _load_texture_browser_image(filepath)
+    if image is None:
+        print("Anvil Level Design: Could not load mapping image", flush=True)
+        return {'RUNNING_MODAL'}
+
+    material_name = _mapping_selection_material_name
+    _reset_mapping_selection()
+    from ..operators.material_mappings import finish_browser_mapping_selection
+    finish_browser_mapping_selection(material_name, image)
+    try:
+        bpy.ops.leveldesign.texture_browser_close()
+    except RuntimeError:
+        pass
+    return {'RUNNING_MODAL'}
+
+
 def _texture_browser_activate_item(hit):
     if hit["is_folder"]:
         if not _set_folder(bpy.context.window_manager, hit["filepath"]):
@@ -1322,6 +1377,9 @@ def _texture_browser_activate_item(hit):
     if not hit["is_image"]:
         print(f"Anvil Level Design: No image preview for {hit['filename']}", flush=True)
         return {'RUNNING_MODAL'}
+
+    if _mapping_selection_material_name:
+        return _texture_browser_choose_mapping_image(hit["filepath"])
 
     if _texture_browser_activation_workspace_name() == HOTSPOT_MAPPING_WORKSPACE_NAME:
         return _texture_browser_open_image_in_editor(hit["filepath"])
@@ -1640,8 +1698,13 @@ class LEVELDESIGN_OT_texture_browser(Operator):
         return _poll_scene_mode(context)
 
     def execute(self, context):
+        global _mapping_selection_open_pending
         workspace_name = _workspace_name_from_workspace(getattr(context, "workspace", None))
         _set_popup_source_workspace_name(workspace_name)
+        if _mapping_selection_material_name and _mapping_selection_open_pending:
+            _mapping_selection_open_pending = False
+        else:
+            _reset_mapping_selection()
         _load_texture_browser_persistent_settings(context.window_manager)
         return texture_browser_modal.open_popup(
             context.preferences,
@@ -1726,6 +1789,9 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
             and not is_library_object(obj)
         )
         other_selected_objects = []
+        mapping_error = None
+        image = None
+        applied_face_count = 0
 
         if restore_object_mode:
             # Hotspot application uses Blender's edit-mode UV unwrap operator.
@@ -1742,17 +1808,28 @@ class LEVELDESIGN_OT_texture_browser_apply_file(Operator):
             if restore_object_mode:
                 bpy.ops.object.mode_set(mode='EDIT')
 
-            image, applied_face_count = apply_texture_path_to_selection(
-                self.filepath,
-                obj,
-                original_mode,
-                context.scene,
-            )
+            try:
+                image, applied_face_count = apply_texture_path_to_selection(
+                    self.filepath,
+                    obj,
+                    original_mode,
+                    context.scene,
+                )
+            except MaterialMappingConflictError as exc:
+                mapping_error = exc
         finally:
             if restore_object_mode and context.mode == 'EDIT_MESH':
                 bpy.ops.object.mode_set(mode='OBJECT')
             for selected_obj in other_selected_objects:
                 selected_obj.select_set(True)
+
+        if mapping_error is not None:
+            redraw_ui_panels(context)
+            self.report(
+                {'ERROR'},
+                f"{mapping_error}. Use Fix Material Mappings (Shift-4).",
+            )
+            return {'CANCELLED'}
 
         if image is None:
             redraw_ui_panels(context)
@@ -1819,7 +1896,7 @@ class LEVELDESIGN_OT_texture_browser_interaction(Operator):
             area = texture_browser_modal.interaction["area"]
             if area is not None:
                 texture_browser_modal.tag_area(area)
-        return texture_browser_modal.modal(
+        result = texture_browser_modal.modal(
             self,
             event,
             context.scene,
@@ -1827,6 +1904,9 @@ class LEVELDESIGN_OT_texture_browser_interaction(Operator):
             context.window_manager,
             context.preferences,
         )
+        if result == {'FINISHED'} and _mapping_selection_material_name:
+            _reset_mapping_selection()
+        return result
 
 
 class LEVELDESIGN_OT_texture_browser_close(Operator):
@@ -1840,6 +1920,13 @@ class LEVELDESIGN_OT_texture_browser_close(Operator):
         return _texture_browser_workspace_is_allowed() or texture_browser_modal.is_popup_window(context.window)
 
     def execute(self, context):
+        if _mapping_selection_material_name:
+            material_name = _mapping_selection_material_name
+            _reset_mapping_selection()
+            from ..operators.material_mappings import finish_browser_mapping_selection
+            finish_browser_mapping_selection(material_name, None)
+        else:
+            _reset_mapping_selection()
         close_current_window = texture_browser_modal.is_popup_window(context.window)
         texture_browser_modal.restore_preferences(
             context.preferences,
@@ -2463,6 +2550,7 @@ def register():
 
 
 def unregister():
+    _reset_mapping_selection()
     persistence.save_texture_browser_data()
     if bpy.app.timers.is_registered(_recover_texture_browser_active_section):
         bpy.app.timers.unregister(_recover_texture_browser_active_section)

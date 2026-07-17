@@ -5,3 +5,4 @@ test_outputs/
 site/public/
 site/resources/
 .hugo_build.lock
+.codex/ui_capture/

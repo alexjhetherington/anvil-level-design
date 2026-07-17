@@ -2,12 +2,16 @@ import bpy
 from bpy.types import Operator
 
 from ..core.materials import (
+    MATERIAL_SCHEMA_VERSION,
+    MaterialMappingConflictError,
     find_material_with_image,
+    get_primary_image_from_material,
     get_texture_node_from_material,
     get_principled_bsdf_from_material,
     is_texture_alpha_connected,
     is_vertex_colors_enabled,
     remove_unused_nodes,
+    repair_material_shader,
 )
 from ..core.logging import (
     add_performance_detail,
@@ -63,6 +67,13 @@ def get_material_images():
     return images
 
 
+def _active_mapped_material():
+    try:
+        return find_material_with_image(get_active_image())
+    except MaterialMappingConflictError:
+        return None
+
+
 class LEVELDESIGN_OT_set_interpolation_closest(Operator):
     """Setting interpolation of image texture to closest"""
 
@@ -71,8 +82,7 @@ class LEVELDESIGN_OT_set_interpolation_closest(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        image = get_active_image()
-        mat = find_material_with_image(image)
+        mat = _active_mapped_material()
         tex = get_texture_node_from_material(mat)
         if tex:
             tex.interpolation = 'Closest'
@@ -87,8 +97,7 @@ class LEVELDESIGN_OT_set_interpolation_linear(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        image = get_active_image()
-        mat = find_material_with_image(image)
+        mat = _active_mapped_material()
         tex = get_texture_node_from_material(mat)
         if tex:
             tex.interpolation = 'Linear'
@@ -104,15 +113,10 @@ class LEVELDESIGN_OT_toggle_texture_alpha(Operator):
 
     @classmethod
     def poll(cls, context):
-        image = get_active_image()
-        if not image:
-            return False
-        mat = find_material_with_image(image)
-        return mat is not None
+        return _active_mapped_material() is not None
 
     def execute(self, context):
-        image = get_active_image()
-        mat = find_material_with_image(image)
+        mat = _active_mapped_material()
         tex = get_texture_node_from_material(mat)
         bsdf = get_principled_bsdf_from_material(mat)
 
@@ -150,15 +154,10 @@ class LEVELDESIGN_OT_toggle_vertex_colors(Operator):
 
     @classmethod
     def poll(cls, context):
-        image = get_active_image()
-        if not image:
-            return False
-        mat = find_material_with_image(image)
-        return mat is not None
+        return _active_mapped_material() is not None
 
     def execute(self, context):
-        image = get_active_image()
-        mat = find_material_with_image(image)
+        mat = _active_mapped_material()
         tex = get_texture_node_from_material(mat)
         bsdf = get_principled_bsdf_from_material(mat)
 
@@ -368,6 +367,73 @@ class LEVELDESIGN_OT_reload_material_images(Operator):
         return {'FINISHED'}
 
 
+class LEVELDESIGN_OT_material_primary_image_warning(Operator):
+    """Explain that the mapped primary image is absent from this shader"""
+
+    bl_idname = "leveldesign.material_primary_image_warning"
+    bl_label = "Primary Image Not Used by Shader"
+    bl_description = (
+        "This shader contains image textures, but none uses the material's "
+        "mapped primary image. Repairing will rebuild the graph with the primary image"
+    )
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        self.report(
+            {'WARNING'},
+            "Shader image textures do not include the mapped primary image",
+        )
+        return {'FINISHED'}
+
+
+class LEVELDESIGN_OT_repair_material_shader(Operator):
+    """Replace a customized shader with Anvil's canonical node graph"""
+
+    bl_idname = "leveldesign.repair_material_shader"
+    bl_label = "Repair Material Shader"
+    bl_description = (
+        "Rebuild this material using Anvil's canonical shader while preserving "
+        "supported material values"
+    )
+    bl_options = {'REGISTER'}
+
+    material_name: bpy.props.StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace()
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Replace this material's entire node graph?", icon='ERROR')
+        layout.label(text="Custom nodes and connections will be removed.")
+        layout.label(text="Supported material values and the primary image are preserved.")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.material_name)
+        if material is None:
+            self.report({'ERROR'}, "Material was not found")
+            return {'CANCELLED'}
+        try:
+            result = repair_material_shader(material)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            self.report({'ERROR'}, f"Could not repair material: {exc}")
+            return {'CANCELLED'}
+        if not result.is_canonical:
+            self.report({'ERROR'}, "Rebuilt shader did not validate")
+            return {'CANCELLED'}
+        bpy.ops.ed.undo_push(message="Repair Material Shader")
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type in {'VIEW_3D', 'NODE_EDITOR'}:
+                    area.tag_redraw()
+        self.report({'INFO'}, f"Repaired material {material.name}")
+        return {'FINISHED'}
+
+
 class LEVELDESIGN_OT_set_default_interpolation(Operator):
     """Set the default interpolation mode for new materials"""
 
@@ -382,7 +448,7 @@ class LEVELDESIGN_OT_set_default_interpolation(Operator):
 
 
 class LEVELDESIGN_OT_cleanup_unused_materials(Operator):
-    """Remove unused materials created by the addon (IMG_ prefix)"""
+    """Remove unused materials managed by Anvil"""
 
     bl_idname = "leveldesign.cleanup_unused_materials"
     bl_label = "Cleanup Unused Materials"
@@ -399,7 +465,12 @@ class LEVELDESIGN_OT_cleanup_unused_materials(Operator):
 
         # Then remove materials with no users
         for mat in list(bpy.data.materials):
-            if mat.name.startswith("IMG_") and mat.users == 0:
+            is_managed = (
+                getattr(mat, "anvil_material_schema_version", 0)
+                == MATERIAL_SCHEMA_VERSION
+                and get_primary_image_from_material(mat) is not None
+            )
+            if is_managed and mat.users == 0:
                 bpy.data.materials.remove(mat)
                 materials_removed += 1
 
@@ -421,6 +492,8 @@ classes = (
     LEVELDESIGN_OT_toggle_vertex_colors,
     LEVELDESIGN_OT_fix_alpha_bleed,
     LEVELDESIGN_OT_reload_material_images,
+    LEVELDESIGN_OT_material_primary_image_warning,
+    LEVELDESIGN_OT_repair_material_shader,
     LEVELDESIGN_OT_set_default_interpolation,
     LEVELDESIGN_OT_cleanup_unused_materials,
 )

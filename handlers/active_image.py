@@ -75,6 +75,31 @@ def set_previous_image(image):
         _previous_image_filepath = None
 
 
+def get_active_face_material(obj, mode, face_select_enabled):
+    if (
+            obj is None
+            or obj.type != 'MESH'
+            or mode != 'EDIT_MESH'
+            or not face_select_enabled):
+        return None
+
+    import bmesh
+
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    if not any(face.select for face in bm.faces):
+        return None
+
+    active_face = bm.faces.active
+    if active_face is None:
+        return None
+
+    material_index = active_face.material_index
+    if material_index >= len(obj.data.materials):
+        return None
+    return obj.data.materials[material_index]
+
+
 def update_active_image_from_face(context):
     """Update the active image based on the active face's material.
 
@@ -82,70 +107,35 @@ def update_active_image_from_face(context):
     or the active face has no image material.
     """
     try:
-        import bmesh
-
-        obj = context.object
-        if not obj or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-            set_active_image(None)
-            return
-
-        # Require face select mode
-        if not context.tool_settings.mesh_select_mode[2]:
-            set_active_image(None)
-            return
-
-        bm = bmesh.from_edit_mesh(obj.data)
-        bm.faces.ensure_lookup_table()
-
-        # Check if any faces are selected
-        selected_faces = [f for f in bm.faces if f.select]
-        if not selected_faces:
-            set_active_image(None)
-            return
-
-        active_face = bm.faces.active
-        if not active_face:
-            set_active_image(None)
-            return
-
-        # Get the material on this face
-        mat_index = active_face.material_index
-        mat = obj.data.materials[mat_index] if mat_index < len(obj.data.materials) else None
-
-        if mat:
-            image = get_image_from_material(mat)
-            if image:
-                set_active_image(image)
-            else:
-                set_active_image(None)
-        else:
-            set_active_image(None)
+        material = get_active_face_material(
+            context.object,
+            context.mode,
+            context.tool_settings.mesh_select_mode[2],
+        )
+        image = get_image_from_material(material) if material is not None else None
+        set_active_image(image)
     except Exception:
         pass  # Silently fail to avoid disrupting user workflow
 
 
-def get_selected_faces_share_image(obj, bm, me):
-    """Check if all selected faces share the same image texture.
-
-    Returns (shared, image) where shared is True if all selected faces
-    have the same image, and image is that shared image (or None).
-    """
-    selected_faces = [f for f in bm.faces if f.select]
+def get_selected_faces_share_material(bm, me):
+    selected_faces = [face for face in bm.faces if face.select]
     if not selected_faces:
         return False, None
 
-    first_image = None
-    for face in selected_faces:
-        mat_index = face.material_index
-        mat = me.materials[mat_index] if mat_index < len(me.materials) else None
-        image = get_image_from_material(mat) if mat else None
-
-        if first_image is None:
-            first_image = image
-        elif image != first_image:
+    first_face = selected_faces[0]
+    first_index = first_face.material_index
+    first_material = me.materials[first_index] if first_index < len(me.materials) else None
+    for face in selected_faces[1:]:
+        material_index = face.material_index
+        material = (
+            me.materials[material_index]
+            if material_index < len(me.materials)
+            else None
+        )
+        if material != first_material:
             return False, None
-
-    return True, first_image
+    return True, first_material
 
 
 def redraw_ui_panels(context):

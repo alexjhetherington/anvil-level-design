@@ -558,6 +558,17 @@ class LevelDesignProperties(bpy.types.PropertyGroup):
         subtype='FACTOR',
     )
 
+    default_material_name_pattern: StringProperty(
+        name="Material Name Pattern",
+        description=(
+            "Naming pattern for new image materials\n"
+            "{relativePath}: Folder path relative to the .blend file\n"
+            "{filename}: Filename without its extension\n"
+            "{extension}: File extension including the dot"
+        ),
+        default="{relativePath}{filename}{extension}",
+    )
+
     # === UI Collapse State ===
     show_experimental_settings: BoolProperty(
         name="Experimental Settings",
@@ -775,6 +786,25 @@ def register():
     bpy.utils.register_class(AnvilPrefabLibrary)
     bpy.utils.register_class(LevelDesignProperties)
     bpy.types.Scene.level_design_props = PointerProperty(type=LevelDesignProperties)
+    bpy.types.Scene.anvil_material_mapping_prompt_handled = BoolProperty(
+        name="Material Mapping Prompt Handled",
+        description="Whether this existing file has shown Fix Material Mappings",
+        default=False,
+        options={'HIDDEN'},
+    )
+
+    bpy.types.Material.anvil_primary_image = PointerProperty(
+        name="Primary Image",
+        description="Image used to identify this material in Anvil",
+        type=bpy.types.Image,
+    )
+    bpy.types.Material.anvil_material_schema_version = IntProperty(
+        name="Anvil Material Schema Version",
+        description="Version of this material's Anvil mapping data",
+        default=0,
+        min=0,
+        options={'HIDDEN'},
+    )
 
     # Prefab libraries (Anvil (Prefabs) panel)
     bpy.types.Scene.anvil_prefab_libraries = CollectionProperty(type=AnvilPrefabLibrary)
@@ -840,6 +870,9 @@ def unregister():
     del bpy.types.Object.anvil_hotspot_size_weight
     del bpy.types.Object.anvil_allow_combined_faces
     del bpy.types.Object.anvil_uv_map_settings
+    del bpy.types.Material.anvil_material_schema_version
+    del bpy.types.Material.anvil_primary_image
+    del bpy.types.Scene.anvil_material_mapping_prompt_handled
     del bpy.types.Scene.anvil_prefab_mode
     del bpy.types.Scene.anvil_prefab_active_library_index
     del bpy.types.Scene.anvil_prefab_libraries

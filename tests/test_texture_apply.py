@@ -11,11 +11,15 @@ from ..core.uv_projection import derive_transform_from_uvs
 from ..core.uv_projection import apply_uv_to_face
 from .base_test import AnvilTestCase
 from .helpers import _get_context_override, TEXTURE_PATH
-from ..core.materials import find_material_with_image, create_material_with_image
+from ..core.materials import (
+    create_material_with_image,
+    find_material_with_image,
+    get_primary_image_from_material,
+)
 from ..operators.texture_apply import (
     set_uv_from_other_face, stretch_uv_from_other_face,
     _closest_target_world, _apply_to_other_obj, _dispatch_set_uv_from_other_face,
-    _flush_other_bmeshes,
+    _flush_other_bmeshes, _invoke_apply_setup,
 )
 from ..operators import texture_apply as texture_apply_module
 from ..core.face_id import get_face_id_layer
@@ -629,6 +633,101 @@ def _get_second_material():
     return mat
 
 
+class UnmanagedMaterialAltClickTest(AnvilTestCase):
+
+    def _create_two_face_edit_object(
+            self, unmanaged_material, other_material, selected_face_index):
+        ppm = bpy.context.scene.level_design_props.pixels_per_meter
+        mesh = bpy.data.meshes.new("unmanaged_alt_click_mesh")
+        mesh.materials.append(other_material)
+        mesh.materials.append(unmanaged_material)
+        bm = bmesh.new()
+        other_face = _make_vertical_face(bm, 0)
+        unmanaged_face = _make_vertical_face(bm, 2)
+        bm.normal_update()
+        uv_layer = bm.loops.layers.uv.verify()
+        other_face.material_index = 0
+        unmanaged_face.material_index = 1
+        apply_uv_to_face(
+            other_face, uv_layer, 1.0, 1.0, 0.0, 0.0, 0.0,
+            other_material, ppm, mesh,
+        )
+        apply_uv_to_face(
+            unmanaged_face, uv_layer, 2.0, 1.5, 30.0, 0.25, 0.5,
+            unmanaged_material, ppm, mesh,
+        )
+        bm.to_mesh(mesh)
+        bm.free()
+
+        obj = bpy.data.objects.new("unmanaged_alt_click_object", mesh)
+        bpy.context.collection.objects.link(obj)
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            bpy.ops.object.mode_set(mode='EDIT')
+        edit_bm = bmesh.from_edit_mesh(mesh)
+        edit_bm.faces.ensure_lookup_table()
+        for face in edit_bm.faces:
+            face.select = False
+        edit_bm.faces[selected_face_index].select = True
+        edit_bm.faces.active = edit_bm.faces[selected_face_index]
+        bmesh.update_edit_mesh(mesh)
+        return obj, edit_bm
+
+    def test_alt_left_apply_setup_uses_exact_unmanaged_source_material(self):
+        unmanaged_material = bpy.data.materials.new("AltLeftUnmanaged")
+        other_material = bpy.data.materials.new("AltLeftOther")
+        self._create_two_face_edit_object(
+            unmanaged_material,
+            other_material,
+            1,
+        )
+
+        class _FakeOperator:
+            pass
+
+        operator = _FakeOperator()
+        with bpy.context.temp_override(**self._get_3d_view_context()):
+            result = _invoke_apply_setup(operator, bpy.context, None)
+
+        self.assertIsNone(result)
+        self.assertEqual(operator._mat, unmanaged_material)
+        self.assertIsNone(operator._image)
+        self.assertFalse(operator._unassign_material)
+
+    def test_alt_right_pick_applies_exact_unmanaged_source_material(self):
+        unmanaged_material = bpy.data.materials.new("AltRightUnmanaged")
+        other_material = bpy.data.materials.new("AltRightOther")
+        obj, bm = self._create_two_face_edit_object(
+            unmanaged_material,
+            other_material,
+            0,
+        )
+        pick_result = (
+            obj,
+            1,
+            unmanaged_material,
+            [bm.faces[0]],
+            bm,
+        )
+
+        with patch.object(
+                texture_apply_module,
+                '_pick_source_from_cursor',
+                return_value=pick_result):
+            with bpy.context.temp_override(**self._get_3d_view_context()):
+                result = bpy.ops.leveldesign.pick_image_from_face(
+                    'INVOKE_DEFAULT'
+                )
+
+        self.assertEqual(result, {'FINISHED'})
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        target_material = obj.data.materials[bm.faces[0].material_index]
+        self.assertEqual(target_material, unmanaged_material)
+
+
 class CrossObjectEditModeAltClickTest(AnvilTestCase):
     """Test cross-object Alt-click behavior and undo."""
 
@@ -704,9 +803,8 @@ class CrossObjectEditModeAltClickTest(AnvilTestCase):
         with bpy.context.temp_override(**undo_ctx):
             bpy.ops.ed.undo_push(message="Before Alt-right pick")
 
-        source_image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
         pick_result = (
-            source_obj, 0, source_image, [target_bm.faces[0]], target_bm
+            source_obj, 0, source_mat, [target_bm.faces[0]], target_bm
         )
         with patch.object(
                 texture_apply_module, '_pick_source_from_cursor',
@@ -739,7 +837,10 @@ class CrossObjectEditModeAltClickTest(AnvilTestCase):
         target_uv = target_bm.loops.layers.uv.verify()
         target_face = target_bm.faces[0]
         self.assertEqual(target_face.material_index, 0)
-        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        self.assertEqual(
+            get_primary_image_from_material(target_mesh.materials[0]).name,
+            "dev_grey_floor.png",
+        )
         for before_uv, loop in zip(before_uvs, target_face.loops):
             self.assertEqual(loop[target_uv].uv, before_uv)
 
@@ -863,7 +964,10 @@ class CrossObjectEditModeAltClickTest(AnvilTestCase):
         target_uv = target_bm.loops.layers.uv.verify()
         target_face = target_bm.faces[0]
         self.assertEqual(target_face.material_index, 0)
-        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        self.assertEqual(
+            get_primary_image_from_material(target_mesh.materials[0]).name,
+            "dev_grey_floor.png",
+        )
         for before_uv, loop in zip(before_uvs, target_face.loops):
             self.assertEqual(loop[target_uv].uv, before_uv)
 
@@ -943,9 +1047,8 @@ class CrossObjectEditModeAltClickTest(AnvilTestCase):
         with bpy.context.temp_override(**undo_ctx):
             bpy.ops.ed.undo_push(message="Before Alt-right pick")
 
-        source_image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
         pick_result = (
-            source_obj, 0, source_image, [target_bm.faces[0]], target_bm
+            source_obj, 0, source_mat, [target_bm.faces[0]], target_bm
         )
         with patch.object(
                 texture_apply_module, '_pick_source_from_cursor',
@@ -978,7 +1081,10 @@ class CrossObjectEditModeAltClickTest(AnvilTestCase):
         target_uv = target_bm.loops.layers.uv.verify()
         target_face = target_bm.faces[0]
         self.assertEqual(target_face.material_index, 0)
-        self.assertEqual(target_mesh.materials[0].name, "IMG_dev_grey_floor.png")
+        self.assertEqual(
+            get_primary_image_from_material(target_mesh.materials[0]).name,
+            "dev_grey_floor.png",
+        )
         for before_uv, loop in zip(before_uvs, target_face.loops):
             self.assertEqual(loop[target_uv].uv, before_uv)
 

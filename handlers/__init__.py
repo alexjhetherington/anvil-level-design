@@ -28,8 +28,9 @@ from .active_image import (  # noqa: F401
     get_previous_image,
     set_active_image,
     set_previous_image,
+    get_active_face_material,
     update_active_image_from_face,
-    get_selected_faces_share_image,
+    get_selected_faces_share_material,
     redraw_ui_panels,
 )
 from .auto_hotspot import apply_auto_hotspots  # noqa: F401

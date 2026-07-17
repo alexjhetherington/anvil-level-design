@@ -1,5 +1,16 @@
 # Anvil Level Design Changelog
 
+# 1.8.0
+- BREAKING CHANGE Images are now mapped to materials by *metadata* (materials can be freely edited and renamed)
+    - See https://anvilleveldesign.com/docs/material-and-uv-management/#advanced---material-mapping for migrating existing files
+- New material names can be customised by pattern
+- Added a material mapping tool (shift-4) to map images to existing materials
+    - Appears automatically once opening files with existing materials in Anvil for the first time
+- Alt Left and Right apply now works on non Anvil managed materials
+- Added a button to create simple images in the Texture Browser (intended for placeholder materials)
+- Added a button to reset Anvil managed materials to the default node graph
+- New materials for images with transparency default to support transparency
+
 # 1.7.4
 - Improve saving of Texture Browser settings
 

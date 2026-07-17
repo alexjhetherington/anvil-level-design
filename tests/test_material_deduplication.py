@@ -3,6 +3,10 @@ import bpy
 
 from .base_test import AnvilTestCase
 from .helpers import TEXTURE_PATH
+from ..core.materials import (
+    create_material_with_image,
+    get_primary_image_from_material,
+)
 from ..operators.texture_apply import (
     _apply_to_other_obj,
     _dispatch_set_uv_from_other_face,
@@ -62,7 +66,10 @@ class MaterialDeduplicationTest(AnvilTestCase):
         self.assertEqual(len(second_object.data.materials), 1)
         self.assertEqual(second_object.data.materials[0], first_material)
         self.assertEqual(
-            len([mat for mat in bpy.data.materials if mat.name.startswith("IMG_")]),
+            len([
+                mat for mat in bpy.data.materials
+                if get_primary_image_from_material(mat) is not None
+            ]),
             1,
         )
 
@@ -128,7 +135,10 @@ class MaterialDeduplicationTest(AnvilTestCase):
             first_material,
         )
         self.assertEqual(
-            len([mat for mat in bpy.data.materials if mat.name.startswith("IMG_")]),
+            len([
+                mat for mat in bpy.data.materials
+                if get_primary_image_from_material(mat) is not None
+            ]),
             1,
         )
 
@@ -137,10 +147,11 @@ class MaterialDeduplicationTest(AnvilTestCase):
         obj = bpy.context.object
         obj.name = "CleanupMaterialObject"
 
-        anvil_material = bpy.data.materials.new("IMG_CleanupMaterial")
+        image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+        anvil_material = create_material_with_image(image)
         obj.data.materials.append(anvil_material)
         anvil_duplicate = anvil_material.copy()
-        anvil_duplicate.name = "IMG_CleanupMaterialCopy"
+        anvil_duplicate.name = "CleanupMaterialCopy"
         anvil_duplicate_name = anvil_duplicate.name
 
         non_anvil_material = bpy.data.materials.new("NonAnvilMaterial")

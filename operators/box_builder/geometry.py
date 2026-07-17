@@ -12,9 +12,9 @@ from ..texture_apply import set_uv_from_other_face
 from ...handlers import cache_single_face, get_active_image, get_previous_image
 from ...core.logging import debug_log
 from ...core.materials import (
-    find_material_with_image,
-    create_material_with_image,
+    MaterialMappingConflictError,
     ensure_material_slot,
+    resolve_material_for_image,
 )
 from ...core.face_id import get_face_id_layer
 from ...core.uv_projection import face_aligned_project
@@ -56,6 +56,15 @@ def _next_box_builder_datablock_name(base_name, suffix):
     if index == 0:
         return base_name + suffix
     return f"{base_name}.{index:03d}{suffix}"
+
+
+def _active_or_previous_material():
+    image = get_active_image()
+    if image is None:
+        image = get_previous_image()
+    if image is None:
+        return None
+    return resolve_material_for_image(image)
 
 
 def _faces_coplanar_antiparallel(face_a, face_b):
@@ -207,18 +216,33 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
     # Transform view_forward to object local space for plane normal orientation
     local_view_forward = (rot @ view_forward).normalized()
 
-    # Find active selected face for material/UV source (before creating new geometry)
-    # Ensure custom layers exist before creating geometry (creating layers invalidates BMesh refs)
-    source_face = None
+    # Determine whether a selected face supplies the material/UV source.
+    active_face = bm.faces.active
+    has_source_face = (
+        active_face is not None
+        and active_face.is_valid
+        and not active_face.hide
+        and active_face.select
+    )
+
+    default_material = None
+    if not has_source_face:
+        try:
+            default_material = _active_or_previous_material()
+        except MaterialMappingConflictError as exc:
+            return (
+                False,
+                f"{exc}. Use Fix Material Mappings (Shift-4).",
+            )
+
+    # Ensure custom layers before creating geometry; adding layers invalidates BMesh refs.
     uv_layer = get_render_active_uv_layer(bm, me)
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.active
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.new("UVMap")
     get_face_id_layer(bm)
-    if (bm.faces.active is not None and bm.faces.active.is_valid
-            and not bm.faces.active.hide and bm.faces.active.select):
-        source_face = bm.faces.active
+    source_face = bm.faces.active if has_source_face else None
 
     existing_faces = [
         face for face in bm.faces
@@ -253,7 +277,16 @@ def execute_box_builder(first_vertex, second_vertex, depth, local_x, local_y, lo
         new_faces = _remove_antiparallel_coplanar_faces(bm, new_faces, existing_faces)
 
     # Apply material and UVs
-    _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj)
+    _apply_material_and_uvs(
+        bm,
+        new_faces,
+        source_face,
+        default_material,
+        uv_layer,
+        ppm,
+        me,
+        obj,
+    )
 
     # Diagnostic: check for zero-area UVs after box creation
     if uv_layer is not None:
@@ -384,13 +417,14 @@ def _create_plane(bm, origin, axis1, dim1, axis2, dim2, local_view_forward):
         return []
 
 
-def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
+def _apply_material_and_uvs(
+        bm, new_faces, source_face, default_material, uv_layer, ppm, me, obj):
     """Apply material and UVs to newly created faces.
 
     If a selected active face exists: copy its material and use set_uv_from_other_face
     (alt-click style projection).
 
-    Otherwise: use the active image to find/create a material and apply default UVs.
+    Otherwise: use the resolved default material and apply default UVs.
     """
     if (source_face is not None and source_face.is_valid
             and not source_face.hide and uv_layer is not None):
@@ -407,11 +441,7 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
                 debug_log(f"[BoxBuilder] set_uv_from_other_face FAILED for face {face.index} "
                           f"(source face {source_face.index}, source area={source_face.calc_area():.6f})")
     else:
-        # Default: use active image, falling back to previous image
-        image = get_active_image()
-        if image is None:
-            image = get_previous_image()
-        if image is None:
+        if default_material is None:
             for face in new_faces:
                 if not face.is_valid:
                     continue
@@ -424,18 +454,13 @@ def _apply_material_and_uvs(bm, new_faces, source_face, uv_layer, ppm, me, obj):
                 cache_single_face(face, bm, ppm, me)
             return
 
-        # Find or create material for this image
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
-
-        mat_idx = ensure_material_slot(me, mat)
+        mat_idx = ensure_material_slot(me, default_material)
 
         for face in new_faces:
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            face_aligned_project(face, uv_layer, mat, ppm)
+            face_aligned_project(face, uv_layer, default_material, ppm)
             cache_single_face(face, bm, ppm, me)
 
 
@@ -509,6 +534,15 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
 
     bm.normal_update()
 
+    try:
+        material = _active_or_previous_material()
+    except MaterialMappingConflictError as exc:
+        bm.free()
+        return (
+            False,
+            f"{exc}. Use Fix Material Mappings (Shift-4).",
+        )
+
     # Create new mesh data and object
     base_name = "Anvil.Plane" if is_plane else "Anvil.Box"
     data_block_name = _next_box_builder_datablock_name(base_name, name_suffix)
@@ -535,15 +569,8 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
         me.uv_layers.new(name="UVMap")
 
     # Apply material and UVs via edit mode (apply_uv_to_face requires edit mesh)
-    image = get_active_image()
-    if image is None:
-        image = get_previous_image()
-    if image is not None:
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
-
-        mat_idx = ensure_material_slot(me, mat)
+    if material is not None:
+        mat_idx = ensure_material_slot(me, material)
 
         bpy.ops.object.mode_set(mode='EDIT')
 
@@ -558,7 +585,7 @@ def execute_box_builder_object_mode(first_vertex, second_vertex, depth,
             if not face.is_valid:
                 continue
             face.material_index = mat_idx
-            face_aligned_project(face, uv_layer, mat, ppm)
+            face_aligned_project(face, uv_layer, material, ppm)
             cache_single_face(face, bm_edit, ppm, me)
 
         bmesh.update_edit_mesh(me)

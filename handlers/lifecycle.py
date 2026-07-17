@@ -284,6 +284,9 @@ def _make_prefab_library_paths_relative():
 def on_save_pre(dummy):
     """Handler called before saving a .blend file."""
     set_was_first_save(not bpy.data.filepath)
+    if not bpy.data.filepath:
+        for scene in bpy.data.scenes:
+            scene.anvil_material_mapping_prompt_handled = True
 
     if bpy.data.filepath:
         print("Anvil Level Design: Making all paths relative (pre save)", flush=True)
@@ -357,3 +360,8 @@ def on_load_post(dummy):
     bpy.app.timers.register(subscribe_object_mode, first_interval=0.1)
     bpy.app.timers.register(_clear_file_loaded_flag, first_interval=1.0)
     _migrate_legacy_uv_lock()
+    try:
+        from ..operators.material_mappings import schedule_material_mapping_prompt
+        schedule_material_mapping_prompt()
+    except (AttributeError, RuntimeError):
+        pass

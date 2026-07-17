@@ -10,12 +10,13 @@ from ..core.library import is_library_object
 from ..core.face_id import get_face_id_layer, save_face_selection, restore_face_selection
 from ..core.geometry import normalize_offset
 from ..core.materials import (
-    find_material_with_image,
-    create_material_with_image,
+    MaterialMappingConflictError,
     ensure_material_slot,
     get_unassigned_material,
+    is_unassigned_material,
     get_texture_dimensions_from_material,
     get_image_from_material,
+    resolve_material_for_image,
 )
 from ..core.uv_projection import get_face_local_axes, derive_transform_from_uvs, apply_uv_to_face
 from ..core.hotspot_queries import (
@@ -618,12 +619,17 @@ def _invoke_apply_setup(op, context, event):
         else None
     )
     source_image = get_image_from_material(source_mat)
-    source_is_unassigned = source_image is None
+    source_is_unassigned = source_mat is None or is_unassigned_material(source_mat)
+    source_is_unmanaged = (
+        source_mat is not None
+        and source_image is None
+        and not source_is_unassigned
+    )
 
-    image = get_active_image()
-    if not image and not source_is_unassigned:
+    image = None if source_is_unmanaged or source_is_unassigned else get_active_image()
+    if image is None and not source_is_unmanaged and not source_is_unassigned:
         image = source_image
-    if not image and not source_is_unassigned:
+    if image is None and not source_is_unmanaged and not source_is_unassigned:
         debug_log("[ApplyImage] PASS_THROUGH: no active image")
         return {'PASS_THROUGH'}
 
@@ -643,10 +649,17 @@ def _invoke_apply_setup(op, context, event):
 
     if source_is_unassigned:
         mat = get_unassigned_material()
+    elif source_is_unmanaged:
+        mat = source_mat
     else:
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
+        try:
+            mat = resolve_material_for_image(image)
+        except MaterialMappingConflictError as exc:
+            op.report(
+                {'ERROR'},
+                f"{exc}. Use Fix Material Mappings (Shift-4).",
+            )
+            return {'CANCELLED'}
     op._mat = mat
     op._mat_index = ensure_material_slot(obj.data, mat)
 
@@ -1051,7 +1064,8 @@ def _paint_sample_uv_transform_impl(op, context, mouse_2d, region, rv3d):
 def _pick_source_from_cursor(op, context, event):
     """Raycast to find source face under cursor. Shared by pick operators.
 
-    Returns (hit_obj, hit_face_index, image) on success,
+    Returns the hit object, face index, exact material, selected target faces,
+    and target edit BMesh on success,
     or sets op.report and returns None on failure.
     """
     edit_obj = context.object
@@ -1151,9 +1165,7 @@ def _pick_source_from_cursor(op, context, event):
 
     hit_me = hit_obj.data
     hit_mat = hit_me.materials[hit_mat_index] if hit_mat_index < len(hit_me.materials) else None
-    image = get_image_from_material(hit_mat)
-
-    return hit_obj, hit_face_index, image, selected_faces, bm_edit
+    return hit_obj, hit_face_index, hit_mat, selected_faces, bm_edit
 
 
 def _get_cross_object_pick_source(hit_obj, hit_face_index):
@@ -1369,7 +1381,8 @@ class pick_image_from_face(Operator):
         pick_result = _pick_source_from_cursor(self, context, event)
         if pick_result is None:
             return {'PASS_THROUGH'}
-        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+        hit_obj, hit_face_index, mat, selected_faces, bm_edit = pick_result
+        image = get_image_from_material(mat)
 
         edit_obj = context.object
         me = edit_obj.data
@@ -1380,7 +1393,7 @@ class pick_image_from_face(Operator):
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
-        if image is None:
+        if mat is None or is_unassigned_material(mat):
             _assign_unassigned_material_to_faces(selected_faces, me)
             bmesh.update_edit_mesh(me)
             update_ui_from_selection(context)
@@ -1398,9 +1411,6 @@ class pick_image_from_face(Operator):
                 any_connected_has_hotspot = True
                 break
 
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
         _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
         mat_index = ensure_material_slot(me, mat)
 
@@ -1422,7 +1432,9 @@ class pick_image_from_face(Operator):
             )
             _source_to_target = edit_obj.matrix_world.inverted() @ hit_obj.matrix_world
 
-        new_is_hotspottable = is_texture_hotspottable(image.name)
+        new_is_hotspottable = (
+            image is not None and is_texture_hotspottable(image.name)
+        )
 
         if edit_obj.anvil_auto_hotspot and new_is_hotspottable:
             all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
@@ -1446,7 +1458,8 @@ class pick_image_from_face(Operator):
                     if face.is_valid:
                         cache_single_face(face, bm_edit, ppm, me)
         else:
-            if (edit_obj.anvil_auto_hotspot and not new_is_hotspottable
+            if (image is not None
+                    and edit_obj.anvil_auto_hotspot and not new_is_hotspottable
                     and any_previous_was_hotspottable and any_connected_has_hotspot):
                 all_hotspot_faces = get_all_hotspot_faces(bm_edit, me)
 
@@ -1486,9 +1499,11 @@ class pick_image_from_face(Operator):
 
         update_ui_from_selection(context)
         update_active_image_from_face(context)
-        set_previous_image(image)
+        if image is not None:
+            set_previous_image(image)
         redraw_ui_panels(context)
-        self.report({'INFO'}, f"Applied: {image.name}")
+        applied_name = image.name if image is not None else mat.name
+        self.report({'INFO'}, f"Applied: {applied_name}")
 
         return {'FINISHED'}
 
@@ -1514,7 +1529,8 @@ class stretch_pick_image_from_face(Operator):
         pick_result = _pick_source_from_cursor(self, context, event)
         if pick_result is None:
             return {'PASS_THROUGH'}
-        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+        hit_obj, hit_face_index, mat, selected_faces, bm_edit = pick_result
+        image = get_image_from_material(mat)
 
         edit_obj = context.object
         me = edit_obj.data
@@ -1525,7 +1541,7 @@ class stretch_pick_image_from_face(Operator):
         props = context.scene.level_design_props
         ppm = props.pixels_per_meter
 
-        if image is None:
+        if mat is None or is_unassigned_material(mat):
             _assign_unassigned_material_to_faces(selected_faces, me)
             bmesh.update_edit_mesh(me)
             update_ui_from_selection(context)
@@ -1534,9 +1550,6 @@ class stretch_pick_image_from_face(Operator):
             self.report({'INFO'}, "Unassigned material")
             return {'FINISHED'}
 
-        mat = find_material_with_image(image)
-        if mat is None:
-            mat = create_material_with_image(image)
         _reserve_unassigned_slot_for_partial_materialless_apply(selected_faces, bm_edit, me)
         mat_index = ensure_material_slot(me, mat)
 
@@ -1575,9 +1588,11 @@ class stretch_pick_image_from_face(Operator):
 
         update_ui_from_selection(context)
         update_active_image_from_face(context)
-        set_previous_image(image)
+        if image is not None:
+            set_previous_image(image)
         redraw_ui_panels(context)
-        self.report({'INFO'}, f"Stretch applied: {image.name}")
+        applied_name = image.name if image is not None else mat.name
+        self.report({'INFO'}, f"Stretch applied: {applied_name}")
 
         return {'FINISHED'}
 
@@ -1647,7 +1662,7 @@ class pick_uv_transform_from_face(Operator):
         pick_result = _pick_source_from_cursor(self, context, event)
         if pick_result is None:
             return {'PASS_THROUGH'}
-        hit_obj, hit_face_index, image, selected_faces, bm_edit = pick_result
+        hit_obj, hit_face_index, _material, selected_faces, bm_edit = pick_result
 
         edit_obj = context.object
         me = edit_obj.data

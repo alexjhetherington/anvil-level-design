@@ -1,4 +1,5 @@
 from . import texture_apply
+from . import image_creation
 from . import hotspot_apply
 from . import face_uv_mode
 from . import grid_snapping_mode
@@ -8,6 +9,7 @@ from . import ortho_navigation
 from . import glb_export
 from . import gltf_export_extension
 from . import material_tools
+from . import material_mappings
 from . import pixels_per_meter
 from . import modal_draw
 from . import cube_cut
@@ -31,6 +33,7 @@ from .. import texture_browser
 
 def register():
     texture_apply.register()
+    image_creation.register()
     hotspot_apply.register()
     face_uv_mode.register()
     grid_snapping_mode.register()
@@ -40,6 +43,7 @@ def register():
     glb_export.register()
     gltf_export_extension.register()
     material_tools.register()
+    material_mappings.register()
     pixels_per_meter.register()
     modal_draw.register()
     cube_cut.register()
@@ -81,6 +85,7 @@ def unregister():
     cube_cut.unregister()
     modal_draw.unregister()
     pixels_per_meter.unregister()
+    material_mappings.unregister()
     material_tools.unregister()
     gltf_export_extension.unregister()
     glb_export.unregister()
@@ -90,4 +95,5 @@ def unregister():
     grid_snapping_mode.unregister()
     face_uv_mode.unregister()
     hotspot_apply.unregister()
+    image_creation.unregister()
     texture_apply.unregister()

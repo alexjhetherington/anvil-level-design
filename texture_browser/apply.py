@@ -13,10 +13,9 @@ from ..core.library import is_library_object
 from ..core.logging import debug_log
 from ..core.materials import (
     get_image_from_material,
-    find_material_with_image,
-    create_material_with_image,
     get_unassigned_material,
     ensure_material_slot,
+    resolve_material_for_image,
 )
 from ..core.uv_layers import get_render_active_uv_layer
 from ..core.uv_projection import face_aligned_project, apply_uv_to_face, derive_transform_from_uvs
@@ -26,9 +25,6 @@ from ..handlers.face_cache import cache_single_face
 
 def apply_texture_path_to_selection(filepath, obj, mode, scene):
     """Apply an image and return it with the number of faces textured."""
-    from ..hotspot_mapping.json_storage import is_texture_hotspottable
-    from ..operators.hotspot_apply import apply_hotspots_to_mesh
-
     if not filepath:
         return None, 0
 
@@ -41,22 +37,41 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
         return None, 0
 
     set_previous_image(image)
+    material = resolve_material_for_image(image)
+    applied_face_count = apply_material_to_selection(
+        material,
+        obj,
+        mode,
+        scene,
+    )
+    return image, applied_face_count
+
+
+def apply_material_to_selection(material, obj, mode, scene):
+    """Apply an exact material datablock to the target mesh faces."""
+    from ..hotspot_mapping.json_storage import is_texture_hotspottable
+    from ..operators.hotspot_apply import apply_hotspots_to_mesh
+
+    if material is None:
+        return 0
+
+    image = get_image_from_material(material)
 
     if not obj or obj.type != 'MESH':
-        return image, 0
+        return 0
 
     if is_library_object(obj):
         debug_log(f"[TextureBrowser] skipped library object: {obj.name}")
-        return image, 0
+        return 0
 
     in_edit_mode = (mode == 'EDIT_MESH')
     in_object_mode = (mode == 'OBJECT')
 
     if not in_edit_mode and not in_object_mode:
-        return image, 0
+        return 0
 
     if in_object_mode and not obj.select_get():
-        return image, 0
+        return 0
 
     bm = bmesh.from_edit_mesh(obj.data)
 
@@ -72,7 +87,7 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
     else:
         selected_faces = list(bm.faces)
     if not selected_faces:
-        return image, 0
+        return 0
 
     props = scene.level_design_props
     ppm = props.pixels_per_meter
@@ -88,10 +103,6 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
             any_connected_has_hotspot = True
             break
 
-    mat = find_material_with_image(image)
-    if mat is None:
-        mat = create_material_with_image(image)
-
     if in_edit_mode and len(obj.data.materials) == 0 and len(selected_faces) < len(bm.faces):
         obj.data.materials.append(get_unassigned_material())
 
@@ -106,12 +117,14 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
             'transform': derive_transform_from_uvs(f, uv_layer, ppm, obj.data),
         }
 
-    mat_index = ensure_material_slot(obj.data, mat)
+    mat_index = ensure_material_slot(obj.data, material)
 
     for target_face in selected_faces:
         target_face.material_index = mat_index
 
-    new_is_hotspottable = is_texture_hotspottable(image.name)
+    new_is_hotspottable = (
+        image is not None and is_texture_hotspottable(image.name)
+    )
 
     if obj.anvil_auto_hotspot and new_is_hotspottable:
         all_hotspot_faces = get_all_hotspot_faces(bm, obj.data)
@@ -158,13 +171,29 @@ def apply_texture_path_to_selection(filepath, obj, mode, scene):
                 if face.is_valid:
                     cache_single_face(face, bm, ppm, obj.data)
 
-        _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, bm)
+        _apply_regular_uv_projection(
+            selected_faces,
+            uv_layer,
+            material,
+            ppm,
+            obj.data,
+            face_old_info,
+            bm,
+        )
     else:
-        _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, obj.data, face_old_info, bm)
+        _apply_regular_uv_projection(
+            selected_faces,
+            uv_layer,
+            material,
+            ppm,
+            obj.data,
+            face_old_info,
+            bm,
+        )
 
     bmesh.update_edit_mesh(obj.data)
 
-    return image, len(selected_faces)
+    return len(selected_faces)
 
 
 def _apply_regular_uv_projection(selected_faces, uv_layer, mat, ppm, me, face_old_info, bm):
