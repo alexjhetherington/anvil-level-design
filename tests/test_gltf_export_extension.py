@@ -280,6 +280,10 @@ def _mesh_name_for_node(gltf_data, node_name):
     return _mesh_names(gltf_data)[mesh_index]
 
 
+def _mesh_index_for_node(gltf_data, node_name):
+    return _node_for_name(gltf_data, node_name).get("mesh")
+
+
 def _node_scale(gltf_data, node_name):
     return _node_for_name(gltf_data, node_name).get("scale")
 
@@ -429,6 +433,111 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
         )
         self.assertEqual(scene.level_design_props.last_export_filepath, filepath)
 
+    def _run_scale_linked_duplicate_export_route_test(self, route):
+        scene = bpy.context.scene
+        scene.name = "Scene"
+        collection = _create_export_collection(scene)
+        obj = _create_triangle_object(collection, "ScaleBlock", "ScaleBlockMesh")
+        linked_obj = _create_linked_duplicate(collection, obj, "ScaleBlockLinked")
+        linked_obj.scale = (3.0, 3.0, 3.0)
+        _set_anvil_export_settings(scene, 2.0, False, False)
+
+        filepath, gltf_data = _export_using_route(
+            route,
+            collection,
+            f"matrix_scale_linked_duplicate_{route}.gltf",
+        )
+
+        _assert_export_names(
+            self,
+            gltf_data,
+            [_expected_scene_name_for_route(route)],
+            [obj.name, linked_obj.name],
+            ["ScaleBlockMesh"],
+        )
+        self.assertEqual(len(gltf_data.get("meshes", [])), 1)
+        self.assertEqual(
+            _mesh_index_for_node(gltf_data, obj.name),
+            _mesh_index_for_node(gltf_data, linked_obj.name),
+        )
+        self.assertIsNone(_node_scale(gltf_data, obj.name))
+        self.assertEqual(_node_scale(gltf_data, linked_obj.name), [3.0, 3.0, 3.0])
+        _assert_mesh_position_bounds(
+            self,
+            gltf_data,
+            "ScaleBlockMesh",
+            [0.0, 0.0, -2.0],
+            [2.0, 0.0, 0.0],
+        )
+        self.assertEqual(scene.level_design_props.last_export_filepath, filepath)
+
+    def _run_scale_linked_prefab_instances_export_route_test(self, route):
+        scene = bpy.context.scene
+        scene.name = "Scene"
+        collection = _create_export_collection(scene)
+        library_path = _export_output_path(
+            f"matrix_scale_linked_prefab_instances_{route}.blend"
+        )
+        _write_plain_prefab_library(
+            library_path,
+            "PrefabScaleBlock",
+            "PrefabScaleBlockMesh",
+        )
+        library_index = _add_prefab_library_entry(
+            scene,
+            library_path,
+            "PrefabScaleBlock",
+        )
+        obj = _instantiate_prefab_for_export(
+            collection,
+            library_index,
+            "PrefabScaleBlock",
+        )
+        linked_obj = _instantiate_prefab_for_export(
+            collection,
+            library_index,
+            "PrefabScaleBlock",
+        )
+        linked_obj.scale = (3.0, 3.0, 3.0)
+        original_mesh_pointer = obj.data.as_pointer()
+        self.assertEqual(linked_obj.data.as_pointer(), original_mesh_pointer)
+        self.assertIsNotNone(obj.data.library)
+        self.assertIsNotNone(linked_obj.data.library)
+        _set_anvil_export_settings(scene, 2.0, False, False)
+
+        filepath, gltf_data = _export_using_route(
+            route,
+            collection,
+            f"matrix_scale_linked_prefab_instances_{route}.gltf",
+        )
+
+        _assert_export_names(
+            self,
+            gltf_data,
+            [_expected_scene_name_for_route(route)],
+            [obj.name, linked_obj.name],
+            ["PrefabScaleBlockMesh"],
+        )
+        self.assertEqual(len(gltf_data.get("meshes", [])), 1)
+        self.assertEqual(
+            _mesh_index_for_node(gltf_data, obj.name),
+            _mesh_index_for_node(gltf_data, linked_obj.name),
+        )
+        self.assertIsNone(_node_scale(gltf_data, obj.name))
+        self.assertEqual(_node_scale(gltf_data, linked_obj.name), [3.0, 3.0, 3.0])
+        _assert_mesh_position_bounds(
+            self,
+            gltf_data,
+            "PrefabScaleBlockMesh",
+            [8.0, 0.0, -2.0],
+            [10.0, 0.0, 0.0],
+        )
+        self.assertEqual(obj.data.as_pointer(), original_mesh_pointer)
+        self.assertEqual(linked_obj.data.as_pointer(), original_mesh_pointer)
+        self.assertIsNotNone(obj.data.library)
+        self.assertIsNotNone(linked_obj.data.library)
+        self.assertEqual(scene.level_design_props.last_export_filepath, filepath)
+
     def _run_apply_modifiers_export_route_test(self, route):
         scene = bpy.context.scene
         scene.name = "Scene"
@@ -548,9 +657,13 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
             _mesh_name_for_node(gltf_data, plain_obj_2.name),
             "PrefabPlainBlockMesh",
         )
+        self.assertEqual(
+            _mesh_index_for_node(gltf_data, plain_obj.name),
+            _mesh_index_for_node(gltf_data, plain_obj_2.name),
+        )
         self.assertIsNone(_node_scale(gltf_data, modifier_obj.name))
-        self.assertEqual(_node_scale(gltf_data, plain_obj.name), [2.0, 2.0, 2.0])
-        self.assertEqual(_node_scale(gltf_data, plain_obj_2.name), [2.0, 2.0, 2.0])
+        self.assertIsNone(_node_scale(gltf_data, plain_obj.name))
+        self.assertIsNone(_node_scale(gltf_data, plain_obj_2.name))
         _assert_mesh_position_bounds(
             self,
             gltf_data,
@@ -562,8 +675,8 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
             self,
             gltf_data,
             "PrefabPlainBlockMesh",
-            [4.0, 0.0, -1.0],
-            [5.0, 0.0, 0.0],
+            [8.0, 0.0, -2.0],
+            [10.0, 0.0, 0.0],
         )
         self.assertEqual(modifier_obj.data.as_pointer(), original_modifier_mesh_pointer)
         self.assertEqual(len(modifier_obj.modifiers), 1)
@@ -630,6 +743,18 @@ class GltfExportFeatureMatrixTest(AnvilTestCase):
 
     def test_gltf_anvil_scale_collection_export_route_writes_original_names_and_scaled_geometry(self):
         self._run_scale_export_route_test(COLLECTION_EXPORT_ROUTE)
+
+    def test_gltf_anvil_scale_full_export_route_with_linked_duplicate_applies_scale_once_and_preserves_shared_mesh(self):
+        self._run_scale_linked_duplicate_export_route_test(FULL_EXPORT_ROUTE)
+
+    def test_gltf_anvil_scale_collection_export_route_with_linked_duplicate_applies_scale_once_and_preserves_shared_mesh(self):
+        self._run_scale_linked_duplicate_export_route_test(COLLECTION_EXPORT_ROUTE)
+
+    def test_gltf_anvil_scale_full_export_route_with_linked_prefab_instances_bakes_scale_once_and_preserves_shared_mesh_and_source_links(self):
+        self._run_scale_linked_prefab_instances_export_route_test(FULL_EXPORT_ROUTE)
+
+    def test_gltf_anvil_scale_collection_export_route_with_linked_prefab_instances_bakes_scale_once_and_preserves_shared_mesh_and_source_links(self):
+        self._run_scale_linked_prefab_instances_export_route_test(COLLECTION_EXPORT_ROUTE)
 
     def test_gltf_anvil_apply_modifiers_full_export_route_writes_original_names_and_applied_geometry(self):
         self._run_apply_modifiers_export_route_test(FULL_EXPORT_ROUTE)

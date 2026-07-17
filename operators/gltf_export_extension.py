@@ -1,7 +1,9 @@
+import math
 import os
 
 import bmesh
 import bpy
+from mathutils import Vector
 
 from ..core.materials import (
     get_image_from_material,
@@ -218,6 +220,7 @@ def _prepare_export_scene(scene, material_scope_collection, props, original_name
     prefab_object_pointers, linked_prefab_object_pointers = _materialize_linked_prefab_meshes_for_export(
         scene,
         props.gltf_anvil_apply_modifiers,
+        props.gltf_anvil_scale,
         original_names_by_pointer,
     )
     _apply_modifiers(scene, props.gltf_anvil_apply_modifiers)
@@ -833,10 +836,12 @@ def _apply_modifiers(scene, enabled):
 def _materialize_linked_prefab_meshes_for_export(
         scene,
         apply_modifiers,
+        scale,
         original_names_by_pointer):
     prefab_object_pointers = set()
     linked_prefab_object_pointers = set()
     prefab_library_paths = _scene_prefab_library_paths(scene)
+    local_meshes_by_linked_mesh_pointer = {}
 
     for obj in list(scene.objects):
         if not _is_linked_prefab_mesh_export_target(obj, prefab_library_paths):
@@ -854,9 +859,46 @@ def _materialize_linked_prefab_meshes_for_export(
                 original_names_by_pointer,
             )
         else:
-            linked_prefab_object_pointers.add(obj.as_pointer())
+            if not math.isclose(scale, 1.0, rel_tol=1e-6):
+                _localize_prefab_mesh_for_export(
+                    obj,
+                    local_meshes_by_linked_mesh_pointer,
+                    original_names_by_pointer,
+                )
+            if obj.data.library is not None:
+                linked_prefab_object_pointers.add(obj.as_pointer())
 
     return prefab_object_pointers, linked_prefab_object_pointers
+
+
+def _localize_prefab_mesh_for_export(
+        obj,
+        local_meshes_by_linked_mesh_pointer,
+        original_names_by_pointer):
+    linked_mesh = obj.data
+    if linked_mesh is None or linked_mesh.library is None:
+        return
+
+    linked_mesh_pointer = linked_mesh.as_pointer()
+    local_mesh = local_meshes_by_linked_mesh_pointer.get(linked_mesh_pointer)
+    if local_mesh is None:
+        mesh_export_name = _mesh_export_name_for_data(
+            linked_mesh,
+            original_names_by_pointer,
+        )
+        local_mesh = linked_mesh.copy()
+        local_mesh.name = mesh_export_name
+        local_meshes_by_linked_mesh_pointer[linked_mesh_pointer] = local_mesh
+        _store_original_export_name(
+            local_mesh,
+            mesh_export_name,
+            original_names_by_pointer,
+        )
+        debug_log(
+            f"[glTF Anvil]   Created local export mesh for linked prefab data {mesh_export_name}"
+        )
+
+    obj.data = local_mesh
 
 
 def _ensure_prefab_export_object_is_writable(scene, obj, original_names_by_pointer):
@@ -1047,12 +1089,15 @@ def _remove_replaced_local_mesh(mesh):
 
 
 def _apply_scale(scene, scale, linked_prefab_object_pointers):
-    import math
-
     if math.isclose(scale, 1.0, rel_tol=1e-6):
         return
 
     debug_log(f"[glTF Anvil] Applying scale: {scale}")
+
+    mesh_objects = [obj for obj in scene.objects if obj.type == 'MESH']
+    shared_mesh_pointers = _shared_mesh_pointers(mesh_objects)
+    scaled_shared_mesh_pointers = set()
+    export_scale_vec = Vector((scale, scale, scale))
 
     for obj in scene.objects:
         # Scale location relative to world origin
@@ -1062,17 +1107,19 @@ def _apply_scale(scene, scale, linked_prefab_object_pointers):
         scale_vec = obj.scale * scale
 
         if obj.type == 'MESH':
+            mesh = obj.data
             if obj.as_pointer() in linked_prefab_object_pointers:
                 obj.scale = scale_vec
                 continue
 
-            mesh = obj.data
-            bm = bmesh.new()
-            bm.from_mesh(mesh)
-            bmesh.ops.scale(bm, vec=scale_vec, verts=bm.verts)
-            bm.to_mesh(mesh)
-            bm.free()
-            mesh.update()
+            mesh_pointer = mesh.as_pointer()
+            if mesh_pointer in shared_mesh_pointers:
+                if mesh_pointer not in scaled_shared_mesh_pointers:
+                    _scale_mesh_vertices(mesh, export_scale_vec)
+                    scaled_shared_mesh_pointers.add(mesh_pointer)
+                continue
+
+            _scale_mesh_vertices(mesh, scale_vec)
 
         elif obj.type == 'CURVE':
             curve = obj.data
@@ -1098,6 +1145,15 @@ def _apply_scale(scene, scale, linked_prefab_object_pointers):
 
         # Reset scale to 1 since we baked it into the data
         obj.scale = (1.0, 1.0, 1.0)
+
+
+def _scale_mesh_vertices(mesh, scale_vec):
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.scale(bm, vec=scale_vec, verts=bm.verts)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
 
 
 def _separate_loose(scene, enabled, prefab_object_pointers):

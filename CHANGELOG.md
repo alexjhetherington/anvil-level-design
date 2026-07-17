@@ -1,5 +1,8 @@
 # Anvil Level Design Changelog
 
+# 1.8.1
+- Fix scaling for linked prefabs
+
 # 1.8.0
 - BREAKING CHANGE Images are now mapped to materials by *metadata* (materials can be freely edited and renamed)
     - See https://anvilleveldesign.com/docs/material-and-uv-management/#advanced---material-mapping for migrating existing files

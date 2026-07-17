@@ -263,6 +263,8 @@ class APIAvailabilityTest(AnvilTestCase):
                     missing.append("MeshLoopTriangle.loops")
             if not hasattr(mesh.materials, "clear"):
                 missing.append("Mesh.materials.clear")
+            if not hasattr(mesh, "copy"):
+                missing.append("Mesh.copy")
             if not hasattr(obj, "material_slots"):
                 missing.append("Object.material_slots")
             elif len(obj.material_slots) == 0:
