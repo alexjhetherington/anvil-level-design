@@ -3,9 +3,15 @@ import bpy
 from mathutils import Vector
 
 from ..core.uv_projection import derive_transform_from_uvs
+from ..handlers import set_active_image
+from ..operators.cylinder_builder.geometry import (
+    execute_cylinder_builder_object_mode,
+)
 from ..operators.cube_cut.geometry import execute_cube_cut
+from ..operators.profile_builder_geometry import CAP_MODE_NGON
 from .base_test import AnvilTestCase
 from .helpers import (
+    TEXTURE_PATH,
     create_textured_cube,
     add_uv_layer_box_project,
     edit_mesh_cache_is_current,
@@ -23,8 +29,117 @@ def _face_key(face):
             round(c.x, 2), round(c.y, 2), round(c.z, 2))
 
 
+def _vertex_position_key(vertex):
+    return tuple(round(value, 6) for value in vertex.co)
+
+
+def _face_vertex_key(face):
+    return frozenset(_vertex_position_key(vertex) for vertex in face.verts)
+
+
+def _face_uvs_by_vertex(face, uv_layer):
+    return {
+        _vertex_position_key(loop.vert): tuple(loop[uv_layer].uv)
+        for loop in face.loops
+    }
+
+
 class CubeCutTest(AnvilTestCase):
     """Test cube cut geometry and UV preservation."""
+
+    def test_cube_cut_through_textured_anvil_cylinder_preserves_untouched_side_face_uvs(self):
+        """Cut only the caps and preserve every original cylinder wall UV."""
+        image = bpy.data.images.load(TEXTURE_PATH, check_existing=True)
+        set_active_image(image)
+        pixels_per_meter = bpy.context.scene.level_design_props.pixels_per_meter
+
+        result = execute_cylinder_builder_object_mode(
+            Vector((0.0, 0.0, 0.0)),
+            2.0,
+            2.0,
+            3.0,
+            Vector((1.0, 0.0, 0.0)),
+            Vector((0.0, 1.0, 0.0)),
+            Vector((0.0, 0.0, 1.0)),
+            Vector((0.0, 0.0, -1.0)),
+            32,
+            'EDGES',
+            pixels_per_meter,
+            False,
+            CAP_MODE_NGON,
+            "",
+        )
+        self.assertTrue(result[0], result[1])
+
+        obj = bpy.context.active_object
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv[0]
+        side_faces_before = [
+            face for face in bm.faces
+            if len(face.verts) == 4 and abs(face.normal.z) < 0.5
+        ]
+        self.assertEqual(len(side_faces_before), 32)
+        original_side_uvs = {
+            _face_vertex_key(face): _face_uvs_by_vertex(face, uv_layer)
+            for face in side_faces_before
+        }
+
+        bm.select_mode = {'FACE'}
+        for face in bm.faces:
+            face.select = False
+        bmesh.update_edit_mesh(obj.data)
+
+        with bpy.context.temp_override(**ctx):
+            success, message = execute_cube_cut(
+                bpy.context,
+                Vector((-1.0, 0.0, 3.0)),
+                Vector((1.0, 1.0, 3.0)),
+                8.0,
+                Vector((1.0, 0.0, 0.0)),
+                Vector((0.0, 1.0, 0.0)),
+                Vector((0.0, 0.0, -1.0)),
+            )
+        self.assertTrue(success, message)
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv[0]
+        side_faces_after = [
+            face for face in bm.faces
+            if len(face.verts) == 4 and abs(face.normal.z) < 0.5
+        ]
+        side_keys_after = {_face_vertex_key(face) for face in side_faces_after}
+        mismatched_side_faces = []
+        for face in side_faces_after:
+            face_key = _face_vertex_key(face)
+            expected_uvs = original_side_uvs.get(face_key)
+            if expected_uvs is None:
+                continue
+            actual_uvs = _face_uvs_by_vertex(face, uv_layer)
+            if any(
+                    abs(actual_uvs[position][axis] - expected_uvs[position][axis])
+                    > 1e-6
+                    for position in expected_uvs
+                    for axis in range(2)):
+                mismatched_side_faces.append(face_key)
+
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()
+
+        self.assertEqual(len(side_faces_after), 32)
+        self.assertEqual(side_keys_after, set(original_side_uvs))
+        self.assertEqual(
+            mismatched_side_faces,
+            [],
+            f"Cube Cut changed UVs on {len(mismatched_side_faces)} untouched side faces",
+        )
 
     def test_cube_cut_through_hole(self):
         """Cut a hole through a textured cube and verify UVs on remaining faces."""

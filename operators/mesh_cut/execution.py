@@ -455,7 +455,6 @@ def execute_prism_cut_with_face_reconstruction(
         # After join_triangles, a resulting face may span two original n-gons
         # (e.g. merging triangles across a shared edge). We re-project its UVs
         # from the original n-gon whose vertices contain all of the result's vertices.
-        uv_layer = bm.loops.layers.uv.active
         all_layers = get_all_uv_layers(bm, me)
         ngon_uv_data = []  # list of (vert_set, {layer_name: proj}, material_index)
         for face in faces_to_quadrilate:
@@ -469,33 +468,34 @@ def execute_prism_cut_with_face_reconstruction(
         # Triangulate the n-gons first
         result = bmesh.ops.triangulate(bm, faces=faces_to_quadrilate)
         new_tris = result['faces']
+        quadrangulation_result_faces = {
+            face for face in new_tris
+            if face_is_available(face)
+        }
         debug_log(f"[CubeCut] Triangulated into {len(new_tris)} triangles")
 
         # Join triangles into quads where possible
         if new_tris:
-            bmesh.ops.join_triangles(
+            join_result = bmesh.ops.join_triangles(
                 bm,
                 faces=new_tris,
                 angle_face_threshold=3.14159,  # ~180 degrees - allow any face angle
                 angle_shape_threshold=3.14159  # ~180 degrees - allow any shape
             )
+            quadrangulation_result_faces.update(
+                face for face in join_result.get('faces', [])
+                if face_is_available(face)
+            )
             debug_log(f"[CubeCut] Joined triangles into quads where possible")
 
         # Re-project UVs on faces whose vertices span multiple original n-gons.
-        # Collect all faces that now exist in the n-gon vertex regions.
-        # A face is a "result" of step 6 if all its verts belong to the union
-        # of n-gon vert sets. Among those, only fix faces that span multiple
-        # original n-gons (cross-boundary joins).
-        all_ngon_verts = set()
-        for ngon_verts, _, _ in ngon_uv_data:
-            all_ngon_verts |= ngon_verts
-
-        for face in bm.faces:
+        # Restrict this to faces explicitly returned by the triangulate/join
+        # operations. Other mesh faces can share vertices with these source
+        # n-gons without having participated in quadrangulation.
+        for face in quadrangulation_result_faces:
             if not face_is_available(face):
                 continue
             face_verts = set(face.verts)
-            if not face_verts <= all_ngon_verts:
-                continue  # Has verts outside all n-gons, not a step 6 result
             # Find which original n-gon(s) contain this face's vertices
             containing = [data for data in ngon_uv_data if face_verts <= data[0]]
             if len(containing) >= 1:
