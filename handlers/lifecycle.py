@@ -75,6 +75,14 @@ def set_was_first_save(value):
     _was_first_save = value
 
 
+def reset():
+    """Reset transient lifecycle state when handlers are unregistered."""
+    global _file_loaded_into_edit_depsgraph, _undo_in_progress, _was_first_save
+    _file_loaded_into_edit_depsgraph = False
+    _undo_in_progress = False
+    _was_first_save = False
+
+
 def _clear_file_loaded_flag():
     """Clear the file loaded flag after timeout."""
     global _file_loaded_into_edit_depsgraph

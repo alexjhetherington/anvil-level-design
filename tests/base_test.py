@@ -34,7 +34,7 @@ def _purge_all():
     )
     from ..core.materials import reset_duplicate_material_consolidation
     from ..handlers.cross_object_undo import reset as reset_cross_object_undo
-    from ..handlers.lifecycle import set_undo_in_progress
+    from ..handlers.lifecycle import reset as reset_lifecycle
 
     # Clear handler state that holds references to Blender data blocks
     # before removing the data, preventing dangling pointer access.
@@ -47,7 +47,7 @@ def _purge_all():
     uv_world_scale._tracked_modal_operators = set()
     from ..handlers import depsgraph as _depsgraph_mod
     _depsgraph_mod._last_cleaned_spin_fingerprint = None
-    set_undo_in_progress(False)
+    reset_lifecycle()
     reset_cross_object_undo()
 
     from ..operators.pending_mesh_action import reset_runtime_state
