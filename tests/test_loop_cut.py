@@ -3,10 +3,11 @@ import bpy
 from mathutils import Vector
 
 from ..core.uv_projection import apply_uv_to_face
+from ..core.uv_projection import compute_uv_projection_from_face
 from ..core.uv_projection import derive_transform_from_uvs
 from .base_test import AnvilTestCase
 from .helpers import (
-    create_vertical_plane, edit_mesh_cache_is_current,
+    create_textured_cube, create_vertical_plane, edit_mesh_cache_is_current,
     wait_for_condition, _get_context_override,
 )
 
@@ -102,8 +103,258 @@ def _find_loop_cut_edges(bm):
     return loop_edges
 
 
+def _select_only_edges(bm, edges):
+    """Select only the supplied edges in edge-select mode."""
+    bm.select_mode = {'EDGE'}
+    for vertex in bm.verts:
+        vertex.select_set(False)
+    for edge in bm.edges:
+        edge.select_set(False)
+    for face in bm.faces:
+        face.select_set(False)
+    for edge in edges:
+        edge.select_set(True)
+    bm.select_flush_mode()
+
+
+def _execute_centered_loop_cut(test_case, bm, edge, mesh):
+    """Run Blender's loop-cut operator on one edge without sliding it."""
+    bm.edges.index_update()
+    edge_index = edge.index
+    bmesh.update_edit_mesh(mesh)
+    with bpy.context.temp_override(**test_case._get_3d_view_context()):
+        result = bpy.ops.mesh.loopcut(
+            number_cuts=1,
+            smoothness=0.0,
+            object_index=0,
+            edge_index=edge_index,
+            mesh_select_mode_init=(False, True, False),
+        )
+    test_case.assertEqual(result, {'FINISHED'})
+
+
+def _vertex_position_key(vertex):
+    return tuple(round(value, 6) for value in vertex.co)
+
+
+def _face_uvs_by_vertex(face, uv_layer):
+    return {
+        _vertex_position_key(loop.vert): tuple(loop[uv_layer].uv)
+        for loop in face.loops
+    }
+
+
+def _projected_uvs_by_vertex(face, projection):
+    u_axis, v_axis, origin_uv, origin_pos, _source_normal = projection
+    return {
+        _vertex_position_key(vertex): (
+            origin_uv.x + (vertex.co - origin_pos).dot(u_axis),
+            origin_uv.y + (vertex.co - origin_pos).dot(v_axis),
+        )
+        for vertex in face.verts
+    }
+
+
 class LoopCutTest(AnvilTestCase):
     """Test loop cut UV preservation across faces with different rotations."""
+
+    def test_dissolve_middle_edge_after_plane_loop_cut_preserves_face_uvs(self):
+        """Dissolving a plane loop cut preserves the pre-dissolve UV mapping."""
+        obj = create_vertical_plane("loop_cut_dissolve_plane")
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        for vertex in bm.verts:
+            vertex.co.y = vertex.co.z
+            vertex.co.z = 0.0
+        bm.normal_update()
+        bmesh.update_edit_mesh(obj.data)
+        self.refresh_face_cache()
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv[0]
+        source_projection = compute_uv_projection_from_face(
+            bm.faces[0],
+            uv_layer,
+        )
+        self.assertIsNotNone(source_projection)
+        horizontal_edges = [
+            edge for edge in bm.edges
+            if abs(edge.verts[0].co.y - edge.verts[1].co.y) < 1e-6
+            and abs(edge.verts[0].co.z - edge.verts[1].co.z) < 1e-6
+            and abs(edge.verts[0].co.x - edge.verts[1].co.x) > 0.9
+        ]
+        self.assertEqual(len(horizontal_edges), 2)
+        _execute_centered_loop_cut(
+            self,
+            bm,
+            horizontal_edges[0],
+            obj.data,
+        )
+        yield from wait_for_condition(
+            lambda: (
+                edit_mesh_cache_is_current()
+                and len(bmesh.from_edit_mesh(obj.data).faces) == 2
+            ),
+            "Plane loop cut and UV projection did not finish",
+        )
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        middle_edges = [
+            edge for edge in bm.edges
+            if all(abs(vertex.co.x - 0.5) < 1e-6 for vertex in edge.verts)
+            and all(abs(vertex.co.z) < 1e-6 for vertex in edge.verts)
+            and abs(edge.verts[0].co.y - edge.verts[1].co.y) > 0.9
+        ]
+        self.assertEqual(len(middle_edges), 1)
+        _select_only_edges(bm, middle_edges)
+        bmesh.update_edit_mesh(obj.data)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.dissolve_edges(
+                use_verts=True,
+                use_face_split=False,
+            )
+        yield from wait_for_condition(
+            lambda: (
+                edit_mesh_cache_is_current()
+                and len(bmesh.from_edit_mesh(obj.data).faces) == 1
+            ),
+            "Plane edge dissolve and UV projection did not finish",
+        )
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        uv_layer = bm.loops.layers.uv[0]
+        self.assertEqual(len(bm.faces), 1)
+        actual_uvs = _face_uvs_by_vertex(bm.faces[0], uv_layer)
+        expected_uvs = _projected_uvs_by_vertex(
+            bm.faces[0],
+            source_projection,
+        )
+        mismatched_vertices = [
+            position for position, expected_uv in expected_uvs.items()
+            if any(
+                abs(actual_uvs[position][axis] - expected_uv[axis]) > 1e-6
+                for axis in range(2)
+            )
+        ]
+
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()
+
+        self.assertEqual(set(actual_uvs), set(expected_uvs))
+        self.assertEqual(
+            mismatched_vertices,
+            [],
+            "Dissolving the plane loop-cut edge changed the face UV mapping",
+        )
+
+    def test_dissolve_top_middle_edge_after_cube_loop_cut_preserves_top_face_uvs(self):
+        """Dissolving one top loop edge preserves the top surface UV mapping."""
+        obj = create_textured_cube(
+            "loop_cut_dissolve_cube",
+            1.0,
+            1.0,
+            use_box_project=True,
+        )
+        ctx = _get_context_override()
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='EDIT')
+        self.refresh_face_cache()
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv[0]
+        initial_top_faces = [face for face in bm.faces if face.normal.z > 0.9]
+        self.assertEqual(len(initial_top_faces), 1)
+        x_axis_edges = [
+            edge for edge in bm.edges
+            if abs(edge.verts[0].co.y - edge.verts[1].co.y) < 1e-6
+            and abs(edge.verts[0].co.z - edge.verts[1].co.z) < 1e-6
+            and abs(edge.verts[0].co.x - edge.verts[1].co.x) > 0.9
+        ]
+        self.assertEqual(len(x_axis_edges), 4)
+        _execute_centered_loop_cut(
+            self,
+            bm,
+            x_axis_edges[0],
+            obj.data,
+        )
+        yield from wait_for_condition(
+            lambda: (
+                edit_mesh_cache_is_current()
+                and len(bmesh.from_edit_mesh(obj.data).faces) == 10
+            ),
+            "Cube loop cut and UV projection did not finish",
+        )
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv[0]
+        top_faces = [face for face in bm.faces if face.normal.z > 0.9]
+        self.assertEqual(len(top_faces), 2)
+        source_projections = [
+            compute_uv_projection_from_face(face, uv_layer)
+            for face in top_faces
+        ]
+        self.assertTrue(all(source_projections))
+        top_middle_edges = [
+            edge for edge in bm.edges
+            if all(abs(vertex.co.x - 0.5) < 1e-6 for vertex in edge.verts)
+            and all(abs(vertex.co.z - 1.0) < 1e-6 for vertex in edge.verts)
+            and abs(edge.verts[0].co.y - edge.verts[1].co.y) > 0.9
+        ]
+        self.assertEqual(len(top_middle_edges), 1)
+        _select_only_edges(bm, top_middle_edges)
+        bmesh.update_edit_mesh(obj.data)
+
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.mesh.dissolve_edges(
+                use_verts=True,
+                use_face_split=False,
+            )
+        yield from wait_for_condition(
+            lambda: (
+                edit_mesh_cache_is_current()
+                and len(bmesh.from_edit_mesh(obj.data).faces) == 9
+            ),
+            "Cube top-edge dissolve and UV projection did not finish",
+        )
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv[0]
+        top_faces = [face for face in bm.faces if face.normal.z > 0.9]
+        self.assertEqual(len(top_faces), 1)
+        actual_uvs = _face_uvs_by_vertex(top_faces[0], uv_layer)
+        expected_uv_candidates = [
+            _projected_uvs_by_vertex(top_faces[0], source_projection)
+            for source_projection in source_projections
+        ]
+        matching_source_count = sum(
+            all(
+                abs(actual_uvs[position][axis] - expected_uvs[position][axis])
+                <= 1e-6
+                for position in expected_uvs
+                for axis in range(2)
+            )
+            for expected_uvs in expected_uv_candidates
+        )
+
+        bmesh.update_edit_mesh(obj.data)
+        with bpy.context.temp_override(**ctx):
+            bpy.ops.object.mode_set(mode='OBJECT')
+        obj.data.update()
+
+        self.assertEqual(set(actual_uvs), set(expected_uv_candidates[0]))
+        self.assertGreaterEqual(
+            matching_source_count,
+            1,
+            "Dissolved top face did not use either old top face's UV mapping",
+        )
 
     def test_loop_cut_preserves_rotation(self):
         """Loop cut two faces with different rotations preserves each face's rotation.

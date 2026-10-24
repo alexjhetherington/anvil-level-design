@@ -884,6 +884,10 @@ def project_new_faces_for_object(obj, ppm, bm):
     dupe_other = duplicate_faces - (
         dupe_exact | dupe_coplanar | dupe_extrusions | spin_rotated
     )
+    cached_rebuilt_coplanar = (
+        face_buckets['cached_vertex_count_changed'] &
+        face_buckets['cached_same_plane_changed']
+    ) - duplicate_faces - spin_rotated - face_buckets['hotspot']
 
     # --- Identify new faces and build the affected set ---
     topology_new_faces = (
@@ -902,7 +906,7 @@ def project_new_faces_for_object(obj, ppm, bm):
     repaired_materials = _repair_donorless_extrude_side_face_materials(
         topology_new_faces, cap_candidates, id_layer)
 
-    if not new_faces and not dupe_coplanar:
+    if not new_faces and not dupe_coplanar and not cached_rebuilt_coplanar:
         if repaired_materials > 0:
             bmesh.update_edit_mesh(me)
         return
@@ -948,7 +952,11 @@ def project_new_faces_for_object(obj, ppm, bm):
         affected &
         face_buckets['cached_same_normal_shape_changed']
     )
-    coplanar_reproject = dupe_coplanar | coplanar_modified
+    coplanar_reproject = (
+        dupe_coplanar |
+        coplanar_modified |
+        cached_rebuilt_coplanar
+    )
 
     for face in coplanar_reproject:
         if face.calc_area() < 1e-8:
