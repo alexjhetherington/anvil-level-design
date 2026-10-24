@@ -59,7 +59,8 @@ class MESH_OT_prism_builder(
         layout.use_property_decorate = False
         settings = layout.column(align=True)
         settings.prop(self, "name_suffix")
-        settings.prop(self, "keep_anti_parallel_coplanar_faces")
+        if context.mode == 'EDIT_MESH':
+            settings.prop(self, "keep_anti_parallel_coplanar_faces")
         settings.prop(self, "prefer_quads")
 
     def _execute_action(self, context, first_vertex, second_vertex, depth,

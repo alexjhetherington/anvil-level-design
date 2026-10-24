@@ -92,7 +92,8 @@ class MESH_OT_box_builder(DefaultGridPivotMixin, ModalDrawBase, bpy.types.Operat
         layout.use_property_decorate = False
         settings = layout.column(align=True)
         settings.prop(self, "name_suffix")
-        settings.prop(self, "keep_anti_parallel_coplanar_faces")
+        if context.mode == 'EDIT_MESH':
+            settings.prop(self, "keep_anti_parallel_coplanar_faces")
 
     def _restore_edit_action_context(self, context, object_name):
         obj = bpy.data.objects.get(object_name)
