@@ -830,15 +830,6 @@ def get_best_neighbor_face(face, excluded_faces, id_layer, allow_fallback=True):
     return best_fallback if allow_fallback else None
 
 
-def project_new_faces(context, bm):
-    """Compatibility entry point for existing handler and operator callers."""
-    project_new_faces_for_object(
-        context.object,
-        context.scene.level_design_props.pixels_per_meter,
-        bm,
-    )
-
-
 def project_new_faces_for_object(obj, ppm, bm):
     """Apply UV projection to newly created faces after topology changes.
 

@@ -277,9 +277,10 @@ class LEVELDESIGN_OT_weld_bridge(bpy.types.Operator):
             self.report({'ERROR'}, f"Bridge failed: {exc}")
             return {'CANCELLED'}
         bm = bmesh.from_edit_mesh(obj.data)
-        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.new_face_projection import project_new_faces_for_object
         from ..handlers.face_cache import cache_face_data
-        project_new_faces(context, bm)
+        pixels_per_meter = context.scene.level_design_props.pixels_per_meter
+        project_new_faces_for_object(obj, pixels_per_meter, bm)
         cache_face_data(context)
         _select_new_faces(bm, existing_faces)
         context.tool_settings.mesh_select_mode = (False, False, True)
@@ -522,9 +523,10 @@ class LEVELDESIGN_OT_weld_corridor(bpy.types.Operator):
             projection = vert.co.dot(extrusion_direction)
             vert.co += extrusion_direction * (local_back_plane_offset - projection)
         bm.normal_update()
-        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.new_face_projection import project_new_faces_for_object
         from ..handlers.face_cache import cache_face_data
-        project_new_faces(context, bm)
+        pixels_per_meter = context.scene.level_design_props.pixels_per_meter
+        project_new_faces_for_object(obj, pixels_per_meter, bm)
         cache_face_data(context)
         _select_new_faces(bm, existing_faces)
         context.tool_settings.mesh_select_mode = (False, False, True)
@@ -710,9 +712,10 @@ class LEVELDESIGN_OT_weld_folded_plane(bpy.types.Operator):
                     angle_shape_threshold=3.14,
                 )
         bm.normal_update()
-        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.new_face_projection import project_new_faces_for_object
         from ..handlers.face_cache import cache_face_data
-        project_new_faces(context, bm)
+        pixels_per_meter = context.scene.level_design_props.pixels_per_meter
+        project_new_faces_for_object(obj, pixels_per_meter, bm)
         cache_face_data(context)
         _select_new_faces(bm, existing_faces)
         context.tool_settings.mesh_select_mode = (False, False, True)
@@ -758,9 +761,10 @@ class LEVELDESIGN_OT_weld_folded_plane(bpy.types.Operator):
             return {'CANCELLED'}
         _triangulate_folded_faces(bm, created_faces)
         bm.normal_update()
-        from ..handlers.new_face_projection import project_new_faces
+        from ..handlers.new_face_projection import project_new_faces_for_object
         from ..handlers.face_cache import cache_face_data
-        project_new_faces(context, bm)
+        pixels_per_meter = context.scene.level_design_props.pixels_per_meter
+        project_new_faces_for_object(obj, pixels_per_meter, bm)
         cache_face_data(context)
         _select_new_faces(bm, existing_faces)
         context.tool_settings.mesh_select_mode = (False, False, True)
