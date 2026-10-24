@@ -1,5 +1,9 @@
 # Anvil Level Design Changelog
 
+# 1.9.1
+- Fix regression: faces with changed vertex counts are once again no longer ignored
+- Fix quadrilate ngon faces during cuts warping adjacent faces
+
 # 1.9.0
 - Add CYLINDER BUILDER
 - Add CYLINDER CUT
