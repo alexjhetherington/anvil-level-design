@@ -14,7 +14,7 @@ _texture_browser_cache_generation = 0
 def _texture_browser_abs_path(filepath):
     if not filepath:
         return ""
-    return os.path.normcase(os.path.abspath(bpy.path.abspath(filepath)))
+    return os.path.abspath(bpy.path.abspath(filepath))
 
 
 def _texture_browser_cache_version(abs_path):

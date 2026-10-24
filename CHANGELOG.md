@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.9.1
+- Fix a material texture name case issue on windows
 - Blender default material has backface culling set to true by default
 - Hide Keep Overlap Faces option object mode
 - Fix regression: faces with changed vertex counts are once again no longer ignored
