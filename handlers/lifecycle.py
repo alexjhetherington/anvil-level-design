@@ -10,6 +10,7 @@ from ..core.face_id import get_face_id_layer
 from ..core.materials import (
     apply_remembered_default_material_settings,
     apply_remembered_pixels_per_meter,
+    get_unassigned_material,
     remember_default_material_settings,
     remember_pixels_per_meter,
     reset_duplicate_material_consolidation,
@@ -337,6 +338,8 @@ def _apply_addon_defaults_to_scene():
 
     apply_remembered_pixels_per_meter(props)
     apply_remembered_default_material_settings(props)
+
+    get_unassigned_material()
 
 
 def _remember_scene_file_defaults():

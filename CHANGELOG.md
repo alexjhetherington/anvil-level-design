@@ -1,6 +1,7 @@
 # Anvil Level Design Changelog
 
 # 1.9.1
+- Blender default material has backface culling set to true by default
 - Fix regression: faces with changed vertex counts are once again no longer ignored
 - Fix quadrilate ngon faces during cuts warping adjacent faces
 

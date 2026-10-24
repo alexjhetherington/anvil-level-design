@@ -14,6 +14,7 @@ from ...core.logging import debug_log
 from ...core.materials import (
     MaterialMappingConflictError,
     ensure_material_slot,
+    get_unassigned_material,
     resolve_material_for_image,
 )
 from ...core.face_id import get_face_id_layer
@@ -63,7 +64,7 @@ def _active_or_previous_material():
     if image is None:
         image = get_previous_image()
     if image is None:
-        return None
+        return get_unassigned_material()
     return resolve_material_for_image(image)
 
 

@@ -409,6 +409,7 @@ def get_unassigned_material():
 
     mat = bpy.data.materials.new(name=_UNASSIGNED_MATERIAL_NAME)
     mat.diffuse_color = (0.8, 0.8, 0.8, 1.0)
+    mat.use_backface_culling = True
     return mat
 
 
