@@ -11,7 +11,7 @@ from ..texture_browser import browser as texture_browser
 from ..texture_browser import persistence as texture_browser_persistence
 
 
-HOST_TEXTURE_BROWSER_OUTPUT_DIR = os.path.abspath(
+HOST_TEXTURE_BROWSER_OUTPUT_DIR = os.path.realpath(
     os.path.join(os.path.dirname(__file__), "..", "test_outputs", "texture_browser_host")
 )
 HOTSPOT_TEXTURE_PATH = os.path.join(os.path.dirname(TEXTURE_PATH), "dev_hotspot.png")
