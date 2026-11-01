@@ -2,9 +2,12 @@ import math
 
 import bpy
 import bmesh
+import gpu
 from bpy.types import Operator
 from bpy_extras import view3d_utils
+from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
+from mathutils.geometry import intersect_line_plane
 from mathutils.bvhtree import BVHTree
 
 from ...core.workspace_check import is_level_design_workspace
@@ -1260,6 +1263,131 @@ def _matrices_equal(a, b, epsilon=1e-4):
 
 # Screen-space pixel threshold for clicking origin-picked objects
 _OBJECT_PICK_THRESHOLD_PX = 20
+_OBJECT_DRAG_THRESHOLD_PX = 4
+_BACK_FACE_PICK_THRESHOLD_PX = 24
+_object_overlay = None
+_object_overlay_handler = None
+
+
+def _mouse_ray(region, rv3d, mouse):
+    return (
+        view3d_utils.region_2d_to_origin_3d(region, rv3d, mouse),
+        view3d_utils.region_2d_to_vector_3d(region, rv3d, mouse),
+    )
+
+
+def _mouse_plane_point(region, rv3d, mouse, point, normal):
+    origin, direction = _mouse_ray(region, rv3d, mouse)
+    return intersect_line_plane(origin, origin + direction * 1000000.0,
+                                point, normal, False)
+
+
+def _mouse_axis_value(region, rv3d, mouse, origin, axis):
+    if rv3d.is_perspective:
+        view_pos = rv3d.view_matrix.inverted().translation
+        view_dir = (origin - view_pos).normalized()
+    else:
+        view_dir = (rv3d.view_rotation @ Vector((0, 0, -1))).normalized()
+    plane_normal = view_dir - axis * view_dir.dot(axis)
+    if plane_normal.length_squared < 1e-8:
+        return None
+    hit = _mouse_plane_point(region, rv3d, mouse, origin, plane_normal)
+    return None if hit is None else (hit - origin).dot(axis)
+
+
+def _snap_delta(context, value):
+    if not context.tool_settings.use_snap:
+        return value
+    from ..modal_draw.utils import get_grid_size
+    step = get_grid_size(context)
+    return round(value / step) * step if step > 0 else value
+
+
+def _face_world_data(obj, face_index):
+    if face_index < 0 or face_index >= len(obj.data.polygons):
+        return None
+    face = obj.data.polygons[face_index]
+    verts = [obj.matrix_world @ obj.data.vertices[i].co for i in face.vertices]
+    normal_matrix = obj.matrix_world.inverted_safe().transposed().to_3x3()
+    normal = (normal_matrix @ face.normal).normalized()
+    center = sum(verts, Vector()) / len(verts)
+    return face_index, tuple(face.vertices), verts, center, normal
+
+
+def _pick_resize_face(obj, region, rv3d, mouse):
+    """Pick the face under the cursor, or a nearby hidden face outside it."""
+    ray_origin, ray_direction = _mouse_ray(region, rv3d, mouse)
+    inverse = obj.matrix_world.inverted_safe()
+    hit, _, _, direct_index = obj.ray_cast(
+        inverse @ ray_origin,
+        (inverse.to_3x3() @ ray_direction).normalized(),
+    )
+    if hit:
+        return _face_world_data(obj, direct_index)
+
+    best_index, best_distance = -1, _BACK_FACE_PICK_THRESHOLD_PX
+    normal_matrix = inverse.transposed().to_3x3()
+
+    for face in obj.data.polygons:
+        if face.index == direct_index:
+            continue
+        normal = (normal_matrix @ face.normal).normalized()
+        if normal.dot(ray_direction) <= 0:  # Only invisible/back-facing candidates.
+            continue
+        points = [
+            view3d_utils.location_3d_to_region_2d(
+                region, rv3d, obj.matrix_world @ obj.data.vertices[i].co
+            ) for i in face.vertices
+        ]
+        if any(point is None for point in points):
+            continue
+        distance = min(
+            _point_to_segment_dist_2d(mouse, point, points[(i + 1) % len(points)])
+            for i, point in enumerate(points)
+        )
+        if distance < best_distance:
+            best_index, best_distance = face.index, distance
+
+    return _face_world_data(obj, best_index)
+
+
+def _set_object_overlay(context, verts=None, line=None, active=False):
+    global _object_overlay
+    _object_overlay = (
+        context.region.as_pointer(), verts or (), line or (), active
+    ) if verts or line else None
+    context.area.tag_redraw()
+
+
+def _draw_object_overlay():
+    if _object_overlay is None or bpy.context.mode != 'OBJECT':
+        return
+    tool = bpy.context.workspace.tools.from_space_view3d_mode('OBJECT', create=False)
+    if tool is None or tool.idname != "leveldesign.visible_select_object":
+        return
+    region_id, verts, line, active = _object_overlay
+    if bpy.context.region.as_pointer() != region_id:
+        return
+
+    color = (0.2, 1.0, 0.35, 1.0) if active else (1.0, 0.65, 0.05, 1.0)
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    gpu.state.depth_test_set('NONE')
+    try:
+        if len(verts) >= 3:
+            shader.uniform_float("color", (*color[:3], 0.14))
+            batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
+            shader.uniform_float("color", color)
+            gpu.state.line_width_set(3.0)
+            batch_for_shader(shader, 'LINE_STRIP', {"pos": [*verts, verts[0]]}).draw(shader)
+        if len(line) >= 2:
+            shader.uniform_float("color", color)
+            gpu.state.line_width_set(2.0)
+            batch_for_shader(shader, 'LINE_STRIP', {"pos": line}).draw(shader)
+    finally:
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+        gpu.state.depth_test_set('NONE')
 
 
 def _mesh_has_raycastable_surface(obj, depsgraph):
@@ -1327,8 +1455,61 @@ def _find_origin_pick_object_at_cursor(
     return best_obj, best_depth
 
 
+def _object_at_mouse(context, event):
+    from .raycast import raycast_scene_skip_backfaces
+
+    region, rv3d = context.region, context.region_data
+    mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+    ray_origin, view_vector = _mouse_ray(region, rv3d, mouse)
+    depsgraph = context.evaluated_depsgraph_get()
+    hit, location, _, _, hit_obj, matrix = raycast_scene_skip_backfaces(
+        depsgraph, context.scene, ray_origin, view_vector, max_iterations=64
+    )
+    origin_obj, origin_depth = _find_origin_pick_object_at_cursor(
+        context.view_layer.objects, depsgraph, region, rv3d,
+        mouse, ray_origin, view_vector
+    )
+    if hit and origin_obj is not None:
+        if origin_depth < (location - ray_origin).dot(view_vector):
+            return origin_obj
+    if hit:
+        return _resolve_select_target(depsgraph, hit_obj, matrix)
+    if origin_obj is not None:
+        return origin_obj
+    return None
+
+
+class LEVELDESIGN_OT_visible_object_hover(Operator):
+    """Preview the face that Ctrl-drag will resize"""
+    bl_idname = "leveldesign.visible_object_hover"
+    bl_label = "Visible Select Face Hover"
+
+    @classmethod
+    def poll(cls, context):
+        return is_level_design_workspace() and context.mode == 'OBJECT'
+
+    def invoke(self, context, event):
+        selected = context.selected_objects
+        face = (
+            _pick_resize_face(
+                selected[0], context.region, context.region_data,
+                Vector((event.mouse_region_x, event.mouse_region_y))
+            ) if event.ctrl and len(selected) == 1 and selected[0].type == 'MESH'
+            else None
+        )
+        if face is None:
+            _set_object_overlay(context)
+        else:
+            _, _, verts, center, normal = face
+            from ..modal_draw.utils import get_grid_size
+            _set_object_overlay(
+                context, verts, (center, center + normal * get_grid_size(context))
+            )
+        return {'PASS_THROUGH'}
+
+
 class LEVELDESIGN_OT_visible_object_select(Operator):
-    """Select visible objects through culled surfaces"""
+    """Select or directly move and resize selected objects"""
     bl_idname = "leveldesign.visible_object_select"
     bl_label = "Visible Select (Object Mode)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1337,74 +1518,268 @@ class LEVELDESIGN_OT_visible_object_select(Operator):
 
     @classmethod
     def poll(cls, context):
-        if not is_level_design_workspace():
-            return False
-        return context.mode == 'OBJECT'
+        return is_level_design_workspace() and context.mode == 'OBJECT'
 
     def invoke(self, context, event):
-        from .raycast import raycast_scene_skip_backfaces
-
-        region = context.region
-        rv3d = context.region_data
-        if rv3d is None:
+        if context.region_data is None:
             return {'PASS_THROUGH'}
 
-        coord = (event.mouse_region_x, event.mouse_region_y)
-        mouse_2d = Vector((float(coord[0]), float(coord[1])))
-        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+        selected = context.selected_objects
+        _set_object_overlay(context)
 
-        depsgraph = context.evaluated_depsgraph_get()
-        hit, location, normal, face_index, obj, matrix = raycast_scene_skip_backfaces(
-            depsgraph, context.scene, ray_origin, view_vector, max_iterations=64
-        )
-
-        # Also check objects selected by origin proximity (lights, cameras,
-        # empties, and mesh handlers without raycastable surfaces).
-        origin_pick_obj, origin_pick_depth = _find_origin_pick_object_at_cursor(
-            context.view_layer.objects, depsgraph, region, rv3d,
-            mouse_2d, ray_origin, view_vector
-        )
-
-        # Decide which hit wins
-        select_obj = None
-        if hit and origin_pick_obj is not None:
-            mesh_depth = (location - ray_origin).dot(view_vector)
-            if origin_pick_depth < mesh_depth:
-                select_obj = origin_pick_obj
-            else:
-                select_obj = _resolve_select_target(depsgraph, obj, matrix)
-        elif hit:
-            select_obj = _resolve_select_target(depsgraph, obj, matrix)
-        elif origin_pick_obj is not None:
-            select_obj = origin_pick_obj
-
-        if select_obj is None:
-            if self.extend or not _object_selection_has_any(context.view_layer):
+        if event.ctrl:
+            if len(selected) != 1 or selected[0].type != 'MESH':
                 return {'CANCELLED'}
-            _clear_object_selection(context.view_layer)
-            return {'FINISHED'}
-
-        if not self.extend:
-            _clear_object_selection(context.view_layer)
-
-        new_state = not select_obj.select_get() if self.extend else True
-        select_obj.select_set(new_state)
-        if new_state:
-            context.view_layer.objects.active = select_obj
+            face = _pick_resize_face(
+                selected[0], context.region, context.region_data, mouse
+            )
+            if face is None:
+                return {'CANCELLED'}
+            self._mode = 'RESIZE'
+            self._object = selected[0]
+            self._face_index, self._face_verts, verts, self._anchor, self._axis = face
+            self._original_verts = {
+                i: self._object.data.vertices[i].co.copy() for i in self._face_verts
+            }
+            self._capture_resize_uvs()
+            other = [
+                self._object.matrix_world @ vert.co
+                for vert in self._object.data.vertices
+                if vert.index not in self._face_verts
+            ]
+            self._inward_limit = max(
+                ((point - self._anchor).dot(self._axis) for point in other),
+                default=0.0,
+            )
+            self._axis_start = _mouse_axis_value(
+                context.region, context.region_data, mouse, self._anchor, self._axis
+            )
+            if self._axis_start is None:
+                return {'CANCELLED'}
+            _set_object_overlay(context, verts, active=True)
         else:
-            _activate_single_remaining_selected_object(context.view_layer)
+            clicked = _object_at_mouse(context, event)
+            if self.extend:
+                if clicked is None:
+                    return {'CANCELLED'}
+                new_state = not clicked.select_get()
+                clicked.select_set(new_state)
+                if new_state:
+                    context.view_layer.objects.active = clicked
+                else:
+                    _activate_single_remaining_selected_object(context.view_layer)
+                return {'FINISHED'}
+            if clicked is None:
+                if not _object_selection_has_any(context.view_layer):
+                    return {'CANCELLED'}
+                _clear_object_selection(context.view_layer)
+                return {'FINISHED'}
+            if not clicked.select_get():
+                _clear_object_selection(context.view_layer)
+                clicked.select_set(True)
+                context.view_layer.objects.active = clicked
+                return {'FINISHED'}  # A newly selected object cannot move yet.
 
-        return {'FINISHED'}
+            self._mode = 'MOVE'
+            self._object = clicked
+            self._started_with_alt = event.alt
+            self._move_objects = [
+                (obj, obj.matrix_world.copy()) for obj in context.selected_objects
+            ]
+            self._move_anchor = clicked.matrix_world.translation.copy()
+            self._move_offset = self._move_base_offset = Vector()
+            self._move_vertical = event.alt
+            self._move_reference = self._move_cursor_value(
+                context, mouse, self._move_vertical
+            )
+
+        self._start_mouse = mouse
+        self._dragging = False
+        context.workspace.status_text_set(
+            "Ctrl: Resize Face  |  Alt: Move Z  |  Esc: Cancel"
+        )
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+        if event.type in {'ESC', 'RIGHTMOUSE'}:
+            if self._mode == 'RESIZE':
+                self._restore_resize()
+            elif self._mode == 'MOVE':
+                self._restore_move(context)
+            return self._finish(context, cancelled=True)
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if not self._dragging and self._mode == 'MOVE' and not self._started_with_alt:
+                _clear_object_selection(context.view_layer)
+                self._object.select_set(True)
+                context.view_layer.objects.active = self._object
+            return self._finish(context)
+        if event.type not in {'MOUSEMOVE', 'LEFT_ALT', 'RIGHT_ALT'}:
+            return {'RUNNING_MODAL'}
+        if not self._dragging:
+            if (mouse - self._start_mouse).length < _OBJECT_DRAG_THRESHOLD_PX:
+                return {'RUNNING_MODAL'}
+            self._dragging = True
+
+        if self._mode == 'MOVE':
+            vertical = event.alt
+            if vertical != self._move_vertical:
+                self._move_vertical = vertical
+                self._move_base_offset = self._move_offset.copy()
+                self._move_reference = self._move_cursor_value(
+                    context, mouse, vertical
+                )
+                return {'RUNNING_MODAL'}
+            value = self._move_cursor_value(context, mouse, vertical)
+            if value is None:
+                return {'RUNNING_MODAL'}
+            if self._move_reference is None:
+                self._move_reference = value
+                return {'RUNNING_MODAL'}
+
+            offset = self._move_base_offset.copy()
+            if vertical:
+                offset.z = _snap_delta(
+                    context, offset.z + value - self._move_reference
+                )
+            else:
+                delta = value - self._move_reference
+                offset.x = _snap_delta(context, offset.x + delta.x)
+                offset.y = _snap_delta(context, offset.y + delta.y)
+            for obj, original in self._move_objects:
+                matrix = original.copy()
+                matrix.translation += offset
+                obj.matrix_world = matrix
+            self._move_offset = offset
+            context.view_layer.update()
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        value = _mouse_axis_value(
+            context.region, context.region_data, mouse, self._anchor, self._axis
+        )
+        if value is None:
+            return {'RUNNING_MODAL'}
+        distance = _snap_delta(context, value - self._axis_start)
+        if context.tool_settings.use_snap:
+            from ..modal_draw.utils import get_grid_size
+            step = get_grid_size(context)
+            minimum = (math.floor((self._inward_limit + 1e-6) / step) + 1) * step
+        else:
+            minimum = self._inward_limit + 1e-5
+        distance = max(distance, minimum)
+        local_delta = self._object.matrix_world.inverted_safe().to_3x3() @ (
+            self._axis * distance
+        )
+        for index, original in self._original_verts.items():
+            self._object.data.vertices[index].co = original + local_delta
+        self._object.data.update()
+        self._update_resize_uvs()
+        _, _, verts, center, _ = _face_world_data(self._object, self._face_index)
+        _set_object_overlay(context, verts, (self._anchor, center), active=True)
+        return {'RUNNING_MODAL'}
+
+    def _restore_resize(self):
+        for index, co in self._original_verts.items():
+            self._object.data.vertices[index].co = co
+        self._object.data.update()
+        self._update_resize_uvs(restore=True)
+
+    def _capture_resize_uvs(self):
+        from ...core.uv_layers import get_unlocked_uv_layers
+        from ...core.uv_projection import compute_uv_projection_from_face
+
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(self._object.data)
+            moved = set(self._face_verts)
+            layers = get_unlocked_uv_layers(bm, self._object, self._object.data)
+            self._resize_uvs = []
+            for face in bm.faces:
+                if not moved.intersection(vert.index for vert in face.verts):
+                    continue
+                face_layers = {}
+                for layer in layers:
+                    projection = compute_uv_projection_from_face(face, layer)
+                    if projection:
+                        face_layers[layer.name] = (
+                            projection,
+                            [loop[layer].uv.copy() for loop in face.loops],
+                        )
+                if face_layers:
+                    self._resize_uvs.append((face.index, face_layers))
+        finally:
+            bm.free()
+
+    def _update_resize_uvs(self, restore=False):
+        if not self._resize_uvs:
+            return
+        from ...core.uv_projection import apply_uv_projection_to_face
+
+        me = self._object.data
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(me)
+            bm.normal_update()
+            bm.faces.ensure_lookup_table()
+            for index, face_layers in self._resize_uvs:
+                if index >= len(bm.faces):
+                    continue
+                face = bm.faces[index]
+                for name, (projection, original) in face_layers.items():
+                    layer = bm.loops.layers.uv.get(name)
+                    if layer is None:
+                        continue
+                    if restore:
+                        for loop, uv in zip(face.loops, original):
+                            loop[layer].uv = uv
+                    else:
+                        apply_uv_projection_to_face(face, layer, *projection)
+            bm.to_mesh(me)
+            me.update()
+        finally:
+            bm.free()
+
+    def _move_cursor_value(self, context, mouse, vertical):
+        origin = self._move_anchor + self._move_base_offset
+        if vertical:
+            return _mouse_axis_value(
+                context.region, context.region_data, mouse, origin, Vector((0, 0, 1))
+            )
+        return _mouse_plane_point(
+            context.region, context.region_data, mouse, origin, Vector((0, 0, 1))
+        )
+
+    def _restore_move(self, context):
+        for obj, matrix in self._move_objects:
+            obj.matrix_world = matrix
+        context.view_layer.update()
+
+    def _finish(self, context, cancelled=False):
+        _set_object_overlay(context)
+        context.workspace.status_text_set(None)
+        return {'CANCELLED'} if cancelled else {'FINISHED'}
 
 
 def register():
+    global _object_overlay_handler
     bpy.utils.register_class(LEVELDESIGN_OT_visible_select)
     bpy.utils.register_class(LEVELDESIGN_OT_visible_shortest_path_pick)
+    bpy.utils.register_class(LEVELDESIGN_OT_visible_object_hover)
     bpy.utils.register_class(LEVELDESIGN_OT_visible_object_select)
+    _object_overlay_handler = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_object_overlay, (), 'WINDOW', 'POST_VIEW'
+    )
 
 
 def unregister():
+    global _object_overlay_handler
+    if _object_overlay_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_object_overlay_handler, 'WINDOW')
+        _object_overlay_handler = None
     bpy.utils.unregister_class(LEVELDESIGN_OT_visible_object_select)
+    bpy.utils.unregister_class(LEVELDESIGN_OT_visible_object_hover)
     bpy.utils.unregister_class(LEVELDESIGN_OT_visible_shortest_path_pick)
     bpy.utils.unregister_class(LEVELDESIGN_OT_visible_select)

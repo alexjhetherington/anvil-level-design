@@ -123,6 +123,21 @@ class LEVELDESIGN_TOOL_visible_select_object(bpy.types.WorkSpaceTool):
             {"type": 'LEFTMOUSE', "value": 'PRESS', "shift": True},
             {"properties": [("extend", True)]},
         ),
+        (
+            operator.LEVELDESIGN_OT_visible_object_select.bl_idname,
+            {"type": 'LEFTMOUSE', "value": 'PRESS', "alt": True},
+            {"properties": [("extend", False)]},
+        ),
+        (
+            operator.LEVELDESIGN_OT_visible_object_select.bl_idname,
+            {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
+            {"properties": [("extend", False)]},
+        ),
+        (
+            operator.LEVELDESIGN_OT_visible_object_hover.bl_idname,
+            {"type": 'MOUSEMOVE', "value": 'ANY', "any": True},
+            {"properties": []},
+        ),
     )
 
 
