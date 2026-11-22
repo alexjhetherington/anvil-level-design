@@ -11,6 +11,7 @@ from ..core.logging import (
     finish_performance_mode_report,
     performance_stage,
 )
+from ..core.library import is_library_object
 from ..core.materials import consolidate_duplicate_materials
 from ..core.face_id import get_face_id_layer
 from ..core.uv_layers import sync_uv_map_settings
@@ -97,16 +98,29 @@ def _cleanup_spin_degenerate_faces(bm, me):
         bmesh.update_edit_mesh(me)
 
 
-def _invalidate_view_overlays(obj):
+def _invalidate_fixed_view_overlay():
     from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
-    from ..operators.library_object_overlay import invalidate_overlay_object as _invalidate_library_object_overlay
     _invalidate_fixed_overlay()
+
+
+def _invalidate_library_object_overlay(obj):
+    from ..operators.library_object_overlay import invalidate_overlay_object as _invalidate_library_object_overlay
+    _invalidate_library_object_overlay(obj)
+
+
+def _invalidate_view_overlays(obj):
+    _invalidate_fixed_view_overlay()
     _invalidate_library_object_overlay(obj)
 
 
 def _invalidate_library_mesh_overlay(mesh):
     from ..operators.library_object_overlay import invalidate_overlay_mesh
     invalidate_overlay_mesh(mesh)
+
+
+def _invalidate_library_overlay_inventory():
+    from ..operators.library_object_overlay import invalidate_overlay_inventory
+    invalidate_overlay_inventory()
 
 
 @persistent
@@ -205,6 +219,9 @@ def on_depsgraph_update(scene, depsgraph):
         with performance_stage(performance_report, "Object/data overlay invalidation"):
             for update in depsgraph.updates:
                 updated_id = update.id
+                if isinstance(updated_id, bpy.types.Collection):
+                    _invalidate_library_overlay_inventory()
+                    continue
                 if isinstance(updated_id, bpy.types.Mesh):
                     if getattr(update, 'is_updated_geometry', False):
                         _invalidate_library_mesh_overlay(updated_id)
@@ -212,11 +229,21 @@ def on_depsgraph_update(scene, depsgraph):
                 if not isinstance(updated_id, bpy.types.Object):
                     continue
                 obj = updated_id
+                source_obj = getattr(obj, "original", obj)
                 if obj.type == 'MESH' and obj.mode != 'EDIT':
                     is_transform = getattr(update, 'is_updated_transform', False)
                     is_geometry = getattr(update, 'is_updated_geometry', False)
                     if is_transform or is_geometry:
-                        _invalidate_view_overlays(obj)
+                        _invalidate_fixed_view_overlay()
+                    if not is_library_object(source_obj):
+                        continue
+                    if is_geometry:
+                        _invalidate_library_object_overlay(obj)
+                        _invalidate_library_overlay_inventory()
+                    elif is_transform:
+                        _invalidate_library_object_overlay(obj)
+                    else:
+                        _invalidate_library_overlay_inventory()
 
         for update in depsgraph.updates:
             if isinstance(update.id, bpy.types.Object):

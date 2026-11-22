@@ -36,6 +36,7 @@ _REQUIRED_OPERATORS = [
     "object.select_all",
     "render.opengl",
     "screen.region_flip",
+    "screen.screenshot",
     "screen.userpref_show",
     "uv.follow_active_quads",
     "uv.unwrap",
@@ -60,6 +61,16 @@ class APIAvailabilityTest(AnvilTestCase):
 
     def test_operator_property_keyword_export_api_is_available_for_modal_view_handoff(self):
         self.assertTrue(hasattr(bpy.types.Operator, "as_keywords"))
+
+    def test_region_view_3d_perspective_matrix_api_is_available_for_prefab_performance_framing(self):
+        self.assertIsNotNone(
+            bpy.types.RegionView3D.bl_rna.properties.get("perspective_matrix")
+        )
+
+    def test_space_view_3d_local_visibility_apis_are_available_for_prefab_overlay_cache(self):
+        properties = bpy.types.SpaceView3D.bl_rna.properties
+        self.assertIsNotNone(properties.get("local_view"))
+        self.assertIsNotNone(properties.get("use_local_collections"))
 
     def test_related_blender_default_perspective_orthographic_keymap_item_is_available_for_preferences_display(self):
         keymap = bpy.context.window_manager.keyconfigs.default.keymaps.get("3D View")
@@ -113,9 +124,22 @@ class APIAvailabilityTest(AnvilTestCase):
     def test_all_required_gpu_apis_exist(self):
         missing = []
         # gpu.types classes used by grid_overlay
-        for cls_name in ("GPUShaderCreateInfo", "GPUStageInterfaceInfo", "GPUTexture"):
+        for cls_name in (
+                "Buffer",
+                "GPUBatch",
+                "GPUShader",
+                "GPUShaderCreateInfo",
+                "GPUStageInterfaceInfo",
+                "GPUTexture",
+        ):
             if not hasattr(gpu.types, cls_name):
                 missing.append(f"gpu.types.{cls_name}")
+        if not hasattr(gpu.types.GPUBatch, "draw_instanced"):
+            missing.append("gpu.types.GPUBatch.draw_instanced")
+        if not hasattr(gpu.types.GPUShader, "uniform_sampler"):
+            missing.append("gpu.types.GPUShader.uniform_sampler")
+        if not hasattr(gpu.types.GPUShaderCreateInfo, "sampler"):
+            missing.append("gpu.types.GPUShaderCreateInfo.sampler")
         # gpu.shader functions used by grid_overlay
         if not hasattr(gpu.shader, "create_from_info"):
             missing.append("gpu.shader.create_from_info")

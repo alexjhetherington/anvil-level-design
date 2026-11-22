@@ -200,6 +200,8 @@ def on_undo_post(scene):
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
     from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
     _invalidate_fixed_overlay()
+    from ..operators.library_object_overlay import invalidate_overlay as _invalidate_library_overlay
+    _invalidate_library_overlay()
     try:
         context = bpy.context
         saved_prev_name, saved_prev_path = save_previous_image_state()
@@ -247,6 +249,8 @@ def on_redo_post(scene):
     bpy.app.timers.register(_clear_undo_flag, first_interval=0.05)
     from ..operators.fixed_hotspot_overlay import invalidate_overlay as _invalidate_fixed_overlay
     _invalidate_fixed_overlay()
+    from ..operators.library_object_overlay import invalidate_overlay as _invalidate_library_overlay
+    _invalidate_library_overlay()
     try:
         context = bpy.context
         saved_prev_name, saved_prev_path = save_previous_image_state()
