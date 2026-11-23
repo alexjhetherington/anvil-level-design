@@ -253,6 +253,8 @@ class APIAvailabilityTest(AnvilTestCase):
 
     def test_all_required_blender_data_apis_exist(self):
         missing = []
+        if not hasattr(bpy.types, "ID"):
+            missing.append("bpy.types.ID")
         if bpy.types.Mesh.bl_rna.properties.get("attributes") is None:
             missing.append("Mesh.attributes")
         if not hasattr(bpy.types, "Attribute"):

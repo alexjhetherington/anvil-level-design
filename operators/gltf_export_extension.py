@@ -191,6 +191,13 @@ class glTF2ExportUserExtension:
         if original_name:
             gltf_name.name = original_name
 
+    def gather_node_hook(self, gltf_node, blender_object, export_settings):
+        _restore_object_pointer_extra_names(
+            gltf_node,
+            blender_object,
+            self._original_names_by_pointer,
+        )
+
     def gather_mesh_hook(
         self,
         gltf_mesh,
@@ -785,6 +792,40 @@ def _get_original_export_name(datablock, original_names_by_pointer):
         return None
     except AttributeError:
         return None
+
+
+def _restore_object_pointer_extra_names(
+        gltf_node,
+        blender_object,
+        original_names_by_pointer):
+    extras = gltf_node.extras
+    if not isinstance(extras, dict):
+        return
+
+    for property_name, property_value in blender_object.items():
+        if not isinstance(property_value, bpy.types.ID):
+            continue
+
+        original_name = _get_original_export_name(
+            property_value,
+            original_names_by_pointer,
+        )
+        if original_name is None:
+            continue
+
+        pointer_extra = extras.get(property_name)
+        if isinstance(pointer_extra, bpy.types.ID):
+            extras[property_name] = {
+                "name": original_name,
+                "type": pointer_extra.__class__.__name__,
+            }
+            continue
+        if not isinstance(pointer_extra, dict):
+            continue
+        if "name" not in pointer_extra:
+            continue
+
+        pointer_extra["name"] = original_name
 
 
 def _choose_source_scene(active_scene, collection_name):

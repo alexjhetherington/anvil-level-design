@@ -350,6 +350,10 @@ def _node_scale(gltf_data, node_name):
     return _node_for_name(gltf_data, node_name).get("scale")
 
 
+def _node_extras(gltf_data, node_name):
+    return _node_for_name(gltf_data, node_name).get("extras", {})
+
+
 def _material_names(gltf_data):
     return [material.get("name") for material in gltf_data.get("materials", [])]
 
@@ -416,6 +420,7 @@ def _export_full(filepath, use_selection):
         export_format='GLTF_SEPARATE',
         export_animations=False,
         export_apply=False,
+        export_extras=True,
         collection="",
         use_selection=use_selection,
         use_active_scene=False,
@@ -430,6 +435,7 @@ def _export_collection(collection, filepath, use_selection):
     exporter.export_properties.export_format = 'GLTF_SEPARATE'
     exporter.export_properties.export_animations = False
     exporter.export_properties.export_apply = False
+    exporter.export_properties.export_extras = True
     exporter.export_properties.use_selection = use_selection
     bpy.ops.collection.exporter_export(index=0)
 
@@ -1154,6 +1160,32 @@ class GltfExportMaterialCanonicalizationTest(AnvilTestCase):
 
 
 class GltfExportRouteFlowTest(AnvilTestCase):
+    def _run_object_pointer_extras_export_route_test(self, route):
+        scene = bpy.context.scene
+        scene.name = "Scene"
+        collection = _create_export_collection(scene)
+        _owner, _target = _create_object_pointer_dependency(collection)
+        _set_anvil_export_settings(scene, 1.0, False, False)
+
+        _filepath, gltf_data = _export_using_route(
+            route,
+            collection,
+            f"route_pointer_extras_{route}.gltf",
+            False,
+        )
+
+        self.assertEqual(
+            _node_extras(gltf_data, "PointerOwner").get("target"),
+            {"name": "PointerTarget", "type": "Object"},
+        )
+        _assert_no_temp_export_datablocks(self)
+
+    def test_gltf_full_export_route_object_pointer_extra_preserves_original_target_name(self):
+        self._run_object_pointer_extras_export_route_test(FULL_EXPORT_ROUTE)
+
+    def test_gltf_collection_export_route_object_pointer_extra_preserves_original_target_name(self):
+        self._run_object_pointer_extras_export_route_test(COLLECTION_EXPORT_ROUTE)
+
     def _run_object_pointer_cleanup_export_route_test(self, route):
         scene = bpy.context.scene
         scene.name = "Scene"
