@@ -420,6 +420,10 @@ class APIAvailabilityTest(AnvilTestCase):
                 missing.append("BlendDataMeshes.new_from_object")
             if not hasattr(bpy.data.curves, "remove"):
                 missing.append("BlendDataCurves.remove")
+            if not hasattr(bpy.data.lights, "new"):
+                missing.append("BlendDataLights.new")
+            if not hasattr(bpy.data.lights, "remove"):
+                missing.append("BlendDataLights.remove")
             if not hasattr(collection, "children"):
                 missing.append("Collection.children")
             if not hasattr(collection, "exporters"):
