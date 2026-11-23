@@ -316,42 +316,30 @@ def _resolve_prefab_linked_asset(scene, library_index, object_name, asset_type):
     return resolve_prefab_linked_object(abs_path, object_name)
 
 
-def _generated_prefab_name_index(name, base_name, suffix):
-    if suffix and name.endswith(suffix):
-        stem = name[:-len(suffix)]
-    else:
-        stem = name
-
-    if stem == base_name:
-        return 0
-
-    numeric_prefix = base_name + "."
-    if not stem.startswith(numeric_prefix):
-        return None
-
-    numeric_part = stem[len(numeric_prefix):]
-    if len(numeric_part) != 3 or not numeric_part.isdigit():
-        return None
-
-    return int(numeric_part)
+def _local_prefab_object_names():
+    return {
+        obj.name for obj in bpy.data.objects
+        if obj.library is None
+    }
 
 
-def _next_prefab_object_name(base_name, suffix, placed_object):
-    used_indices = set()
-    for obj in bpy.data.objects:
-        if obj == placed_object or obj.library is not None:
-            continue
-        index = _generated_prefab_name_index(obj.name, base_name, suffix)
-        if index is not None:
-            used_indices.add(index)
-
-    index = 0
-    while index in used_indices:
+def _next_prefab_object_name(
+        base_name,
+        suffix,
+        used_object_names,
+        next_name_indices):
+    key = (base_name, suffix)
+    index = next_name_indices.get(key, 0)
+    while True:
+        if index == 0:
+            candidate = base_name + suffix
+        else:
+            candidate = f"{base_name}.{index:03d}{suffix}"
+        if candidate not in used_object_names:
+            used_object_names.add(candidate)
+            next_name_indices[key] = index + 1
+            return candidate
         index += 1
-
-    if index == 0:
-        return base_name + suffix
-    return f"{base_name}.{index:03d}{suffix}"
 
 
 def _find_repeat_prefab_object(object_name):
@@ -372,7 +360,9 @@ def _instantiate_repeated_prefab_object(
         object_name,
         source_object_name,
         placement_matrix,
-        name_suffix):
+        name_suffix,
+        used_object_names,
+        next_name_indices):
     placed_object = source_object.copy()
     target_collection = collection if collection is not None else scene.collection
     target_collection.objects.link(placed_object)
@@ -381,7 +371,8 @@ def _instantiate_repeated_prefab_object(
     placed_object.name = _next_prefab_object_name(
         base_name,
         name_suffix,
-        placed_object,
+        used_object_names,
+        next_name_indices,
     )
     placed_object.matrix_basis = placement_matrix.copy()
 
@@ -407,7 +398,9 @@ def _instantiate_prefab_object(
         asset_type,
         placement_matrix,
         name_suffix,
-        make_fully_local):
+        make_fully_local,
+        used_object_names,
+        next_name_indices):
     linked_asset, abs_path, reused_linked_asset, error = _resolve_prefab_linked_asset(
         scene, library_index, source_object_name, asset_type
     )
@@ -496,7 +489,8 @@ def _instantiate_prefab_object(
     placed_object.name = _next_prefab_object_name(
         base_name,
         name_suffix,
-        placed_object,
+        used_object_names,
+        next_name_indices,
     )
     placed_object.matrix_basis = placement_matrix.copy()
 
@@ -806,6 +800,8 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
         self._rotation_drag_start_mouse_x = 0
         self._rotation_drag_start_rotation = self._placement_rotation
         self._inherit_normal = context.scene.level_design_props.prefab_inherit_normal
+        self._used_prefab_object_names = _local_prefab_object_names()
+        self._next_prefab_name_indices = {}
         self._prefab_ghost = build_prefab_albedo_ghost(placement_source)
         self._ghost_base_matrix = linked_asset.matrix_basis.copy()
         set_modal_override(
@@ -1086,6 +1082,8 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
                 self.source_object_name,
                 placement_matrix,
                 self.name_suffix,
+                self._used_prefab_object_names,
+                self._next_prefab_name_indices,
             )
         else:
             override, message = _instantiate_prefab_object(
@@ -1099,6 +1097,8 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
                 placement_matrix,
                 self.name_suffix,
                 self.make_fully_local,
+                self._used_prefab_object_names,
+                self._next_prefab_name_indices,
             )
         if override is None:
             return (False, message)
@@ -1113,6 +1113,10 @@ class LEVELDESIGN_OT_prefab_instantiate(DefaultGridPivotMixin, ModalDrawBase, Op
         return (True, message)
 
     def execute(self, context):
+        if not hasattr(self, "_used_prefab_object_names"):
+            self._used_prefab_object_names = _local_prefab_object_names()
+            self._next_prefab_name_indices = {}
+
         if self.use_placement:
             pivot = Vector(self.action_pivot)
             up_vector = _prefab_safe_up_vector(Vector(self.action_normal))

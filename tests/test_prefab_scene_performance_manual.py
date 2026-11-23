@@ -20,7 +20,10 @@ from ..core.viewport_overlay import (
     screen_striped_matrix_values,
 )
 from ..operators import library_object_overlay
-from ..prefabs.operators import _next_prefab_object_name
+from ..prefabs.operators import (
+    _local_prefab_object_names,
+    _next_prefab_object_name,
+)
 
 
 PERF_PREFAB_COUNT = 7500
@@ -667,11 +670,20 @@ class PrefabScenePerformanceManualTest(AnvilTestCase):
             for _texture, instance_count in instance_buffers
         )
         self.assertEqual(restored_instance_count, PERF_PREFAB_COUNT)
+
+        used_object_names, name_scan_ms = _measure_ms(_local_prefab_object_names)
+        _print_timing("local_prefab_name_scan", name_scan_ms)
+        next_name_indices = {}
         name_samples = []
         next_name = ""
         for _sample_index in range(PERF_NAME_SAMPLE_COUNT):
             next_name, elapsed_ms = _measure_ms(
-                lambda: _next_prefab_object_name("PerfPrefab", "", None)
+                lambda: _next_prefab_object_name(
+                    "PerfPrefab",
+                    "",
+                    used_object_names,
+                    next_name_indices,
+                )
             )
             name_samples.append(elapsed_ms)
         _print_samples("next_prefab_name", name_samples)

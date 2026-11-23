@@ -318,12 +318,10 @@ def reload_library(library_db):
 
 
 def find_existing_linked_object(abs_path, obj_name):
-    for obj in bpy.data.objects:
-        if (obj.library is not None
-                and normalize_path(obj.library.filepath) == abs_path
-                and obj.name == obj_name):
-            return obj
-    return None
+    library = find_loaded_library(abs_path)
+    if library is None:
+        return None
+    return bpy.data.objects.get((obj_name, library.filepath))
 
 
 def link_prefab_object(abs_path, obj_name):
