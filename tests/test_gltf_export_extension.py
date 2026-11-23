@@ -46,6 +46,21 @@ def _create_triangle_object(collection, object_name, mesh_name):
     return obj
 
 
+def _create_object_pointer_dependency(collection):
+    target = _create_triangle_object(
+        collection,
+        "PointerTarget",
+        "PointerTargetMesh",
+    )
+    owner = _create_triangle_object(
+        collection,
+        "PointerOwner",
+        "PointerOwnerMesh",
+    )
+    owner["target"] = target
+    return owner, target
+
+
 def _create_mirror_modifier_object(collection, object_name, mesh_name):
     mesh = bpy.data.meshes.new(mesh_name)
     mesh.from_pydata(
@@ -1139,6 +1154,40 @@ class GltfExportMaterialCanonicalizationTest(AnvilTestCase):
 
 
 class GltfExportRouteFlowTest(AnvilTestCase):
+    def _run_object_pointer_cleanup_export_route_test(self, route):
+        scene = bpy.context.scene
+        scene.name = "Scene"
+        collection = _create_export_collection(scene)
+        owner, target = _create_object_pointer_dependency(collection)
+        original_owner_pointer = owner.as_pointer()
+        original_target_pointer = target.as_pointer()
+        _set_anvil_export_settings(scene, 1.0, False, False)
+
+        _filepath, gltf_data = _export_using_route(
+            route,
+            collection,
+            f"route_pointer_cleanup_{route}.gltf",
+            False,
+        )
+
+        _assert_export_names(
+            self,
+            gltf_data,
+            [_expected_scene_name_for_route(route)],
+            ["PointerOwner", "PointerTarget"],
+            ["PointerOwnerMesh", "PointerTargetMesh"],
+        )
+        self.assertEqual(owner.as_pointer(), original_owner_pointer)
+        self.assertEqual(target.as_pointer(), original_target_pointer)
+        self.assertEqual(owner["target"], target)
+        _assert_no_temp_export_datablocks(self)
+
+    def test_gltf_full_export_route_cleanup_with_object_pointer_dependency_removes_all_temporary_datablocks(self):
+        self._run_object_pointer_cleanup_export_route_test(FULL_EXPORT_ROUTE)
+
+    def test_gltf_collection_export_route_cleanup_with_object_pointer_dependency_removes_all_temporary_datablocks(self):
+        self._run_object_pointer_cleanup_export_route_test(COLLECTION_EXPORT_ROUTE)
+
     def test_gltf_full_export_route_preprocesses_active_scene_and_cleans_up_temp_datablocks(self):
         scene = bpy.context.scene
         scene.name = "Scene"

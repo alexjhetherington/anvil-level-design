@@ -1372,13 +1372,16 @@ def _append_unique_datablock(datablocks, datablock):
 
 
 def _remove_orphan_export_datablocks(datablocks):
+    # Every collected object belongs to the temporary FULL_COPY scene. Remove
+    # objects first and unlink their references so object custom properties
+    # cannot keep an earlier target object alive until after its cleanup turn.
+    for obj in datablocks['objects']:
+        if _is_registered_object(obj):
+            bpy.data.objects.remove(obj, do_unlink=True)
+
     for collection in datablocks['collections']:
         if _is_registered_collection(collection) and collection.users == 0:
             bpy.data.collections.remove(collection)
-
-    for obj in datablocks['objects']:
-        if _is_registered_object(obj) and obj.users == 0:
-            bpy.data.objects.remove(obj)
 
     for mesh in datablocks['meshes']:
         if _is_registered_mesh(mesh) and mesh.users == 0:
