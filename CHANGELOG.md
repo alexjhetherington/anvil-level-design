@@ -1,5 +1,11 @@
 # Anvil Level Design Changelog
 
+# 1.9.2
+- Improve viewport performance in scenes with thousands of prefabs
+- Speed up prefab naming in large scenes
+- Preserve Blender object pointer custom properties in glTF exports
+- Fix glTF export duplicate name cleaup (multiple passes)
+
 # 1.9.1
 - Fix a material texture name case issue on windows
 - Blender default material has backface culling set to true by default
